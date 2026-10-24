@@ -46,6 +46,8 @@ def load_items(db_path: str, status: str = "pending") -> List[TodoItem]:
         items = [i for i in items if i.status in ("pending", "unconfirmed")]
     else:
         items = [i for i in items if i.status == status]
+    # AI 复核判定为 noise 的条目只是被规则误抓的闲聊，不进看板
+    items = [i for i in items if i.status != "noise"]
     # 看板要「最近该做的事」：先按状态（确认过的优先），再按时间倒序
     items.sort(key=lambda i: (i.status != "pending", -int(i.message_ts or 0)))
     return items
