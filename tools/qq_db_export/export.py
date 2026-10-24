@@ -25,6 +25,8 @@ import time
 JUNK_PREFIX = re.compile(r"^[\dA-Za-z=:：!！?？,，.。;；\-—_]{1,3}(?=[\u4e00-\u9fff])")
 # 片段开头可能残留的括号/空白/不可见字符
 LEADING_JUNK = re.compile(r"^[\s\[\]【】()（）<>《》\"'`~·|\\/]+")
+# 英文/符号紧贴 @全体成员 或中文：如 "b@全体成员"、"P@全体成员"、"&@全体成员"
+GLUED_ASCII = re.compile(r"^[A-Za-z0-9&#'\"(){}\[\]=+*^%$!~`|\\/:;,.?\-]{1,4}(?=[@\u4e00-\u9fff【])")
 NOISE = re.compile(r"(/download\?|https?://\S{0,40}$|^\[图片\]$|^\[表情\]$)")
 
 
@@ -48,7 +50,9 @@ def longest_text(blob: bytes) -> str:
         if len(part) > len(best):
             best = part
     best = JUNK_PREFIX.sub("", best)
-    best = LEADING_JUNK.sub("", best).strip()
+    best = LEADING_JUNK.sub("", best)          # 先削括号/空白
+    best = GLUED_ASCII.sub("", best)           # 再削紧贴 @/中文 的英文残渣
+    best = LEADING_JUNK.sub("", best).strip()  # 削完可能露出新的括号
     return best
 
 

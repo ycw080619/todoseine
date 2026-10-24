@@ -27,7 +27,8 @@ QUESTION_HINTS = ("?", "？", "能不能", "可以吗", "行不行", "是否")
 NOTICE_WORDS = (
     "@全体成员", "全体成员", "通知", "收取", "提交", "报到", "务必", "必须",
 )
-TECH_HINTS = ("喵", "哈哈", "笑死", "草", "选课", "驱动", "跑分")
+TECH_HINTS = ("喵", "哈哈", "笑死", "草", "选课", "驱动", "跑分", "开播", "崩巴", "呜呜", "好耶",
+              "666", "233", "哎", "emmm", "xd", "awsl", "吃瓜", "摸鱼")
 
 
 def _latin_ratio(text: str) -> float:
@@ -49,6 +50,19 @@ def _notice_bonus(text: str) -> tuple:
     return score, reasons
 
 
+def _has_repeat(text: str) -> bool:
+    """同一字符连续出现 3 次以上，多半是「哈哈哈哈」「崩巴崩巴」这类玩梗。"""
+    prev, run = "", 0
+    for ch in text:
+        if ch == prev:
+            run += 1
+            if run >= 2:      # 含首次共 3 次
+                return True
+        else:
+            prev, run = ch, 0
+    return False
+
+
 def _noise_penalty(text: str) -> tuple:
     """技术闲聊、代码、表情语气——不该进待办。"""
     score = 0
@@ -59,6 +73,9 @@ def _noise_penalty(text: str) -> tuple:
     if [w for w in TECH_HINTS if w in text]:
         score -= 1
         reasons.append("语气词")
+    if _has_repeat(text) and "@全体成员" not in text:
+        score -= 1
+        reasons.append("重复字/玩梗")
     # 太短的多半是「晚上好」「我记得是这样」这类寒暄或附和，不该算待办
     if len(text) < 8 and "@全体成员" not in text:
         score -= 2
