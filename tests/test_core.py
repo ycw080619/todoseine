@@ -10,7 +10,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from chat2todo.adapters import get_adapter  # noqa: E402
-from chat2todo.core import Store, dedupe, extract_todos, render_markdown  # noqa: E402
+from chat2todo.core import Store, dedupe, extract_todos, render_markdown, to_csv, to_json  # noqa: E402
 from chat2todo.models import Message, MsgType  # noqa: E402
 
 SAMPLE = os.path.join(os.path.dirname(__file__), "..", "examples", "sample_qq_export.txt")
@@ -103,6 +103,62 @@ class TestMarkdown(unittest.TestCase):
         self.assertIn("# 待办清单", md)
         self.assertIn("- [ ]", md)
         self.assertIn("依据", md)
+
+
+class TestP2SearchAndExport(unittest.TestCase):
+    """P2：检索、双视图上下文、三种导出格式。"""
+
+    def _seeded(self, tmp: str) -> Store:
+        store = Store(os.path.join(tmp, "p2.db"))
+        msgs = list(get_adapter("qq_txt").read(SAMPLE))
+        store.add_messages(msgs, session="s")
+        store.add_todos(extract_todos(msgs, session="s"))
+        return store
+
+    def test_search_hits_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._seeded(tmp)
+            try:
+                hits = store.search("周报")
+                self.assertTrue(hits, "应能检索到包含『周报』的消息")
+                self.assertIn("周报", hits[0]["content"])
+            finally:
+                store.close()
+
+    def test_search_miss_returns_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._seeded(tmp)
+            try:
+                self.assertEqual(store.search("绝对不存在的词xyz"), [])
+            finally:
+                store.close()
+
+    def test_context_around_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._seeded(tmp)
+            try:
+                first = store.all_messages()[0]
+                target = store.search("周报")[0]["id"]
+                rows = store.context(target, before=2, after=2)
+                self.assertGreaterEqual(len(rows), 1)
+                self.assertIn(target, [r["id"] for r in rows])
+                self.assertEqual(first.sender_name, "老王")
+            finally:
+                store.close()
+
+    def test_export_csv_and_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._seeded(tmp)
+            try:
+                todos = store.list_todos()
+                csv_text = to_csv(todos)
+                self.assertTrue(csv_text.startswith("id,text,session,sender,ts"))
+                self.assertEqual(len(csv_text.strip().splitlines()), len(todos) + 1)
+                json_text = to_json(todos)
+                self.assertIn('"generator": "chat2todo"', json_text)
+                self.assertIn('"todos"', json_text)
+            finally:
+                store.close()
 
 
 if __name__ == "__main__":

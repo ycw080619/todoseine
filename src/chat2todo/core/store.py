@@ -48,7 +48,73 @@ class Store:
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._fts = self._init_fts()
         self.conn.commit()
+
+    # --- 全文索引（P2） -------------------------------------------
+    def _init_fts(self) -> bool:
+        """优先建 trigram 分词 FTS5（对中文友好）；不支持则退回 LIKE 检索。"""
+        for tokenizer in ("trigram", "unicode61"):
+            try:
+                self.conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
+                    "content, sender_name, session, msg_id UNINDEXED, "
+                    f"tokenize='{tokenizer}')"
+                )
+                return True
+            except sqlite3.OperationalError:
+                continue
+        return False
+
+    def _sync_fts(self) -> None:
+        if not self._fts:
+            return
+        self.conn.execute(
+            "INSERT INTO messages_fts (content, sender_name, session, msg_id) "
+            "SELECT m.content, m.sender_name, m.session, m.id FROM messages m "
+            "WHERE m.id NOT IN (SELECT msg_id FROM messages_fts)"
+        )
+        self.conn.commit()
+
+    def search(self, keyword: str, limit: int = 20) -> List[dict]:
+        """检索原文。先用 FTS，再用 LIKE 兜底（2 字中文查询 FTS 可能不命中）。"""
+        keyword = (keyword or "").strip()
+        if not keyword:
+            return []
+        rows: List[sqlite3.Row] = []
+        if self._fts and len(keyword) >= 3:
+            try:
+                rows = self.conn.execute(
+                    "SELECT m.* FROM messages_fts f JOIN messages m ON m.id = f.msg_id "
+                    "WHERE messages_fts MATCH ? ORDER BY m.ts LIMIT ?",
+                    (keyword, limit),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+        if not rows:
+            rows = self.conn.execute(
+                "SELECT * FROM messages WHERE content LIKE ? OR sender_name LIKE ? "
+                "ORDER BY ts LIMIT ?",
+                (f"%{keyword}%", f"%{keyword}%", limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_message(self, msg_id: int) -> Optional[dict]:
+        row = self.conn.execute("SELECT * FROM messages WHERE id = ?", (msg_id,)).fetchone()
+        return dict(row) if row else None
+
+    def context(self, msg_id: int, before: int = 2, after: int = 2) -> List[dict]:
+        """取某条消息的前后文（双视图的“原文”一侧）。"""
+        row = self.get_message(msg_id)
+        if not row:
+            return []
+        prev = self.conn.execute(
+            "SELECT * FROM messages WHERE id < ? ORDER BY id DESC LIMIT ?", (msg_id, before)
+        ).fetchall()
+        nxt = self.conn.execute(
+            "SELECT * FROM messages WHERE id > ? ORDER BY id ASC LIMIT ?", (msg_id, after)
+        ).fetchall()
+        return [dict(r) for r in reversed(prev)] + [row] + [dict(r) for r in nxt]
 
     def close(self) -> None:
         self.conn.close()
@@ -71,6 +137,7 @@ class Store:
             rows,
         )
         self.conn.commit()
+        self._sync_fts()
         return self._count("messages") - before
 
     def add_todos(self, todos: Iterable[TodoItem]) -> int:

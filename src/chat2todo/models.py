@@ -109,3 +109,15 @@ class TodoItem:
             self.confidence,
             self.status,
         )
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.todo_id,
+            "text": self.text,
+            "session": self.session,
+            "sender": self.sender,
+            "ts": self.message_ts,
+            "reason": self.reason,
+            "confidence": round(float(self.confidence), 2),
+            "status": self.status,
+        }
