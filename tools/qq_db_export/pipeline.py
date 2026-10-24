@@ -52,6 +52,7 @@ def main() -> int:
     ap.add_argument("--db", default=os.path.expanduser("~/Chat2Todo/qq.db"))
     ap.add_argument("--out", default="")
     ap.add_argument("--config", default="")
+    ap.add_argument("--max-ai", type=int, default=120, help="最多问模型多少条（默认 120）")
     args = ap.parse_args()
 
     cfg = load(args.config or None)
@@ -63,10 +64,13 @@ def main() -> int:
     todos = extract_todos(msgs, session="qq")
     print(f"规则待办 {len(todos)}")
 
+    # 只对「拿不准」的条目问模型：低置信度 + 前 N 条，避免几千次调用把机器拖死
     if ai.on("review"):
-        kept = [t for t in todos if ai.review(t.text) is not False]
-        print(f"AI 复核保留 {len(kept)}（丢弃 {len(todos) - len(kept)}）")
-        todos = kept
+        borderline = [t for t in todos if t.confidence < 0.9][: args.max_ai]
+        rest = [t for t in todos if t.confidence >= 0.9]
+        kept = [t for t in borderline if ai.review(t.text) is not False]
+        print(f"AI 复核 {len(borderline)} 条（上限 {args.max_ai}），保留 {len(kept)}；高置信直接保留 {len(rest)}")
+        todos = sorted(rest + kept, key=lambda t: -t.confidence)
     if ai.on("intent"):
         kept = [t for t in todos if ai.intent(t.text) is not False]
         print(f"意图过滤保留 {len(kept)}")

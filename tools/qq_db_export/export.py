@@ -23,7 +23,17 @@ import time
 
 # 开头常见的粘连残渣：数字或标点紧贴中文
 JUNK_PREFIX = re.compile(r"^[\dA-Za-z=:：!！?？,，.。;；\-—_]{1,3}(?=[\u4e00-\u9fff])")
+# 片段开头可能残留的括号/空白/不可见字符
+LEADING_JUNK = re.compile(r"^[\s\[\]【】()（）<>《》\"'`~·|\\/]+")
 NOISE = re.compile(r"(/download\?|https?://\S{0,40}$|^\[图片\]$|^\[表情\]$)")
+
+
+def clean_sender(name: str, sender: str) -> str:
+    """40093 有时不是昵称（可能是纯数字/很短），这时退回 QQ 号。"""
+    n = (name or "").strip()
+    if not n or n.isdigit() or len(n) <= 1:
+        return sender
+    return n
 
 
 def longest_text(blob: bytes) -> str:
@@ -37,7 +47,8 @@ def longest_text(blob: bytes) -> str:
         part = part.strip()
         if len(part) > len(best):
             best = part
-    best = JUNK_PREFIX.sub("", best).strip()
+    best = JUNK_PREFIX.sub("", best)
+    best = LEADING_JUNK.sub("", best).strip()
     return best
 
 
@@ -61,7 +72,7 @@ def dump(conn: sqlite3.Connection, table: str, days: int, out) -> int:
         out.write(json.dumps({
             "timestamp": int(ts or 0),
             "sender": sender,
-            "sender_name": str(nick or sender),
+            "sender_name": clean_sender(nick, sender),
             "content": content,
             "type": 0,
             "chat_id": str(chat_id or ""),
