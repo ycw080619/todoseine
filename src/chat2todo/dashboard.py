@@ -31,12 +31,20 @@ PAD = 16
 
 
 def load_items(db_path: str, status: str = "pending") -> List[TodoItem]:
-    """给界面用的纯函数：读一批待办，方便无 GUI 环境下测试。"""
+    """给界面用的纯函数：读一批待办，方便无 GUI 环境下测试。
+
+    注意：看板的 "pending" 是「还没做完」的口语含义，
+    必须把规则判为「待确认」(unconfirmed) 的条目也包含进来，
+    否则 3 分的模糊待办会从看板上凭空消失。
+    """
     store = Store(db_path)
     try:
-        return store.list_todos(status=status)
+        items = store.list_todos()
     finally:
         store.close()
+    if status == "pending":
+        return [i for i in items if i.status in ("pending", "unconfirmed")]
+    return [i for i in items if i.status == status]
 
 
 def _rounded(canvas, x1, y1, x2, y2, r, **kw):

@@ -66,6 +66,20 @@ class TestDashboardData(unittest.TestCase):
         self.assertIn("手动加一条测试待办", texts)
         self.assertEqual(len(texts), 4)
 
+    def test_unconfirmed_items_show_on_dashboard(self) -> None:
+        """3 分判为「待确认」的条目不能被看板吞掉。"""
+        store = Store(self.db)
+        try:
+            store.add_todo("半信半疑的一条")          # 手动添加是 pending
+            store.conn.execute("UPDATE todos SET status='unconfirmed' WHERE text='半信半疑的一条'")
+            store.conn.commit()
+        finally:
+            store.close()
+        texts = [item.text for item in load_items(self.db, "pending")]
+        self.assertIn("半信半疑的一条", texts)
+        self.assertEqual(len(texts), 4)
+        self.assertEqual(len(load_items(self.db, "unconfirmed")), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
