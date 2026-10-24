@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chat2todo"
+version = "0.1.0"
+description = "Local-first chat log to todo extractor"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Chat2Todo contributors" }]
+keywords = ["chat", "todo", "qq", "local-first", "privacy", "markdown"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+api = ["fastapi>=0.110", "uvicorn>=0.29"]
+
+[project.scripts]
+c2t = "chat2todo.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/<you>/chat2todo"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"

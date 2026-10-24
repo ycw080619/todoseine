@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Local data — 不要提交真实聊天记录
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+out/
+*.log
+
+# Editor
+.vscode/
+.idea/
+.DS_Store
