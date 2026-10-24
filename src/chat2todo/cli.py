@@ -365,6 +365,57 @@ def cmd_dash(args) -> int:
     return run(_db(args), interval=int(args.interval), status=status)
 
 
+def cmd_db(args) -> int:
+    """检查数据库只读通道：库在哪里、是不是加密、有哪些后端可用。"""
+    from .sources import BuiltinBackend, CommunityBackend, inspect, locate
+
+    cfg = _cfg(args)
+    db_cfg = cfg.get("db", {})
+    path = locate(db_cfg.get("path") or None)
+    if not path:
+        print("[E4001] 未找到 nt_msg.db")
+        print("  建议：用 [db].path 指定，或改用导出文件导入")
+        return 1
+    info = inspect(str(path))
+    print(f"数据库    : {info.path}")
+    print(f"大小      : {info.size / 1048576:.1f} MB（{info.pages} 页 × 4096）")
+    print(f"加密      : {'是（腾讯 WCDB 变体）' if info.encrypted else '否，可直接用 sqlite 打开'}")
+    community = CommunityBackend(module=db_cfg.get("module", ""))
+    builtin = BuiltinBackend(key=db_cfg.get("key", ""), key_file=db_cfg.get("key_file", ""))
+    print(f"社区后端  : {'可用 → ' + db_cfg.get('module', '') if community.available() else '未配置'}")
+    print(f"内置后端  : {'有 key，可尝试' if builtin.available() else '未提供 key'}")
+    if not community.available() and not builtin.available():
+        print("  → 现在无法读取；配置 [db].module 或 [db].key 后重试")
+    return 0
+
+
+def cmd_db_import(args) -> int:
+    """从 QQ 数据库只读拉取消息，走与文件导入相同的抽取管线。"""
+    from .core import dedupe, extract_todos
+    from .sources import load_messages
+
+    cfg = _cfg(args)
+    messages = load_messages(cfg, limit=int(args.limit))
+    if not messages:
+        print("没有读到消息（可能后端返回空）")
+        return 1
+    messages = dedupe(messages)
+    todos = extract_todos(messages, session=args.session or "qq")
+    store = Store(_db(args))
+    try:
+        added = store.add_messages(messages)
+        tadded = store.add_todos(todos)
+        s = store.stats()
+    finally:
+        store.close()
+    print(f"来源        : 数据库（只读）")
+    print(f"读到消息    : {len(messages)}")
+    print(f"去重后      : {len(messages)}（新增入库 {added}）")
+    print(f"抽取待办    : {len(todos)}（新增 {tadded}）")
+    print(f"库内总计    : 消息 {s['messages']} / 待办 {s['todos']} / 待处理 {s['pending']}")
+    return 0
+
+
 # --- 参数 ---------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -434,6 +485,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--interval", type=int, default=30, help="自动刷新秒数")
     p.add_argument("--status", default="pending", choices=["pending", "unconfirmed", "done"])
     p.set_defaults(func=cmd_dash)
+
+    p = sub.add_parser("db", help="检查数据库只读通道（需要解密后端）")
+    p.set_defaults(func=cmd_db)
+
+    p = sub.add_parser("db-import", help="从 QQ 数据库只读拉取消息并抽取待办")
+    p.add_argument("--db", default="")
+    p.add_argument("--limit", type=int, default=0, help="只取最近 N 条，0 表示全部")
+    p.add_argument("--session", default="")
+    p.set_defaults(func=cmd_db_import)
 
     # 兼容旧命令名
     p = sub.add_parser("export-md", help="导出 Markdown（等同于 export --format md）")

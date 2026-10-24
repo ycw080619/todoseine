@@ -26,8 +26,17 @@ DEFAULTS: Dict[str, Any] = {
     "log_level": "info",
 }
 
-AI_DEFAULTS: Dict[str, Any] = {
+DB_DEFAULTS: Dict[str, Any] = {
     "enabled": False,
+    "path": "",
+    "module": "",
+    "args": "",
+    "key": "",
+    "key_file": "",
+    "page_size": 4096,
+}
+
+AI_DEFAULTS: Dict[str, Any] = {    "enabled": False,
     "review": False,
     "merge": False,
     "intent": False,
@@ -133,14 +142,15 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
     """返回合并后的配置；找不到文件时返回纯默认值。"""
     cfg: Dict[str, Any] = dict(DEFAULTS)
     cfg["ai"] = dict(AI_DEFAULTS)
+    cfg["db"] = dict(DB_DEFAULTS)
 
     real = find_file(path)
     if real:
         raw = _read(real)
         cfg["config_file"] = real
         for key, value in raw.items():
-            if key == "ai" and isinstance(value, dict):
-                cfg["ai"].update(value)
+            if key in ("ai", "db") and isinstance(value, dict):
+                cfg[key].update(value)
             else:
                 cfg[key] = value
     else:
@@ -148,6 +158,12 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
 
     if os.environ.get("C2T_DB"):
         cfg["db_path"] = os.environ["C2T_DB"]
+    if os.environ.get("C2T_DB_MODULE"):
+        cfg["db"]["module"] = os.environ["C2T_DB_MODULE"]
+    if os.environ.get("C2T_DB_ARGS"):
+        cfg["db"]["args"] = os.environ["C2T_DB_ARGS"]
+    if os.environ.get("C2T_DB_KEY"):
+        cfg["db"]["key"] = os.environ["C2T_DB_KEY"]
     return cfg
 
 
@@ -173,4 +189,13 @@ base_url = ""                 # 例：https://api.openai.com/v1
 api_key  = ""                 # 或用环境变量 C2T_AI_KEY
 model    = "gpt-4o-mini"
 timeout  = 15
+
+[db]
+enabled  = false              # 数据库只读通道总开关
+path     = ""                 # nt_msg.db 路径；留空则自动探测
+module   = ""                 # 社区解密工具路径（推荐）
+args     = ""                 # 传给社区模块的额外参数
+key      = ""                 # 内置读取器用（或用环境变量 C2T_DB_KEY）
+key_file = ""                 # 从文件读 key
+page_size= 4096
 """
