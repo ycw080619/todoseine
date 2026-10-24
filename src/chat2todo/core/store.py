@@ -186,6 +186,18 @@ class Store:
         self.conn.commit()
         return cur.rowcount > 0
 
+    def add_todo(self, text: str, session: str = "手动", sender: str = "我") -> int:
+        """手动添加一条待办（看板上的「＋ 添加」）。返回写入行数。"""
+        now = int(datetime.now().timestamp())
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO todos "
+            "(text, session, sender, ts, reason, confidence, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+            (text, session, sender, now, "手动添加", 1.0, ""),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
     def stats(self, since_ts: Optional[int] = None) -> dict:
         """统计。since_ts 给定时只统计该时间点之后的数据（c2t stats --since 7d）。"""
         if since_ts is None:

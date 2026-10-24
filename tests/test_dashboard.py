@@ -55,6 +55,17 @@ class TestDashboardData(unittest.TestCase):
         self.assertEqual(len(load_items(self.db, "pending")), 2)
         self.assertEqual(len(load_items(self.db, "done")), 1)
 
+    def test_add_todo_from_dashboard(self) -> None:
+        """看板「＋ 添加」走的就是这个入口，必须能落库并出现在待办里。"""
+        store = Store(self.db)
+        try:
+            self.assertEqual(store.add_todo("手动加一条测试待办"), 1)
+        finally:
+            store.close()
+        texts = [item.text for item in load_items(self.db, "pending")]
+        self.assertIn("手动加一条测试待办", texts)
+        self.assertEqual(len(texts), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

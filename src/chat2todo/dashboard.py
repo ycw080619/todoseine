@@ -1,18 +1,33 @@
-"""桌面待办看板（可选能力，tkinter 实现，仍属标准库）。
+"""桌面悬浮看板（tkinter，标准库实现，零第三方依赖）。
+
+样式参考：半透明圆角面板 + 大号时钟 + 日期 + 彩色圆点待办列表 + 底部添加/清空。
 
 设计约束（与方案第五章一致）：
-- 只读数据库，勾选时才把状态改回 done，不碰原文；
-- 窗口置顶常显，但**不做任何键鼠模拟**，也不去抢占其它程序的输入焦点；
-- 关闭窗口不影响命令行与数据；没有图形环境时会给出可读的错误而不是栈。
+- 只读数据库；勾选/清空时才写回状态，不改原文；
+- 置顶常显，但不做任何键鼠模拟，也不主动抢焦点；
+- 无图形环境时给出 E3001 与建议，不抛栈。
 """
 
 from __future__ import annotations
 
 import sys
+import time
 from typing import List
 
 from .core import Store
 from .models import TodoItem
+
+# ---- 外观参数（改这里就能换皮）----
+KEY = "#010203"        # 透明色键：窗口外圆角区域用这个颜色，Windows 会把它抠透
+PANEL = "#1c1a18"      # 面板底色
+TEXT = "#f5f3ef"       # 主文字
+SUB = "#b6b1a9"        # 次要文字
+LINE = "#4b4641"       # 分隔线
+ACCENTS = ["#ffffff", "#ff9f43", "#ffd93d", "#6ee7a8",
+           "#4cc9f0", "#8aa4ff", "#ff8fab"]
+
+W, H = 360, 540
+PAD = 16
 
 
 def load_items(db_path: str, status: str = "pending") -> List[TodoItem]:
@@ -24,10 +39,22 @@ def load_items(db_path: str, status: str = "pending") -> List[TodoItem]:
         store.close()
 
 
-def run(db_path: str, interval: int = 30, status: str = "pending") -> int:
-    """启动看板，阻塞直到用户关闭窗口。"""
+def _rounded(canvas, x1, y1, x2, y2, r, **kw):
+    """用平滑多边形画圆角矩形（避免依赖第三方绘图库）。"""
+    pts = [
+        x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
+        x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+        x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
+    ]
+    return canvas.create_polygon(pts, smooth=True, **kw)
+
+
+def run(db_path: str, interval: int = 30, status: str = "pending",
+        alpha: float = 0.93, x: int = 120, y: int = 120) -> int:
+    """启动悬浮看板，阻塞直到关闭。"""
     try:
         import tkinter as tk
+        from tkinter import messagebox, simpledialog
     except ImportError:  # 罕见：Python 未带 Tk
         print("[E3001] 当前 Python 未包含 tkinter，无法打开看板", file=sys.stderr)
         print("  建议：改用 c2t todos / c2t export，或安装带 Tk 的 Python", file=sys.stderr)
@@ -39,77 +66,148 @@ def run(db_path: str, interval: int = 30, status: str = "pending") -> int:
         print(f"[E3001] 无法创建窗口：{exc}", file=sys.stderr)
         return 1
 
-    root.title("Chat2Todo")
-    root.geometry("380x460")
-    root.minsize(300, 260)
-    root.attributes("-topmost", True)  # 置顶，避免被其它窗口压住
-    root.configure(bg="#fbfbfb")
+    root.overrideredirect(True)          # 无边框
+    root.attributes("-topmost", True)    # 置顶
+    try:
+        root.attributes("-alpha", alpha)
+        root.attributes("-transparentcolor", KEY)
+    except tk.TclError:
+        pass                              # 非 Windows 平台优雅降级为方形
+    root.configure(bg=KEY)
+    root.geometry(f"{W}x{H}+{x}+{y}")
 
-    header = tk.Label(
-        root, text="待办", anchor="w", bg="#fbfbfb",
-        font=("Microsoft YaHei UI", 11, "bold"), fg="#1f3a5f",
-    )
-    header.pack(fill="x", padx=12, pady=(10, 2))
+    cv = tk.Canvas(root, width=W, height=H, bg=KEY, highlightthickness=0)
+    cv.pack()
+    _rounded(cv, 1, 1, W - 1, H - 1, 18, fill=PANEL, outline="")
 
-    body = tk.Frame(root, bg="#fbfbfb")
-    body.pack(fill="both", expand=True, padx=8, pady=4)
+    drag = {"x": 0, "y": 0, "moved": False}
 
-    footer = tk.Label(
-        root, text="", anchor="w", bg="#fbfbfb",
-        font=("Microsoft YaHei UI", 8), fg="#6b7280",
-    )
-    footer.pack(fill="x", padx=12, pady=(0, 8))
+    def close() -> None:
+        root.destroy()
 
-    state = {"busy": False}
+    def on_press(e) -> None:
+        drag["x"], drag["y"], drag["moved"] = e.x, e.y, False
+
+    def on_move(e) -> None:
+        if abs(e.x - drag["x"]) + abs(e.y - drag["y"]) > 4:
+            drag["moved"] = True
+        root.geometry(f"+{e.x_root - drag['x']}+{e.y_root - drag['y']}")
+
+    # 顶部：标题 + 收起/关闭
+    cv.create_text(PAD, 22, text="Chat2Todo", anchor="w",
+                   fill=TEXT, font=("Microsoft YaHei UI", 10, "bold"))
+    cv.create_text(W - 22, 22, text="✕", anchor="e", fill=SUB,
+                   font=("Microsoft YaHei UI", 11), tags="close")
+    cv.tag_bind("close", "<Button-1>", lambda _e: close())
+
+    # 时钟
+    clock = cv.create_text(W // 2, 66, text="00:00:00", fill=TEXT,
+                           font=("Consolas", 30, "bold"))
+    date_id = cv.create_text(W // 2, 104, text="", fill=SUB,
+                             font=("Microsoft YaHei UI", 9))
+    cv.create_line(PAD, 124, W - PAD, 124, fill=LINE)
+
+    def tick() -> None:
+        now = time.localtime()
+        cv.itemconfig(clock, text=time.strftime("%H:%M:%S", now))
+        week = "日一二三四五六"[now.tm_wday]
+        cv.itemconfig(date_id, text=time.strftime("%Y年%m月%d日", now) + f"　星期{week}")
+        root.after(1000, tick)
+
+    def set_done(todo_id: int) -> None:
+        store = Store(db_path)
+        try:
+            store.set_status(todo_id, "done")
+        finally:
+            store.close()
+        refresh()
+
+    def add_todo() -> None:
+        text = simpledialog.askstring("添加待办", "要做什么？", parent=root)
+        if not text or not text.strip():
+            return
+        store = Store(db_path)
+        try:
+            store.add_todo(text.strip())
+        finally:
+            store.close()
+        refresh()
+
+    def clear_all() -> None:
+        if not messagebox.askyesno("清空", "把所有待办标记为完成？", parent=root):
+            return
+        store = Store(db_path)
+        try:
+            for it in store.list_todos(status="pending"):
+                store.set_status(it.todo_id, "done")
+        finally:
+            store.close()
+        refresh()
+
+    state = {"busy": False, "h": H}
+
+    def _resize(n: int) -> int:
+        """按条目数自适应高度，让面板像贴纸一样贴着内容，而不是留一大片空白。"""
+        h = max(300, 150 + n * 42 + 76)
+        if h == state["h"]:
+            return h
+        state["h"] = h
+        geo = root.geometry()                      # 形如 360x540+120+120
+        pos = geo[geo.find("+"):]
+        root.geometry(f"{W}x{h}{pos}")
+        cv.config(height=h)
+        cv.delete("bg")
+        _rounded(cv, 1, 1, W - 1, h - 1, 18, fill=PANEL, outline="", tags="bg")
+        cv.tag_lower("bg")
+        return h
 
     def refresh() -> None:
         if state["busy"]:
             return
         state["busy"] = True
         try:
-            for child in body.winfo_children():
-                child.destroy()
+            cv.delete("body")
             try:
                 items = load_items(db_path, status)
             except Exception as exc:  # noqa: BLE001 - 界面不能因为读库失败就崩
-                tk.Label(body, text=f"读取失败：{exc}", bg="#fbfbfb", fg="#b91c1c",
-                         wraplength=340, justify="left").pack(anchor="w")
-                footer.config(text="")
-                return
+                cv.create_text(PAD, 150, text=f"读取失败：{exc}", anchor="w",
+                               fill="#ff8fab", width=W - 2 * PAD, tags="body")
+                items = []
+            h = _resize(len(items))
+            y = 148
             if not items:
-                tk.Label(body, text="没有待处理的事项 🎉", bg="#fbfbfb", fg="#6b7280").pack(
-                    anchor="w", pady=8
-                )
-            for item in items:
-                row = tk.Frame(body, bg="#fbfbfb")
-                row.pack(fill="x", pady=1)
-                var = tk.BooleanVar(value=False)
+                cv.create_text(PAD, y, text="没有待处理的事项 🎉", anchor="w",
+                               fill=SUB, font=("Microsoft YaHei UI", 9), tags="body")
+            for i, item in enumerate(items[:8]):
+                tag = f"item{i}"
+                cv.create_oval(PAD, y - 4, PAD + 8, y + 4, fill=ACCENTS[i % len(ACCENTS)],
+                               outline="", tags=("body", tag))
+                text = item.text if len(item.text) <= 26 else item.text[:26] + "…"
+                cv.create_text(PAD + 18, y, text=text, anchor="w", fill=TEXT,
+                               font=("Microsoft YaHei UI", 9),
+                               tags=("body", tag))
+                cv.tag_bind(tag, "<Button-1>",
+                            lambda _e, tid=item.todo_id: set_done(tid))
+                cv.create_line(PAD, y + 22, W - PAD, y + 22, fill=LINE, tags="body")
+                y += 42
 
-                def on_toggle(todo_id: int = item.todo_id, v: tk.BooleanVar = var) -> None:
-                    if not v.get():
-                        return
-                    store = Store(db_path)
-                    try:
-                        store.set_status(todo_id, "done")
-                    finally:
-                        store.close()
-                    refresh()
-
-                tk.Checkbutton(
-                    row, variable=var, command=on_toggle, bg="#fbfbfb",
-                    activebackground="#fbfbfb", highlightthickness=0, bd=0,
-                ).pack(side="left", anchor="n")
-                text = item.text if len(item.text) <= 46 else item.text[:46] + "…"
-                tk.Label(
-                    row, text=text, bg="#fbfbfb", anchor="w", justify="left",
-                    wraplength=300, font=("Microsoft YaHei UI", 9),
-                ).pack(side="left", fill="x", expand=True)
-            footer.config(text=f"共 {len(items)} 条 · 每 {interval}s 自动刷新 · Esc 关闭")
+            cv.create_text(PAD, h - 26, text="＋ 添加", anchor="w", fill=SUB,
+                           font=("Microsoft YaHei UI", 9), tags=("body", "add"))
+            cv.tag_bind("add", "<Button-1>", lambda _e: add_todo())
+            cv.create_text(W - PAD, h - 26, text="清空", anchor="e", fill=SUB,
+                           font=("Microsoft YaHei UI", 9), tags=("body", "clear"))
+            cv.tag_bind("clear", "<Button-1>", lambda _e: clear_all())
+            cv.create_text(W // 2, h - 48, text=f"共 {len(items)} 条 · {interval}s 刷新 · Esc 关闭",
+                           fill="#7d7973", font=("Microsoft YaHei UI", 7), tags="body")
         finally:
             state["busy"] = False
             root.after(max(5, interval) * 1000, refresh)
 
-    root.bind("<Escape>", lambda _e: root.destroy())
+    cv.bind("<Button-1>", lambda e: (on_press(e), cv.focus_set()))
+    cv.bind("<B1-Motion>", on_move)
+    root.bind("<Escape>", lambda _e: close())
+
+    tick()
     refresh()
     root.mainloop()
     return 0
