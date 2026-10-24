@@ -43,8 +43,12 @@ def load_items(db_path: str, status: str = "pending") -> List[TodoItem]:
     finally:
         store.close()
     if status == "pending":
-        return [i for i in items if i.status in ("pending", "unconfirmed")]
-    return [i for i in items if i.status == status]
+        items = [i for i in items if i.status in ("pending", "unconfirmed")]
+    else:
+        items = [i for i in items if i.status == status]
+    # 看板要「最近该做的事」：先按状态（确认过的优先），再按时间倒序
+    items.sort(key=lambda i: (i.status != "pending", -int(i.message_ts or 0)))
+    return items
 
 
 def _rounded(canvas, x1, y1, x2, y2, r, **kw):
@@ -181,7 +185,7 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
                 cv.create_text(PAD, 150, text=f"读取失败：{exc}", anchor="w",
                                fill="#ff8fab", width=W - 2 * PAD, tags="body")
                 items = []
-            h = _resize(len(items))
+            h = _resize(min(len(items), 8))
             y = 148
             if not items:
                 cv.create_text(PAD, y, text="没有待处理的事项 🎉", anchor="w",
