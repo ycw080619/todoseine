@@ -76,6 +76,7 @@ PYTHONPATH=src python -m chat2todo import examples/sample_qq_export.txt --db c2t
 | 平台 | 获取方式 | 适配器 |
 |---|---|---|
 | QQ | 手机/电脑端「聊天记录」→ 导出为 txt | `qq_txt`（内置） |
+| 微信 | 第三方工具导出的 txt（三种行头自动识别） | `wechat_txt`（内置） |
 | 通用 | 任何符合 ChatLab Format 的 JSON / JSONL | `chatlab_json`（内置） |
 | 其它 | 欢迎提交 PR | — |
 
@@ -87,7 +88,7 @@ PYTHONPATH=src python -m chat2todo import examples/sample_qq_export.txt --db c2t
 
 ```
 导出文件
-   │  SourceAdapter（qq_txt / chatlab_json / 你的适配器）
+   │  SourceAdapter（qq_txt / wechat_txt / chatlab_json / 你的适配器）
    ▼
 Message 列表 ──► 去重（时间戳+发送者+长度+内容哈希）
    │
@@ -146,7 +147,7 @@ Message 列表 ──► 去重（时间戳+发送者+长度+内容哈希）
 ## 路线图
 
 - [x] v0.1 QQ txt 导入、去重、规则抽取、SQLite、Markdown
-- [ ] v0.2 微信/Telegram 适配器
+- [x] v0.3 微信 txt 适配器（Telegram 待做）
 - [ ] v0.3 LLM 二次判定（可选、可关闭、可本地模型）
 - [ ] v0.4 本地 API 与 MCP 接口
 - [ ] v0.5 桌面托盘提醒

@@ -18,6 +18,7 @@ from .ai import AI
 from .config import ConfigError, load, sample_toml
 from .core import Store, dedupe, extract_todos, render_markdown, to_csv, to_json
 from .errors import C2TError
+from .models import TodoItem
 
 
 # --- 辅助 ---------------------------------------------------------
@@ -116,6 +117,32 @@ def cmd_import(args) -> int:
             better = ai.rewrite(item.text)
             if better:
                 item.text = better
+    if ai.on("intent"):
+        kept = []
+        for item in todos:
+            verdict = ai.intent(item.text)
+            if verdict is not False:          # None = 判断失败，保留规则结论
+                kept.append(item)
+        if len(kept) != len(todos):
+            ai_note = f"{ai_note}（意图过滤：{len(todos)} → {len(kept)}）".strip()
+        todos = kept
+    if ai.on("merge") and len(todos) >= 2:
+        merged = ai.merge([t.text for t in todos])
+        if merged and len(merged) < len(todos):
+            by_text = {t.text: t for t in todos}
+            rebuilt = []
+            for text in merged:
+                base = by_text.get(text)
+                if base is not None:
+                    rebuilt.append(base)
+                else:                          # AI 合并出的新描述：沿用首条元数据并降置信度
+                    first = todos[0]
+                    rebuilt.append(TodoItem(
+                        text=text, session=first.session, sender=first.sender,
+                        message_ts=first.message_ts, reason="AI 归并", confidence=0.70,
+                    ))
+            ai_note = f"{ai_note}（AI 归并：{len(todos)} → {len(rebuilt)}）".strip()
+            todos = rebuilt
 
     try:
         store = Store(args.db or cfg["db_path"])
