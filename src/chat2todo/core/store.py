@@ -179,12 +179,32 @@ class Store:
             for r in rows
         ]
 
-    def stats(self) -> dict:
+    def set_status(self, todo_id: int, status: str = "done") -> bool:
+        cur = self.conn.execute(
+            "UPDATE todos SET status=? WHERE id=?", (status, todo_id)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def stats(self, since_ts: Optional[int] = None) -> dict:
+        """统计。since_ts 给定时只统计该时间点之后的数据（c2t stats --since 7d）。"""
+        if since_ts is None:
+            return {
+                "messages": self._count("messages"),
+                "todos": self._count("todos"),
+                "pending": self.conn.execute(
+                    "SELECT COUNT(*) FROM todos WHERE status='pending'"
+                ).fetchone()[0],
+            }
         return {
-            "messages": self._count("messages"),
-            "todos": self._count("todos"),
+            "messages": self.conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE ts >= ?", (since_ts,)
+            ).fetchone()[0],
+            "todos": self.conn.execute(
+                "SELECT COUNT(*) FROM todos WHERE ts >= ?", (since_ts,)
+            ).fetchone()[0],
             "pending": self.conn.execute(
-                "SELECT COUNT(*) FROM todos WHERE status='pending'"
+                "SELECT COUNT(*) FROM todos WHERE status='pending' AND ts >= ?", (since_ts,)
             ).fetchone()[0],
         }
 
