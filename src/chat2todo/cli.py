@@ -442,6 +442,84 @@ def cmd_db_import(args) -> int:
     return 0
 
 
+def _pipeline(path: str, cfg: dict, encoding: str = "") -> tuple:
+    """把一份导出文件跑完 读→去重→抽取→AI 清洗，返回 (messages, todos)。"""
+    src = path
+    if encoding:
+        src = _decode_to_temp(path, encoding)
+    name = _guess_adapter(path)
+    if name not in REGISTRY:
+        raise C2TError("E1002", f"没有名为 {name} 的适配器")
+    raw = list(get_adapter(name).read(src))
+    messages = dedupe(raw, strict=bool(cfg.get("strict_dedupe")))
+    todos = extract_todos(messages, session=os.path.splitext(os.path.basename(path))[0])
+    ai = AI(cfg)
+    if ai.on("review"):
+        todos = [t for t in todos if ai.review(t.text) is not False]
+    if ai.on("intent"):
+        todos = [t for t in todos if ai.intent(t.text) is not False]
+    if ai.on("rewrite"):
+        for t in todos:
+            better = ai.rewrite(t.text)
+            if better:
+                t.text = better
+    return messages, todos
+
+
+def cmd_watch(args) -> int:
+    """盯着一个文件夹：有新导出的聊天记录就自动导入并清洗。"""
+    import json as _json
+    import time as _time
+
+    cfg = _cfg(args)
+    folder = args.dir or os.path.join(os.path.expanduser("~"), "Desktop")
+    if not os.path.isdir(folder):
+        raise C2TError("E1001", f"文件夹不存在：{folder}")
+    state_file = os.path.join(os.path.expanduser("~"), ".c2t_watch.json")
+    seen = {}
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, "r", encoding="utf-8") as fh:
+                seen = _json.load(fh)
+        except Exception:
+            seen = {}
+
+    exts = (".txt", ".mht", ".html", ".jsonl", ".json")
+    print(f"监视中：{folder}（每 {args.interval} 秒检查一次，Ctrl+C 退出）")
+    while True:
+        try:
+            for name in os.listdir(folder):
+                if not name.lower().endswith(exts):
+                    continue
+                path = os.path.join(folder, name)
+                if not os.path.isfile(path):
+                    continue
+                stat = os.stat(path)
+                stamp = f"{stat.st_size}-{int(stat.st_mtime)}"
+                if seen.get(name) == stamp:
+                    continue
+                try:
+                    messages, todos = _pipeline(path, cfg, args.encoding)
+                    store = Store(_db(args))
+                    try:
+                        added = store.add_messages(messages)
+                        tadded = store.add_todos(todos)
+                    finally:
+                        store.close()
+                    print(f"[{_time.strftime('%H:%M:%S')}] {name}: 消息 {len(messages)}"
+                          f"（新增 {added}）→ 待办 {len(todos)}（新增 {tadded}）")
+                    seen[name] = stamp
+                    with open(state_file, "w", encoding="utf-8") as fh:
+                        _json.dump(seen, fh, ensure_ascii=False)
+                except Exception as exc:  # noqa: BLE001 - 单个文件失败不中断监视
+                    print(f"[{_time.strftime('%H:%M:%S')}] {name}: 失败 {exc}")
+                    seen[name] = stamp
+        except KeyboardInterrupt:
+            print("已退出监视")
+            return 0
+        _time.sleep(max(2, int(args.interval)))
+
+
 # --- 参数 ---------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -514,12 +592,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("db", help="检查数据库只读通道（需要解密后端）")
     p.set_defaults(func=cmd_db)
-
     p = sub.add_parser("db-import", help="从 QQ 数据库只读拉取消息并抽取待办")
     p.add_argument("--db", default="")
     p.add_argument("--limit", type=int, default=0, help="只取最近 N 条，0 表示全部")
     p.add_argument("--session", default="")
     p.set_defaults(func=cmd_db_import)
+
+    p = sub.add_parser("watch", help="监视文件夹，自动导入新导出的聊天记录")
+    p.add_argument("--dir", default="", help="默认监视桌面")
+    p.add_argument("--interval", type=int, default=5, help="检查间隔秒数")
+    p.add_argument("--db", default="")
+    p.add_argument("--encoding", default="")
+    p.set_defaults(func=cmd_watch)
 
     # 兼容旧命令名
     p = sub.add_parser("export-md", help="导出 Markdown（等同于 export --format md）")
