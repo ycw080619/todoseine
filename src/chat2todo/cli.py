@@ -330,6 +330,14 @@ def cmd_adapters(_args) -> int:
     return 0
 
 
+def cmd_dash(args) -> int:
+    """置顶小窗看板；纯界面，不影响数据与命令行。"""
+    from .dashboard import run
+
+    status = args.status or "pending"
+    return run(_db(args), interval=int(args.interval), status=status)
+
+
 # --- 参数 ---------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -393,6 +401,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("adapters", help="列出适配器")
     p.set_defaults(func=cmd_adapters)
+
+    p = sub.add_parser("dash", help="打开置顶待办看板（需要图形环境）")
+    p.add_argument("--db", default="")
+    p.add_argument("--interval", type=int, default=30, help="自动刷新秒数")
+    p.add_argument("--status", default="pending", choices=["pending", "unconfirmed", "done"])
+    p.set_defaults(func=cmd_dash)
 
     # 兼容旧命令名
     p = sub.add_parser("export-md", help="导出 Markdown（等同于 export --format md）")
