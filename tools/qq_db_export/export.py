@@ -77,6 +77,7 @@ def dump(conn: sqlite3.Connection, table: str, days: int, out) -> int:
             "type": 0,
             "chat_id": str(chat_id or ""),
             "msg_id": str(msg_id or ""),
+            "source": "c2c" if table == "c2c_msg_table" else "group",
         }, ensure_ascii=False) + "\n")
         n += 1
     return n
