@@ -406,6 +406,27 @@ def cmd_db_import(args) -> int:
         return 1
     messages = dedupe(messages)
     todos = extract_todos(messages, session=args.session or "qq")
+
+    # 本地模型清洗待办：复核 / 意图过滤 / 改写（默认全关，失败静默退规则）
+    ai = AI(cfg)
+    ai_note = ""
+    if ai.enabled and not ai.usable:
+        ai_note = "（AI 已启用但缺少 base_url/api_key，本次未调用）"
+    if ai.on("review"):
+        kept = [t for t in todos if ai.review(t.text) is not False]
+        ai_note = f"{ai_note}（AI 复核 {len(todos)}→{len(kept)}）".strip()
+        todos = kept
+    if ai.on("intent"):
+        kept = [t for t in todos if ai.intent(t.text) is not False]
+        ai_note = f"{ai_note}（意图过滤 {len(todos)}→{len(kept)}）".strip()
+        todos = kept
+    if ai.on("rewrite"):
+        for t in todos:
+            better = ai.rewrite(t.text)
+            if better:
+                t.text = better
+        ai_note = f"{ai_note}（AI 改写）".strip()
+
     store = Store(_db(args))
     try:
         added = store.add_messages(messages)
