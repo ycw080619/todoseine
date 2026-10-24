@@ -206,9 +206,13 @@ class BuiltinBackend:
     def fetch(self, db: DBInfo, limit: int = 0) -> List[Dict]:
         if not self.available():
             raise C2TError("E4002", "内置读取器需要 key（配置 [db].key 或 key_file）")
+        from ..core.crypto import verify_sqlcipher_key
+
+        if not verify_sqlcipher_key(self._key(), db.path):
+            raise C2TError("E4003", "密钥校验失败：无法解开首页，密钥或 KDF 参数不对")
         raise C2TError(
             "E4003",
-            "内置读取器尚未覆盖腾讯 WCDB 变体；请改用社区模块（[db].module）",
+            "密钥有效，但内置读取器尚未实现整库抽取；请配置 [db].module 用社区工具导入",
         )
 
 

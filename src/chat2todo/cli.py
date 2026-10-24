@@ -384,6 +384,11 @@ def cmd_db(args) -> int:
     builtin = BuiltinBackend(key=db_cfg.get("key", ""), key_file=db_cfg.get("key_file", ""))
     print(f"社区后端  : {'可用 → ' + db_cfg.get('module', '') if community.available() else '未配置'}")
     print(f"内置后端  : {'有 key，可尝试' if builtin.available() else '未提供 key'}")
+    if builtin.available():
+        from .core.crypto import verify_sqlcipher_key
+
+        ok = verify_sqlcipher_key(builtin._key(), info.path)
+        print(f"密钥校验  : {'通过，可解开首页（SQLite format 3）' if ok else '未通过——密钥或 KDF 参数不对'}")
     if not community.available() and not builtin.available():
         print("  → 现在无法读取；配置 [db].module 或 [db].key 后重试")
     return 0
