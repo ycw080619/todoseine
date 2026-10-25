@@ -106,6 +106,20 @@ def run_step(title: str, cmd: list[str], cwd: Path | None = None, env: dict | No
     return ok
 
 
+def start_dashboard(db_path: str) -> None:
+    """同步完顺手把看板拉起来（独立进程，关掉同步窗口不影响看板）。"""
+    cmd = [sys.executable, "-m", "chat2todo", "dash", "--db", db_path, "--interval", "30"]
+    try:
+        subprocess.Popen(
+            cmd,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as exc:  # noqa: BLE001 - 看板起不来不该影响同步结果
+        print(f"   看板启动失败：{exc}（可双击「打开待办看板」手动打开）")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=str(Path.home() / "Chat2Todo" / "qq.db"))
@@ -115,6 +129,7 @@ def main() -> int:
     ap.add_argument("--save-key", action="store_true", help="交互式保存数据库口令后退出")
     ap.add_argument("--key", default="")
     ap.add_argument("--no-review", action="store_true")
+    ap.add_argument("--open-dash", action="store_true", help="同步完成后自动打开看板")
     args = ap.parse_args()
 
     if args.save_key:
@@ -190,7 +205,11 @@ def main() -> int:
 
     print("\n✅ 同步完成")
     print(f"   数据库：{args.db}")
-    print("   双击桌面「打开待办看板」查看")
+    if args.open_dash:
+        print("   正在打开看板…")
+        start_dashboard(args.db)
+    else:
+        print("   （加 --open-dash 可同步完直接弹看板）")
     return 0
 
 
