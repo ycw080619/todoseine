@@ -136,6 +136,15 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
             store.close()
         refresh()
 
+    def set_noise(todo_id: int) -> None:
+        """右键：这条不是待办，标成 noise，以后不再出现在看板。"""
+        store = Store(db_path)
+        try:
+            store.set_status(todo_id, "noise")
+        finally:
+            store.close()
+        refresh()
+
     def add_todo() -> None:
         text = simpledialog.askstring("添加待办", "要做什么？", parent=root)
         if not text or not text.strip():
@@ -192,16 +201,30 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
             if not items:
                 cv.create_text(PAD, y, text="没有待处理的事项 🎉", anchor="w",
                                fill=SUB, font=("Microsoft YaHei UI", 9), tags="body")
+            from .core.deadline import label as due_label, parse as due_parse, urgency as due_urgency
+
+            items = sorted(
+                items[:40],
+                key=lambda i: (i.status != "pending", due_parse(i.text) or 9e18, -int(i.message_ts or 0)),
+            )
             for i, item in enumerate(items[:8]):
                 tag = f"item{i}"
                 cv.create_oval(PAD, y - 4, PAD + 8, y + 4, fill=ACCENTS[i % len(ACCENTS)],
                                outline="", tags=("body", tag))
-                text = item.text if len(item.text) <= 26 else item.text[:26] + "…"
+                due = due_parse(item.text)
+                chip = due_label(due)
+                text = item.text if len(item.text) <= 17 else item.text[:17] + "…"
                 cv.create_text(PAD + 18, y, text=text, anchor="w", fill=TEXT,
                                font=("Microsoft YaHei UI", 9),
                                tags=("body", tag))
+                if chip:
+                    color = {2: "#ff6b6b", 1: "#ffd93d", 0: "#8f8a84"}[due_urgency(due)]
+                    cv.create_text(W - PAD, y, text=chip, anchor="e", fill=color,
+                                   font=("Microsoft YaHei UI", 8), tags=("body", tag))
                 cv.tag_bind(tag, "<Button-1>",
                             lambda _e, tid=item.todo_id: set_done(tid))
+                cv.tag_bind(tag, "<Button-3>",
+                            lambda _e, tid=item.todo_id: set_noise(tid))
                 cv.create_line(PAD, y + 22, W - PAD, y + 22, fill=LINE, tags="body")
                 y += 42
 
