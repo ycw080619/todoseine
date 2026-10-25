@@ -195,7 +195,7 @@ def main() -> int:
             if not run_step(
                 "本地 AI 复核（筛选噪声）",
                 [PY, str(HERE / "review.py"), "--db", args.db,
-                 "--all", "--workers", str(args.workers)],
+                 "--workers", str(args.workers)],
                 env=env,
             ):
                 print("复核未完成，已导入的数据不受影响")

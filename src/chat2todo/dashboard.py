@@ -17,6 +17,14 @@ from typing import List
 from .core import Store
 from .models import TodoItem
 
+
+def _fmt_ts(ts) -> str:
+    """把时间戳格式化成 10-25 13:40；拿不到就原样返回。"""
+    try:
+        return time.strftime("%m-%d %H:%M", time.localtime(int(ts)))
+    except (TypeError, ValueError, OSError):
+        return str(ts or "")
+
 # ---- 外观参数（改这里就能换皮）----
 KEY = "#010203"        # 透明色键：窗口外圆角区域用这个颜色，Windows 会把它抠透
 PANEL = "#1c1a18"      # 面板底色
@@ -146,7 +154,7 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
         refresh()
 
     def toggle_item(item) -> None:
-        """左键：待定项点一下=确认，确认项点一下=完成。"""
+        """圆点：待定项点一下=确认，确认项点一下=完成。"""
         store = Store(db_path)
         try:
             if item.status == "unconfirmed":
@@ -156,6 +164,48 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
         finally:
             store.close()
         refresh()
+
+    def show_detail(item) -> None:
+        """点文字：弹窗看原文上下文（判断这条该不该做）。"""
+        win = tk.Toplevel(root)
+        win.title("原文")
+        win.configure(bg=PANEL)
+        win.attributes("-topmost", True)
+        win.geometry(f"380x320+{root.winfo_x() + 40}+{root.winfo_y() + 60}")
+
+        tk.Label(win, text="待办内容", bg=PANEL, fg=SUB, anchor="w",
+                 font=("Microsoft YaHei UI", 8)).pack(fill="x", padx=12, pady=(10, 0))
+        tk.Label(win, text=item.text, bg=PANEL, fg=TEXT, anchor="w", justify="left",
+                 wraplength=350, font=("Microsoft YaHei UI", 10)).pack(
+            fill="x", padx=12, pady=(2, 8))
+
+        meta = f"{item.sender or '未知'} · {_fmt_ts(item.message_ts)} · 置信度 {item.confidence:.2f}"
+        if item.reason:
+            meta += f"\n依据：{item.reason}"
+        tk.Label(win, text=meta, bg=PANEL, fg=SUB, anchor="w", justify="left",
+                 wraplength=350, font=("Microsoft YaHei UI", 8)).pack(
+            fill="x", padx=12, pady=(0, 8))
+
+        tk.Frame(win, bg=LINE, height=1).pack(fill="x", padx=12)
+        tk.Label(win, text="前后消息", bg=PANEL, fg=SUB, anchor="w",
+                 font=("Microsoft YaHei UI", 8)).pack(fill="x", padx=12, pady=(8, 2))
+
+        box = tk.Text(win, height=8, bg="#141312", fg=TEXT, bd=0, wrap="word",
+                      font=("Microsoft YaHei UI", 8), padx=8, pady=6)
+        box.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        store = Store(db_path)
+        try:
+            for m in reversed(store.nearby_messages(item.message_ts or 0, 6)):
+                who = m.get("sender_name") or "?"
+                when = _fmt_ts(m.get("ts"))
+                box.insert("end", f"[{when}] {who}\n{m.get('content','')}\n\n")
+        except Exception as exc:  # noqa: BLE001
+            box.insert("end", f"读取失败：{exc}")
+        finally:
+            store.close()
+        box.config(state="disabled")
+        tk.Button(win, text="关闭", command=win.destroy, bg="#2b2926", fg=TEXT,
+                  bd=0, activebackground="#3a3733", activeforeground=TEXT).pack(pady=(0, 10))
 
     def add_todo() -> None:
         text = simpledialog.askstring("添加待办", "要做什么？", parent=root)
@@ -222,7 +272,7 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
             for i, item in enumerate(items[:8]):
                 tag = f"item{i}"
                 cv.create_oval(PAD, y - 4, PAD + 8, y + 4, fill=ACCENTS[i % len(ACCENTS)],
-                               outline="", tags=("body", tag))
+                               outline="", tags=("body", tag, f"dot{i}"))
                 due = due_parse(item.text)
                 chip = due_label(due)
                 body = item.text if len(item.text) <= 17 else item.text[:17] + "…"
@@ -237,6 +287,8 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
                     cv.create_text(W - PAD, y, text=chip, anchor="e", fill=color,
                                    font=("Microsoft YaHei UI", 8), tags=("body", tag))
                 cv.tag_bind(tag, "<Button-1>",
+                            lambda _e, it=item: show_detail(it))
+                cv.tag_bind(f"dot{i}", "<Button-1>",
                             lambda _e, it=item: toggle_item(it))
                 cv.tag_bind(tag, "<Button-3>",
                             lambda _e, tid=item.todo_id: set_noise(tid))

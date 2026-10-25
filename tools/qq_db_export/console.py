@@ -154,6 +154,7 @@ class Console(tk.Tk):
         btn("打开看板", self.on_dashboard)
         btn("导入文件", self.on_import)
         self.watch_btn = btn("开始监视", self.on_watch)
+        btn("定时同步", self.on_schedule)
         btn("设置", self.on_settings)
 
     def _build_log(self) -> None:
@@ -198,6 +199,36 @@ class Console(tk.Tk):
                 self.after(0, self.refresh_stats)
 
         threading.Thread(target=run, daemon=True).start()
+
+    def on_schedule(self) -> None:
+        """用 Windows 计划任务实现定时同步（关掉控制台也照跑）。"""
+        task = "Chat2TodoSync"
+        exists = subprocess.run(["schtasks", "/Query", "/TN", task],
+                                capture_output=True, text=True).returncode == 0
+        if exists:
+            if not messagebox.askyesno("定时同步", f"已存在计划任务「{task}」（每 2 小时一次）。\n要关闭它吗？"):
+                return
+            r = subprocess.run(["schtasks", "/Delete", "/TN", task, "/F"],
+                               capture_output=True, text=True)
+            self.write(f"\n▸ 已请求删除计划任务：{'成功' if r.returncode == 0 else r.stderr.strip()}\n")
+            messagebox.showinfo("定时同步", "已关闭定时同步")
+            return
+
+        bat = Path(__file__).with_name("后台同步.bat")
+        if not bat.exists():
+            messagebox.showerror("定时同步", f"找不到 {bat.name}，请检查安装是否完整")
+            return
+        r = subprocess.run(
+            ["schtasks", "/Create", "/TN", task, "/SC", "HOURLY", "/MO", "2",
+             "/TR", f'cmd /c "{bat}"', "/F"],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            self.write(f"\n▸ 已开启定时同步：每 2 小时后台跑一次（任务名 {task}）\n")
+            messagebox.showinfo("定时同步", "已开启：每 2 小时自动同步一次\n（后台运行，不弹看板）")
+        else:
+            self.write(f"\n▸ 创建计划任务失败：{r.stderr.strip() or r.stdout.strip()}\n")
+            messagebox.showerror("定时同步", "创建失败，可能需要在「以管理员身份运行」下再试")
 
     def on_sync(self) -> None:
         if self.syncing:

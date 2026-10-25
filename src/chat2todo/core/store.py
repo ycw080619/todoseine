@@ -239,6 +239,15 @@ class Store:
         self.conn.commit()
         return cur.rowcount
 
+    def nearby_messages(self, ts: int, n: int = 4) -> List[dict]:
+        """给看板"双击看原文"用：取时间上离 ts 最近的几条消息。"""
+        rows = self.conn.execute(
+            "SELECT id, ts, sender_name, content FROM messages "
+            "ORDER BY ABS(ts - ?) LIMIT ?",
+            (int(ts), int(n)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def stats(self, since_ts: Optional[int] = None) -> dict:
         """统计。since_ts 给定时只统计该时间点之后的数据（c2t stats --since 7d）。"""
         if since_ts is None:
