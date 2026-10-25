@@ -145,6 +145,18 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
             store.close()
         refresh()
 
+    def toggle_item(item) -> None:
+        """左键：待定项点一下=确认，确认项点一下=完成。"""
+        store = Store(db_path)
+        try:
+            if item.status == "unconfirmed":
+                store.set_status(item.todo_id, "pending")
+            else:
+                store.set_status(item.todo_id, "done")
+        finally:
+            store.close()
+        refresh()
+
     def add_todo() -> None:
         text = simpledialog.askstring("添加待办", "要做什么？", parent=root)
         if not text or not text.strip():
@@ -213,8 +225,11 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
                                outline="", tags=("body", tag))
                 due = due_parse(item.text)
                 chip = due_label(due)
-                text = item.text if len(item.text) <= 17 else item.text[:17] + "…"
-                cv.create_text(PAD + 18, y, text=text, anchor="w", fill=TEXT,
+                body = item.text if len(item.text) <= 17 else item.text[:17] + "…"
+                if item.status == "unconfirmed":
+                    body = "? " + body        # 待定：点一下确认
+                cv.create_text(PAD + 18, y, text=body, anchor="w",
+                               fill=(SUB if item.status == "unconfirmed" else TEXT),
                                font=("Microsoft YaHei UI", 9),
                                tags=("body", tag))
                 if chip:
@@ -222,7 +237,7 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
                     cv.create_text(W - PAD, y, text=chip, anchor="e", fill=color,
                                    font=("Microsoft YaHei UI", 8), tags=("body", tag))
                 cv.tag_bind(tag, "<Button-1>",
-                            lambda _e, tid=item.todo_id: set_done(tid))
+                            lambda _e, it=item: toggle_item(it))
                 cv.tag_bind(tag, "<Button-3>",
                             lambda _e, tid=item.todo_id: set_noise(tid))
                 cv.create_line(PAD, y + 22, W - PAD, y + 22, fill=LINE, tags="body")

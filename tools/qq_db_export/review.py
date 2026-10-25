@@ -69,7 +69,11 @@ def main() -> int:
 
     store = Store(args.db)
     try:
-        items = store.list_todos(None if args.all else "unconfirmed")
+        if args.all:
+            items = store.list_todos(None)
+        else:
+            # 增量：只挑还没复核过的，避免每次同步都重跑全量（全量约 8 分钟）
+            items = store.unreviewed_todos()
         if args.limit:
             items = items[: args.limit]
         print(f"待复核 {len(items)} 条（模型 {ai.model}）")
@@ -84,13 +88,13 @@ def main() -> int:
                 except Exception:  # noqa: BLE001
                     verdict, failed = "maybe", failed + 1
                 if verdict == "yes":
-                    store.set_status(item.todo_id, "pending")
+                    store.mark_reviewed(item.todo_id, "pending")
                     kept += 1
                 elif verdict == "maybe":
-                    store.set_status(item.todo_id, "unconfirmed")
+                    store.mark_reviewed(item.todo_id, "unconfirmed")
                     maybe += 1
                 else:
-                    store.set_status(item.todo_id, "noise")
+                    store.mark_reviewed(item.todo_id, "noise")
                     dropped += 1
                 if i % 20 == 0:
                     print(f"  ... {i}/{len(items)}  确认 {kept} 待定 {maybe} 剔除 {dropped}")

@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS todos (
     confidence REAL NOT NULL DEFAULT 0,
     status     TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL DEFAULT '',
+    reviewed   INTEGER NOT NULL DEFAULT 0,
     UNIQUE (text, ts, sender)
 );
 CREATE INDEX IF NOT EXISTS idx_todos_status ON todos (status);
@@ -48,8 +49,21 @@ class Store:
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self._fts = self._init_fts()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """把老库补齐到当前 schema（只加列，不删不改，保证已有数据安全）。"""
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(todos)")}
+        if "reviewed" not in cols:
+            # AI 复核过的条目置 1，增量复核只挑没复核过的，避免每次全量重跑
+            self.conn.execute(
+                "ALTER TABLE todos ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0"
+            )
+            # 老库里已有的条目视为"已复核过"，否则升级后第一次会把历史全量重跑
+            self.conn.execute("UPDATE todos SET reviewed = 1")
+            self.conn.commit()
 
     # --- 全文索引（P2） -------------------------------------------
     def _init_fts(self) -> bool:
@@ -183,6 +197,33 @@ class Store:
         cur = self.conn.execute(
             "UPDATE todos SET status=? WHERE id=?", (status, todo_id)
         )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def unreviewed_todos(self, limit: int = 0) -> List[TodoItem]:
+        """还没被 AI 复核过的待办（增量复核用，避免每次全量重跑）。"""
+        sql = "SELECT * FROM todos WHERE reviewed = 0 ORDER BY ts DESC"
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        return [
+            TodoItem(
+                todo_id=r["id"], text=r["text"], session=r["session"], sender=r["sender"],
+                message_ts=r["ts"], reason=r["reason"], confidence=r["confidence"],
+                status=r["status"],
+            )
+            for r in self.conn.execute(sql).fetchall()
+        ]
+
+    def mark_reviewed(self, todo_id: int, status: Optional[str] = None) -> bool:
+        """记录某条已被复核，可选同时改状态（pending / unconfirmed / noise）。"""
+        if status:
+            cur = self.conn.execute(
+                "UPDATE todos SET reviewed=1, status=? WHERE id=?", (status, todo_id)
+            )
+        else:
+            cur = self.conn.execute(
+                "UPDATE todos SET reviewed=1 WHERE id=?", (todo_id,)
+            )
         self.conn.commit()
         return cur.rowcount > 0
 
