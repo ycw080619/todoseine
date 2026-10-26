@@ -242,6 +242,16 @@ def _write_cfg(cfg: dict) -> None:
     _write_section("ai", cfg)
 
 
+def _read_snap_refine() -> str:
+    """[snap] ai_refine，默认开启。"""
+    try:
+        from chat2todo.config import load
+
+        return str((load().get("snap") or {}).get("ai_refine", True))
+    except Exception:  # noqa: BLE001
+        return "True"
+
+
 def _read_hotkey(section: str = "dash", key: str = "hotkey",
                  default: str = "ctrl+alt+d") -> str:
     """读某个段里的快捷键配置（[dash] hotkey 或 [snap] hotkey）。"""
@@ -708,6 +718,32 @@ class Console(tk.Tk):
                                    width=24, font=("Microsoft YaHei UI", 9))
         self.vision.pack(side="left")
         self.vision.set(_read_snap_model() or "（不使用）")
+
+        r = self._card_row(p, page, "✨", "AI 整理识别文字",
+                           "识别后交给本地模型纠错、去噪、分行；关闭则原样显示 OCR 结果")
+        refine_on = {"on": str(_read_snap_refine()).lower() != "false"}
+        mk = tk.Canvas(r, width=46, height=24, bg=p["card"], highlightthickness=0,
+                       cursor="hand2")
+        mk.pack(side="left")
+
+        def draw_refine() -> None:
+            mk.delete("all")
+            on = refine_on["on"]
+            track = p["accent"] if on else ("#c7ccd6" if self.theme == "light" else "#3a4553")
+            mk.create_oval(2, 4, 22, 24, fill=track, outline="")
+            mk.create_oval(24, 4, 44, 24, fill=track, outline="")
+            mk.create_rectangle(12, 4, 34, 24, fill=track, outline="")
+            x = 32 if on else 12
+            mk.create_oval(x - 9, 3, x + 9, 21, fill="#ffffff", outline="")
+
+        def flip_refine(_e=None) -> None:
+            refine_on["on"] = not refine_on["on"]
+            draw_refine()
+            _write_section("snap", {"ai_refine": refine_on["on"]})
+            self.write(f"AI 整理已{'开启' if refine_on['on'] else '关闭'}（下次截图生效）\n")
+
+        mk.bind("<Button-1>", flip_refine)
+        draw_refine()
 
         r = self._card_row(p, page, "⌨", "截图热键",
                            "按热键后拖动框选屏幕区域；点「录制」可改键")

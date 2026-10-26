@@ -113,6 +113,23 @@ class AI:
         )
         return out.strip() if out else None
 
+    def refine_ocr(self, text: str) -> Optional[str]:
+        """把截图 OCR 出来的毛边文字整理干净：纠错、去噪、按行保留事实。"""
+        if not text.strip():
+            return None
+        self.timeout = max(int(self.timeout), 120)   # OCR 文本长，放宽超时
+        text = text[:4000]
+        out = self._chat(
+            "你是 OCR 文本整理器。输入是从截图里识别出来的文字，可能有错别字、"
+            "断行错乱、无关噪声（时间戳、昵称、按钮文字）。请："
+            "1) 修正明显的 OCR 错字；2) 去掉与内容无关的噪声；"
+            "3) 整理成通顺、保留全部关键事实的分行文本。"
+            "严禁编造原文没有的信息，宁可保留原样。只输出整理后的文本。",
+            text,
+            max_tokens=600,
+        )
+        return out.strip() if out else None
+
     def merge(self, texts: list[str]) -> Optional[list[str]]:
         """把讲同一件事的多条合并；返回合并后的列表。"""
         if len(texts) < 2:

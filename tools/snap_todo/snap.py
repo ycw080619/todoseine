@@ -541,6 +541,26 @@ def capture_region():
     return _grab_rect(*st["pos"])
 
 
+def ai_refine(text: str, cfg: dict) -> tuple[str, str]:
+    """可选：把 OCR 文字交给本地/云端模型整理。返回 (文本, 说明)。失败原样返回。"""
+    if not text.strip():
+        return text, ""
+    try:
+        if str((cfg.get("snap") or {}).get("ai_refine", "true")).lower() == "false":
+            return text, ""
+        from chat2todo.ai import AI
+
+        ai = AI(cfg)
+        if not ai.usable:
+            return text, ""
+        out = ai.refine_ocr(text)
+        if out and len(out.strip()) >= 4:
+            return out, " + AI整理"
+    except Exception:  # noqa: BLE001
+        pass
+    return text, ""
+
+
 def capture_once(args, cfg: dict) -> int:
     """热键触发的正流程：框选 → 识别 → 确认 → 入库。"""
     dib = capture_region()
@@ -550,7 +570,8 @@ def capture_once(args, cfg: dict) -> int:
     if not text:
         _notify("warn", f"识别完成（{engine}），但没有认出文字。")
         return 1
-    confirmed = confirm_dialog(text, engine)
+    text, note = ai_refine(text, cfg)
+    confirmed = confirm_dialog(text, engine + note)
     if not confirmed:
         return 0
     total, added = ingest(confirmed, args.db, cfg)
