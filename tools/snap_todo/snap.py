@@ -51,6 +51,18 @@ _CF_DIB = 8
 _CF_DIBV5 = 17
 
 
+def _dbg(msg: str) -> None:
+    """调试计时：设了环境变量 C2T_SNAP_DEBUG=<文件路径> 时写入耗时。"""
+    path = os.environ.get("C2T_SNAP_DEBUG")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%H:%M:%S')}.{int(time.time()*1000)%1000:03d} {msg}\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _dpi_aware() -> None:
     """让进程感知 DPI，否则 Tk 坐标是逻辑像素、GDI 抓屏是物理像素，会截错区域。"""
     try:
@@ -595,19 +607,25 @@ def ai_refine(text: str, cfg: dict) -> tuple[str, str]:
 
 def capture_once(args, cfg: dict) -> int:
     """热键触发的正流程：框选 → 识别 → 确认 → 入库。"""
+    _dbg("弹窗流程开始")
     dib = capture_region()
     if not dib:
         return 0
+    _dbg("已抓到选区")
     text, engine = recognize(dib, cfg, args.engine)
+    _dbg(f"OCR 完成（{engine}）")
     if not text:
         _notify("warn", f"识别完成（{engine}），但没有认出文字。")
         return 1
+
     def _refine(t: str):
         out, _note = ai_refine(t, cfg)
         return out if out != t else None
 
     enabled = str((cfg.get("snap") or {}).get("ai_refine", "true")).lower() != "false"
+    _dbg("准备显示确认窗")
     confirmed = confirm_dialog(text, engine, refine=_refine if enabled else None)
+    _dbg("确认窗已结束")
     if not confirmed:
         return 0
     total, added = ingest(confirmed, args.db, cfg)
@@ -702,8 +720,11 @@ def hotkey_loop(args, cfg: dict) -> int:
     try:
         while u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
             if msg.message == 0x0312:                               # WM_HOTKEY
-                subprocess.Popen([sys.executable, str(script), "--capture", "--db", args.db],
-                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                # 直接在本进程里截屏，省掉每次冷启动一个解释器（约 1-2 秒）
+                try:
+                    capture_once(args, cfg)
+                except Exception as exc:  # noqa: BLE001
+                    _notify("error", f"截图处理失败：{exc}")
     finally:
         u.UnregisterHotKey(None, 1)
     return 0

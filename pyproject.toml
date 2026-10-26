@@ -25,6 +25,7 @@ dependencies = []
 dev = ["pytest>=7", "ruff>=0.4"]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
 db = ["sqlcipher3>=0.6.2"]
+snap = ["winsdk>=1.0.0b10"]   # 截图待办的快速 OCR（不装则回退 PowerShell，慢 2~3 秒）
 
 [project.scripts]
 c2t = "chat2todo.cli:main"
