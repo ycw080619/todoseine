@@ -173,9 +173,50 @@ def _rounded(canvas, x1, y1, x2, y2, r, **kw):
     return canvas.create_polygon(pts, smooth=True, **kw)
 
 
+def _ui_config() -> dict:
+    """读 c2t.toml 的 [ui] 段；读不到就返回空字典。"""
+    try:
+        from pathlib import Path
+
+        from .config import load
+
+        cfg_path = Path.home() / "Chat2Todo" / "c2t.toml"
+        if not cfg_path.exists():
+            return {}
+        return (load(str(cfg_path)) or {}).get("ui") or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _apply_ui_config() -> dict:
+    """按配置覆盖调色板全局变量，返回启动参数（透明度）。"""
+    import re as _re
+
+    global ACCENT, PANEL, BORDER, TEXT, SUB, LINE, FIELD, ACTIVE
+
+    ui = _ui_config()
+    theme = str(ui.get("theme") or "dark").lower()
+    if theme == "light":
+        PANEL, BORDER = "#f8f8fb", "#e3e3ec"
+        TEXT, SUB, LINE = "#1f2330", "#6b7280", "#ececf3"
+        FIELD, ACTIVE = "#ffffff", "#e8eefc"
+
+    accent = str(ui.get("accent") or "").strip()
+    if _re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
+        ACCENT = accent
+    try:
+        alpha = float(ui.get("opacity", 0.93))
+    except (TypeError, ValueError):
+        alpha = 0.93
+    return {"alpha": max(0.35, min(1.0, alpha))}
+
+
 def run(db_path: str, interval: int = 30, status: str = "pending",
-        alpha: float = 0.93, x: int = 120, y: int = 120) -> int:
+        alpha: float = None, x: int = 120, y: int = 120) -> int:
     """启动悬浮看板，阻塞直到关闭。"""
+    ui = _apply_ui_config()
+    if alpha is None:
+        alpha = ui["alpha"]
     if not _single_instance():
         print("看板已在运行（Ctrl+Alt+D 可唤出）", file=sys.stderr)
         return 0

@@ -244,6 +244,22 @@ def _write_cfg(cfg: dict) -> None:
     _write_section("ai", cfg)
 
 
+def _read_ui(key: str, default: str = "") -> str:
+    """读 [ui] 某个键。"""
+    try:
+        from chat2todo.config import load
+
+        return str((load().get("ui") or {}).get(key, default))
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def _save_ui_accent(color: str, app) -> None:
+    """写入 [ui] accent 并提示。"""
+    _write_section("ui", {"accent": color})
+    app.write(f"强调色已改为 {color}（重启看板生效）\n")
+
+
 def _read_snap_refine() -> str:
     """[snap] ai_refine，默认开启。"""
     try:
@@ -687,6 +703,24 @@ class Console(tk.Tk):
         mk.bind("<Button-1>", flip)
         draw_switch()
 
+        r = self._card_row(p, page, "🎨", "外观",
+                           "不透明度与强调色，改完重启看板生效")
+        self.op_entry = tk.Entry(r, width=6, bg=p["field"], fg=p["text"], bd=0,
+                                 relief="flat", justify="center",
+                                 font=("Consolas", 9))
+        self.op_entry.insert(0, str(_read_ui("opacity", "0.93")))
+        self.op_entry.pack(side="right", padx=(6, 0))
+        tk.Label(r, text="不透明度", bg=p["card"], fg=p["muted"],
+                 font=("Microsoft YaHei UI", 8)).pack(side="right")
+        swatches = tk.Frame(r, bg=p["card"])
+        swatches.pack(side="right", padx=(0, 10))
+        for color in ("#4cc2ff", "#7c9cff", "#ff8fab", "#6ee7a8", "#ffd93d"):
+            dot = tk.Canvas(swatches, width=16, height=16, bg=p["card"],
+                            highlightthickness=0, cursor="hand2")
+            dot.pack(side="left", padx=2)
+            dot.create_oval(1, 1, 15, 15, fill=color, outline="")
+            dot.bind("<Button-1>", lambda _e, c=color: _save_ui_accent(c, self))
+
         r = self._card_row(p, page, "⌨", "全局快捷键",
                            "看板贴在桌面层时，按这个组合唤出；录制后重启看板生效")
         self.hotkey_label = tk.Label(r, text=_read_hotkey(), bg=p["card"], fg=p["text"],
@@ -1080,6 +1114,15 @@ class Console(tk.Tk):
                               "enabled": enabled, "review": enabled})
         vm = self.vision.get().strip()
         _write_section("snap", {"vision_model": "" if vm == "（不使用）" else vm})
+        # 外观：不透明度（留着 accent 由色块按钮即时写入，不在这里覆盖）
+        try:
+            op = float(self.op_entry.get().strip())
+            op = max(0.35, min(1.0, op))
+        except (AttributeError, TypeError, ValueError):
+            op = None
+        if op is not None:
+            _write_section("ui", {"opacity": round(op, 2)})
+            self.write(f"不透明度已保存为 {round(op, 2)}（重启看板生效）\n")
         pw = self.pw_entry.get().strip()
         if pw:
             try:
