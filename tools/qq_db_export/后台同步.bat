@@ -1,6 +1,8 @@
 @echo off
 chcp 65001 >nul
-rem 供 Windows 计划任务调用的后台同步：不弹看板、只跑数据
-set PY=C:\Users\ycw\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\python.exe
-set TOOLS=C:\Users\ycw\.dsh\dsh_wechat\chat2todo\tools\qq_db_export
-"%PY%" "%TOOLS%\sync.py" --days 1 --max-ai 80 >> "%USERPROFILE%\Chat2Todo\sync.log" 2>&1
+rem Chat2Todo 后台同步：供 Windows 计划任务调用（控制台「定时同步」按钮会自动注册）
+rem 内置引擎直读 QQ 数据库，无需 Docker；日志追加到 %USERPROFILE%\Chat2Todo\sync.log
+for %%i in ("%~dp0..\..") do set "PYTHONPATH=%%~fi\src"
+set PYTHONIOENCODING=utf-8
+set PYTHONUTF8=1
+py -3 -u -m chat2todo db-import --days 1 --db "%USERPROFILE%\Chat2Todo\qq.db" >> "%USERPROFILE%\Chat2Todo\sync.log" 2>&1

@@ -1,83 +1,33 @@
-# QQ 数据库导出（可选工具）
+# Windows 图形控制台（可选工具）
 
-把本机 QQ NT 的聊天库解成 JSONL，交给 Chat2Todo 的数据库通道或离线分析。
+Chat2Todo 的 Windows 桌面入口：一个窗口管住「同步 / 看板 / 导入 / 监视 / 定时 / 设置」。
+数据通道是**内置引擎**（sqlcipher3 直读 QQ 数据库快照），不再需要 Docker。
 
-> ⚠️ 只处理**你自己**的聊天记录。产物含真实私聊内容，用完请删除。
-> 本目录脚本不随核心包安装，属于「进阶工具」，小白用户可以完全忽略。
+> ⚠️ 只处理**你自己**的聊天记录。本目录脚本不随核心包安装，属于「进阶工具」，纯命令行用户可以完全忽略。
 
-## 一键同步（推荐）
+## 文件
 
-```bash
-python sync.py --save-key     # 第一次：交互输入数据库口令，DPAPI 加密存本机
-python sync.py                # 之后：一条命令跑完 解密→入库→AI复核
-python sync.py --days 3 --max-ai 40   # 只看近 3 天、最多问 40 次模型
-```
-
-会依次完成：自动找到 `nt_msg.db` → 复制快照（活库不能直接解）→ 启动 Docker（没开会自动拉起）
-→ 容器内解密导出 JSONL → 入库并做规则/语义过滤 → 本地 Ollama 三分类复核 → 清理临时文件。
-
-Windows 上本目录还带 `一键同步.bat`，可直接建桌面快捷方式双击运行。
-
-## 为什么需要 Docker
-
-`nt_msg.db` 是 **SQLCipher 4 加密库**，外面套了 1024 字节自定义头。
-Windows 上没有现成的 `sqlcipher3` 轮子，而 Debian 容器里 `apt install sqlcipher` 一条命令就能拿到引擎。
-所以这里用「容器内解密 + 导出」，宿主机不装任何东西。
-
-## 前置
-
-1. 已提取数据库口令（社区工具 `ntqq_get_key.ps1` 一类，需账号处于离线状态才能取）
-2. Windows 上装好 Docker Desktop（Linux 容器）
+| 文件 | 作用 |
+| --- | --- |
+| `console.bat` | 双击启动控制台（pyw 无窗格运行，路径自解析，免安装） |
+| `console.py` | 控制台本体（tkinter，标准库实现） |
+| `后台同步.bat` | 供 Windows 计划任务调用的无界面同步（`db-import --days 1`，日志追加到 `%USERPROFILE%\Chat2Todo\sync.log`） |
 
 ## 用法
 
-```bash
-# 1. 先把 nt_msg.db 复制一份到工作目录（不要直接对原库操作）
-#    路径通常是 ...\Tencent Files\<QQ号>\nt_qq\nt_db\
+1. 双击 `console.bat`；
+2. 第一次使用：点「设置」填入数据库口令（DPAPI 加密存到 `%USERPROFILE%\Chat2Todo\dbkey.dat`，仅本机当前用户可解）；
+3. 点「立即同步」：内置引擎快照解密 → 入库 → 规则/语义过滤 → 本地 Ollama 复核，日志实时滚动；
+4. 「定时同步」按钮会注册 Windows 计划任务，每 2 小时后台跑一次 `后台同步.bat`。
 
-# 2. 复制本目录的三个文件到同一工作目录：run.sh / export.py / nt_msg.db
-# 3. 执行（把 <KEY> 换成你的口令）
-docker run --rm \
-  --dns 114.114.114.114 --dns 8.8.8.8 \
-  -e NTQQ_DB_KEY='<KEY>' \
-  -e DAYS=7 \
-  -v "$PWD":/data -v "$PWD":/src:ro \
-  python:3.11-slim \
-  bash /src/run.sh
-```
+## 前置
 
-产物：`messages.jsonl`，每行一条消息：
+- Windows + Python 3.9+（自带 `py` 启动器）；
+- `pip install sqlcipher3`（加密库引擎，排错见 [docs/db-channel.md](../../docs/db-channel.md)）；
+- 数据库口令：用社区提取工具（QQBackup / NapCat 一类，QQ 需**保持登录运行**才能从内存扫到），
+  在控制台「设置」里保存，或命令行 `c2t db-key --save`。
 
-```json
-{"timestamp":1792842363,"sender":"231458000","sender_name":"小李","content":"明天前把周报发我","type":0,"chat_id":"670649801730901864","msg_id":"..."}
-```
+## 历史
 
-## 字段说明
-
-| 来源列 | 含义 | 说明 |
-| --- | --- | --- |
-| `40001` | msgId | 64 位整数，去重可用 |
-| `40002` | 会话 ID | 群号或对方 QQ |
-| `40021` / `40027` | 发送者 QQ | 两个都试，取非空 |
-| `40050` | Unix 时间戳 | 秒 |
-| `40093` | 发送者昵称 | **不是**正文 |
-| `40800` | 消息体 | protobuf BLOB，中文正文在其中 |
-
-正文没有公开的 proto 定义，`export.py` 的做法是：按 UTF-8 解码后取最长的可打印片段，
-再剥掉开头粘连的类型残渣（例如 `6照片记得…` 里的 `6`）。
-
-## 常见问题
-
-| 现象 | 原因 | 处理 |
-| --- | --- | --- |
-| `Temporary failure resolving deb.debian.org` | 容器没 DNS | `--dns` 同时给 `114.114.114.114` 与 `8.8.8.8`，只给一个常常失败 |
-| `sqlcipher: command not found` | 装与用在两个容器里 | 必须同一次 `docker run` 内完成 |
-| `table c2c_msg_table already exists` | 上次的 plain.db 还在 | 脚本已 `rm -f`，手工执行时也要先删 |
-| 打开后报 `file is not a database` | 没剥 1024 字节头 | 用 `tail -c +1025` |
-| 提示 `1st ORDER BY term out of range` | 数字列名被当成序号 | 列名加双引号：`"40012"` |
-
-## 安全提示
-
-- 明文库（`plain.db`）与消息 JSONL 都含真实聊天内容，属于敏感文件；
-- 脚本结束时会删掉 `plain.db` / `clear.db` / `dec.sql`，但 **JSONL 会保留**，请自行决定保存多久；
-- 不要把明文库、口令、JSONL 提交到任何仓库。
+v0.4 之前的「Docker 容器解密导出」链路（sync.py / export.py / pipeline.py / run.sh）已被内置后端取代并移除，
+需要考古请翻 git 历史。

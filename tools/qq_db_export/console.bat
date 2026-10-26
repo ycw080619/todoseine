@@ -1,3 +1,4 @@
 @echo off
-chcp 65001 >nul
-start "" "C:\Users\ycw\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\python\pythonw.exe" "C:\Users\ycw\.dsh\dsh_wechat\chat2todo\tools\qq_db_export\console.py"
+rem Chat2Todo 控制台：双击启动。路径自解析，无需 pip install（PYTHONPATH 指向仓库 src）
+for %%i in ("%~dp0..\..") do set "PYTHONPATH=%%~fi\src"
+start "" pyw -3 "%~dp0console.py"
