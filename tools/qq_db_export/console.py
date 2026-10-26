@@ -289,13 +289,20 @@ def _set_autostart(on: bool) -> tuple:
 
 
 def _read_ui(key: str, default: str = "") -> str:
-    """读 [ui] 某个键。"""
+    """读 [ui] 某个键；必须显式传配置路径，否则读到的永远是默认值。"""
     try:
         from chat2todo.config import load
 
-        return str((load().get("ui") or {}).get(key, default))
+        cfg = load(str(CONFIG) if CONFIG.exists() else None) or {}
+        return str((cfg.get("ui") or {}).get(key, default))
     except Exception:  # noqa: BLE001
         return default
+
+
+def _read_ui_flag(key: str, default: bool = True) -> bool:
+    """读 [ui] 里的布尔开关（border / clock 这类）。"""
+    val = _read_ui(key, "true" if default else "false").strip().lower()
+    return val not in ("false", "0", "no", "off")
 
 
 def _save_ui_key(key: str, value, app, label: str = "") -> None:
@@ -780,7 +787,7 @@ class Console(tk.Tk):
         draw_auto()
 
         r = self._card_row(p, page, "🎨", "外观",
-                           "强调色、面板底色、不透明度；改完看板会自己刷新，无需重启")
+                           "强调色、面板底色、宽度、圆角、描边与时间显示；改完看板会自动刷新")
         box = tk.Frame(r, bg=p["card"])
         box.pack(side="right")
 
@@ -827,6 +834,42 @@ class Console(tk.Tk):
                                  font=("Consolas", 9))
         self.op_entry.insert(0, str(_read_ui("opacity", "0.93")))
         self.op_entry.pack(side="left")
+
+        tog_row = tk.Frame(box, bg=p["card"])
+        tog_row.pack(side="top", anchor="e", pady=2)
+
+        def _ui_switch(parent, label: str, cfg_key: str, on: bool) -> None:
+            """小型开关：即时写回 [ui]，看板 2 秒内自动生效。"""
+            tk.Label(parent, text=label, bg=p["card"], fg=p["muted"],
+                     font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(0, 4))
+            mk = tk.Canvas(parent, width=46, height=24, bg=p["card"],
+                           highlightthickness=0, cursor="hand2")
+            mk.pack(side="left")
+            state = {"on": on}
+
+            def draw() -> None:
+                mk.delete("all")
+                track = p["accent"] if state["on"] else (
+                    "#c7ccd6" if self.theme == "light" else "#3a4553")
+                mk.create_oval(2, 4, 22, 24, fill=track, outline="")
+                mk.create_oval(24, 4, 44, 24, fill=track, outline="")
+                mk.create_rectangle(12, 4, 34, 24, fill=track, outline="")
+                x = 32 if state["on"] else 12
+                mk.create_oval(x - 9, 3, x + 9, 21, fill="#ffffff", outline="")
+
+            def flip(_e=None) -> None:
+                state["on"] = not state["on"]
+                draw()
+                _write_section("ui", {cfg_key: state["on"]})
+                self.write(f"{label}已{'开启' if state['on'] else '关闭'}"
+                           "（看板会自动刷新）\n")
+
+            mk.bind("<Button-1>", flip)
+            draw()
+
+        _ui_switch(tog_row, "描边", "border", _read_ui_flag("border"))
+        tk.Frame(tog_row, bg=p["card"], width=12).pack(side="left")
+        _ui_switch(tog_row, "显示时间", "clock", _read_ui_flag("clock"))
 
 
         r = self._card_row(p, page, "⌨", "全局快捷键",

@@ -657,7 +657,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         root.geometry(f"{w}x{h}{pos}")
         cv.config(width=w, height=h)
         cv.delete("bg")
-        _rounded(cv, 1, 1, w - 1, h - 1, 18, fill=PANEL, outline=BORDER, width=1, tags="bg")
+        _rounded(cv, 1, 1, w - 1, h - 1, RADIUS, fill=PANEL,
+                 outline=BORDER if BORDER_ON else PANEL,
+                 width=1 if BORDER_ON else 0, tags="bg")
         cv.tag_lower("bg")
 
     state["w"] = W
@@ -798,6 +800,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                        fill=TEXT, font=("Microsoft YaHei UI", 11, "bold"), tags="body")
         cv.create_text(W - 152, 24, text=time.strftime("%H:%M"), anchor="e", fill=SUB,
                        font=("Consolas", 10), tags=("body", "hclock"))
+        if not SHOW_CLOCK:
+            cv.itemconfig("hclock", state="hidden")
         cv.create_text(W - 122, 24, text="☑", anchor="e",
                        fill=(ACCENT if state["batch"] else SUB),
                        font=("Segoe UI Symbol", 11), tags=("body", "multi"))

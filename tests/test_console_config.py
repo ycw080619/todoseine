@@ -51,6 +51,26 @@ class TestConfigIO(unittest.TestCase):
         got = console._read_cfg()
         self.assertIn("11434", got["base_url"])
 
+    def test_ui_flags_read_from_config(self) -> None:
+        """外观开关必须读真实配置，不能落到默认值上。"""
+        self.cfg.write_text(
+            "db_path = 'x'\n\n[ui]\nborder = false\nclock = false\nwidth = 420\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(console._read_ui("width"), "420")
+        self.assertFalse(console._read_ui_flag("border"))
+        self.assertFalse(console._read_ui_flag("clock"))
+
+    def test_ui_flag_defaults_true(self) -> None:
+        self.assertTrue(console._read_ui_flag("border"))
+        self.assertTrue(console._read_ui_flag("clock"))
+
+    def test_write_ui_bool_literal(self) -> None:
+        console._write_section("ui", {"border": False, "clock": True})
+        text = self.cfg.read_text(encoding="utf-8")
+        self.assertIn("border = false", text)
+        self.assertIn("clock = true", text)
+
 
 if __name__ == "__main__":
     unittest.main()
