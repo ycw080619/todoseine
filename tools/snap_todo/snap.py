@@ -507,7 +507,7 @@ def capture_region():
     root.geometry(f"{sw}x{sh}+0+0")
     cv = tk.Canvas(root, bg="#111111", highlightthickness=0, cursor="crosshair")
     cv.pack(fill="both", expand=True)
-    cv.create_text(24, 24, text="拖动框选要识别的区域　·　Esc 取消", anchor="w",
+    cv.create_text(24, 24, text="拖动框选要识别的区域　·　右键 / Esc 取消", anchor="w",
                    fill="#e8e8e8", font=("Microsoft YaHei UI", 10))
     st = {"x0": 0, "y0": 0, "box": None, "pos": None}
 
@@ -532,6 +532,8 @@ def capture_region():
     cv.bind("<Button-1>", press)
     cv.bind("<B1-Motion>", drag)
     cv.bind("<ButtonRelease-1>", release)
+    cv.bind("<Button-3>", lambda _e: root.destroy())      # 右键退出截图
+    root.bind("<Button-3>", lambda _e: root.destroy())
     root.bind("<Escape>", lambda _e: root.destroy())
     root.mainloop()
     if not st["pos"]:
