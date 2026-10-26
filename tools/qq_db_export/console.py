@@ -275,8 +275,8 @@ class Console(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Chat2Todo 控制台")
-        self.geometry("640x520")
-        self.minsize(560, 440)
+        self.geometry("820x580")
+        self.minsize(720, 500)
 
         self.syncing = False
         self.watch_proc: subprocess.Popen | None = None
@@ -293,9 +293,18 @@ class Console(tk.Tk):
     def _build_ui(self) -> None:
         p = self._pal()
         self.configure(bg=p["bg"])
-        self._build_header(p)
-        self._build_buttons(p)
-        self._build_log(p)
+        nav_bg = "#12151a" if self.theme == "dark" else "#e9edf3"
+        side = tk.Frame(self, bg=nav_bg, width=196)
+        side.pack(side="left", fill="y")
+        side.pack_propagate(False)
+        tk.Label(side, text="◈  Chat2Todo", bg=nav_bg, fg=p["title"], anchor="w",
+                 font=("Microsoft YaHei UI", 11, "bold")).pack(fill="x", padx=16, pady=(18, 12))
+        self._build_buttons(p, side, nav_bg)
+
+        right = tk.Frame(self, bg=p["bg"])
+        right.pack(side="left", fill="both", expand=True)
+        self._build_header(p, right)
+        self._build_log(p, right)
 
     def set_theme(self, theme: str) -> None:
         """切换主题：整窗重建（保留日志内容与各按钮运行状态）。"""
@@ -314,52 +323,52 @@ class Console(tk.Tk):
             self.write(keep)
         self.refresh_stats()
         if syncing:
-            self.sync_btn.config(state="disabled", text="同步中…")
+            self.sync_btn.config(state="disabled", text="  ⟳  同步中…")
         if watching:
-            self.watch_btn.config(text="停止监视")
+            self.watch_btn.config(text=" ◉  停止监视")
         if hotkey:
-            self.snap_btn.config(text="停止热键")
+            self.snap_btn.config(text=" ⌘  停止热键")
         self.write(f"\n▸ 已切换到{'深色' if self.theme == 'dark' else '浅色'}模式\n")
 
-    def _build_header(self, p: dict) -> None:
-        box = tk.Frame(self, bg=p["bg"])
-        box.pack(fill="x", padx=14, pady=(12, 4))
-        tk.Label(box, text="Chat2Todo", bg=p["bg"], fg=p["title"],
-                 font=("Microsoft YaHei UI", 15, "bold")).pack(side="left")
-        self.stats = tk.Label(box, text="", bg=p["bg"], fg=p["muted"],
+    def _build_header(self, p: dict, parent) -> None:
+        box = tk.Frame(parent, bg=p["bg"])
+        box.pack(fill="x", padx=22, pady=(20, 6))
+        tk.Label(box, text="聊天记录 → 待办", bg=p["bg"], fg=p["text"], anchor="w",
+                 font=("Microsoft YaHei UI", 15, "bold")).pack(anchor="w")
+        self.stats = tk.Label(box, text="", bg=p["bg"], fg=p["muted"], anchor="w",
                               font=("Microsoft YaHei UI", 9))
-        self.stats.pack(side="right")
+        self.stats.pack(anchor="w", pady=(2, 0))
 
-    def _build_buttons(self, p: dict) -> None:
-        box = tk.Frame(self, bg=p["bg"])
-        box.pack(fill="x", padx=10, pady=4)
-
-        def btn(text, cmd, primary=False):
-            b = tk.Button(box, text=text, command=cmd, relief="flat", cursor="hand2",
-                          bg=p["accent"] if primary else p["btn"],
-                          fg=p["accent_fg"] if primary else p["btn_text"],
-                          activebackground=p["accent_hover"] if primary else p["border"],
-                          activeforeground=p["accent_fg"] if primary else p["btn_text"],
-                          font=("Microsoft YaHei UI", 9), padx=12, pady=6,
+    def _build_buttons(self, p: dict, parent, nav_bg: str) -> None:
+        def item(text: str, icon: str, cmd, primary: bool = False):
+            b = tk.Button(parent, text=f" {icon}   {text}", command=cmd, relief="flat",
+                          cursor="hand2", anchor="w", padx=12, pady=8,
+                          bg=(p["accent"] if primary else nav_bg),
+                          fg=(p["accent_fg"] if primary else p["btn_text"]),
+                          activebackground=(p["accent_hover"] if primary else p["border"]),
+                          activeforeground=(p["accent_fg"] if primary else p["text"]),
+                          font=("Microsoft YaHei UI", 9, "bold" if primary else "normal"),
                           borderwidth=0, highlightthickness=0)
-            b.pack(side="left", padx=4, pady=2)
+            b.pack(fill="x", padx=10, pady=1)
             return b
 
-        self.sync_btn = btn("立即同步", self.on_sync, primary=True)
-        btn("打开看板", self.on_dashboard)
-        btn("导入文件", self.on_import)
-        btn("截图待办", self.on_snap)
-        self.snap_btn = btn("截图热键", self.on_snap_hotkey)
-        self.watch_btn = btn("开始监视", self.on_watch)
-        btn("定时同步", self.on_schedule)
-        btn("设置", self.on_settings)
+        self.sync_btn = item("立即同步", "⟳", self.on_sync, primary=True)
+        item("打开看板", "▦", self.on_dashboard)
+        item("导入文件", "＋", self.on_import)
+        item("截图待办", "◧", self.on_snap)
+        self.snap_btn = item("截图热键", "⌘", self.on_snap_hotkey)
+        self.watch_btn = item("开始监视", "◉", self.on_watch)
+        item("定时同步", "◷", self.on_schedule)
+        tk.Frame(parent, bg=nav_bg, height=12).pack(fill="x")
+        item("设置", "⚙", self.on_settings)
 
-    def _build_log(self, p: dict) -> None:
-        wrap = tk.Frame(self, bg=p["bg"])
-        wrap.pack(fill="both", expand=True, padx=12, pady=(6, 12))
+    def _build_log(self, p: dict, parent) -> None:
+        wrap = tk.Frame(parent, bg=p["bg"])
+        wrap.pack(fill="both", expand=True, padx=22, pady=(8, 16))
         self.log = tk.Text(wrap, bg=p["log_bg"], fg=p["log_fg"],
                            insertbackground=p["log_fg"], relief="flat",
-                           font=("Consolas", 9), wrap="word", borderwidth=0)
+                           font=("Consolas", 9), wrap="word", borderwidth=0,
+                           padx=12, pady=10)
         self.log.pack(fill="both", expand=True)
         self.log.configure(state="disabled")
 
