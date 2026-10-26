@@ -450,10 +450,24 @@ def hotkey_loop(args, cfg: dict) -> int:
     u.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
     u.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
                             wintypes.UINT, wintypes.UINT]
-    if not u.RegisterHotKey(None, 1, 0x0001 | 0x0002, ord("S")):   # MOD_ALT | MOD_CONTROL
-        _notify("error", "全局热键 Ctrl+Alt+S 被其它程序占用，请关闭冲突程序后再试")
+    spec = str((cfg.get("snap") or {}).get("hotkey") or "ctrl+alt+s")
+    parsed = None
+    try:
+        from chat2todo.core.hotkey import parse_hotkey
+
+        parsed = parse_hotkey(spec)
+    except Exception:  # noqa: BLE001
+        parsed = None
+    if parsed is None:
+        print(f"[E4009] 无法识别快捷键配置：{spec}，回退到 ctrl+alt+s")
+        spec = "ctrl+alt+s"
+        from chat2todo.core.hotkey import parse_hotkey as _p
+
+        parsed = _p(spec)
+    if not u.RegisterHotKey(None, 1, parsed[0] & ~0x4000, parsed[1]):
+        _notify("error", f"全局热键 {spec} 被其它程序占用，请到设置里换一个组合")
         return 2
-    print("截图热键已生效：Ctrl+Alt+S（结束本进程即取消）")
+    print(f"截图热键已生效：{spec}（结束本进程即取消）")
     script = Path(__file__).resolve()
     msg = wintypes.MSG()
     try:
@@ -470,7 +484,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="截图待办：剪贴板图片 → 识别 → 确认 → 入库")
     ap.add_argument("--db", default="", help="目标数据库（默认 %%USERPROFILE%%\\Chat2Todo\\qq.db）")
     ap.add_argument("--watch", action="store_true", help="持续监视剪贴板，而非只处理一次")
-    ap.add_argument("--hotkey", action="store_true", help="常驻并注册 Ctrl+Alt+S 全局热键")
+    ap.add_argument("--hotkey", action="store_true", help="常驻并注册全局热键（默认 Ctrl+Alt+S，可在设置里改）")
     ap.add_argument("--interval", type=float, default=2.0, help="--watch 的轮询间隔（秒）")
     ap.add_argument("--engine", choices=["auto", "win", "vision"], default="auto",
                     help="识别引擎：auto=视觉模型可用则用，否则 Windows OCR")

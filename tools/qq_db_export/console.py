@@ -242,14 +242,15 @@ def _write_cfg(cfg: dict) -> None:
     _write_section("ai", cfg)
 
 
-def _read_hotkey() -> str:
-    """当前全局快捷键（配置在 [dash] hotkey），读不到就用默认值。"""
+def _read_hotkey(section: str = "dash", key: str = "hotkey",
+                 default: str = "ctrl+alt+d") -> str:
+    """读某个段里的快捷键配置（[dash] hotkey 或 [snap] hotkey）。"""
     try:
         from chat2todo.config import load
 
-        return (load().get("dash") or {}).get("hotkey") or "ctrl+alt+d"
+        return (load().get(section) or {}).get(key) or default
     except Exception:  # noqa: BLE001
-        return "ctrl+alt+d"
+        return default
 
 
 def _probe_ai(base: str, key: str, model: str) -> tuple[bool, str, list[str]]:
@@ -529,7 +530,7 @@ class Console(tk.Tk):
         self.hotkey_label = tk.Label(r, text=_read_hotkey(), bg=p["card"], fg=p["text"],
                                      font=("Consolas", 9))
         self.hotkey_label.pack(side="left", padx=(0, 10))
-        tk.Button(r, text="录制", command=self._record_hotkey, bg=p["btn"],
+        tk.Button(r, text="录制", command=lambda: self._record_hotkey("dash", "hotkey", self.hotkey_label, "ctrl+alt+d"), bg=p["btn"],
                   fg=p["btn_text"], bd=0, padx=12, pady=4, cursor="hand2",
                   font=("Microsoft YaHei UI", 8)).pack(side="left")
 
@@ -621,8 +622,9 @@ class Console(tk.Tk):
 
         preset.bind("<<ComboboxSelected>>", on_preset)
 
-    def _record_hotkey(self) -> None:
-        """弹出录制窗：按下组合键即保存到 [dash] hotkey。"""
+    def _record_hotkey(self, section: str = "dash", key: str = "hotkey",
+                       label=None, default: str = "ctrl+alt+d") -> None:
+        """弹出录制窗：按下组合键即写入 [section] key。"""
         p = self._pal()
         win = tk.Toplevel(self)
         win.title("录制快捷键")
@@ -665,9 +667,10 @@ class Console(tk.Tk):
                 hint.config(text="必须带 Ctrl / Alt / Shift / Win 至少一个", fg=p["err"])
                 return
             spec = "+".join(parts + [key])
-            _write_section("dash", {"hotkey": spec})
-            self.hotkey_label.config(text=spec)
-            self.write(f"快捷键已改为 {spec}（重启看板生效）\n")
+            _write_section(section, {key: spec})
+            if label is not None:
+                label.config(text=spec)
+            self.write(f"快捷键已改为 {spec}（重启对应功能生效）\n")
             win.destroy()
 
         win.bind("<KeyPress>", on_key)
@@ -706,9 +709,16 @@ class Console(tk.Tk):
         self.vision.pack(side="left")
         self.vision.set(_read_snap_model() or "（不使用）")
 
-        r = self._card_row(p, page, "⌨", "截图热键", "在控制台页点「截图热键」开启")
-        tk.Label(r, text="Ctrl+Alt+S", bg=p["card"], fg=p["muted"],
-                 font=("Consolas", 9)).pack(side="left")
+        r = self._card_row(p, page, "⌨", "截图热键",
+                           "先 Win+Shift+S 截图，再按这个组合唤出；点「录制」可改")
+        self.snap_hotkey_label = tk.Label(r, text=_read_hotkey("snap", "hotkey", "ctrl+alt+s"),
+                                         bg=p["card"], fg=p["text"], font=("Consolas", 9))
+        self.snap_hotkey_label.pack(side="left", padx=(0, 10))
+        tk.Button(r, text="录制",
+                  command=lambda: self._record_hotkey("snap", "hotkey",
+                                                      self.snap_hotkey_label, "ctrl+alt+s"),
+                  bg=p["btn"], fg=p["btn_text"], bd=0, padx=12, pady=4,
+                  cursor="hand2", font=("Microsoft YaHei UI", 8)).pack(side="left")
 
     # ---------- 页：关于 ----------
     def _build_page_about(self) -> None:

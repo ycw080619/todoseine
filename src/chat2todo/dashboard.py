@@ -66,39 +66,7 @@ def _single_instance(name: str = "Chat2TodoDashboard") -> bool:
         return True
 
 
-VK_LETTERS = {chr(c): c - 32 for c in range(ord("a"), ord("z") + 1)}
-VK_DIGITS = {str(d): 0x30 + d for d in range(10)}
-VK_FUNC = {f"f{i}": 0x6F + i for i in range(1, 13)}
-
-
-def parse_hotkey(spec: str):
-    """把 "ctrl+alt+d" 解析成 (mods, vk)。返回 None 表示无法识别。"""
-    if not spec:
-        return None
-    mods = 0
-    vk = None
-    for part in str(spec).lower().replace(" ", "").split("+"):
-        if part in ("ctrl", "control"):
-            mods |= 0x0002
-        elif part == "alt":
-            mods |= 0x0001
-        elif part == "shift":
-            mods |= 0x0004
-        elif part in ("win", "meta", "super"):
-            mods |= 0x0008
-        elif part in VK_LETTERS:
-            vk = VK_LETTERS[part]
-        elif part in VK_DIGITS:
-            vk = VK_DIGITS[part]
-        elif part in VK_FUNC:
-            vk = VK_FUNC[part]
-        elif part == "space":
-            vk = 0x20
-        else:
-            return None
-    if not vk or not mods:
-        return None
-    return mods | 0x4000, vk     # 附带 MOD_NOREPEAT
+from .core.hotkey import parse_hotkey  # noqa: E402
 
 
 def _start_hotkey(callback, mods: int = 0x0003 | 0x4000, vk: int = 0x44) -> None:
