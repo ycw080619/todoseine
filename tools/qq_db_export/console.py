@@ -242,6 +242,16 @@ def _write_cfg(cfg: dict) -> None:
     _write_section("ai", cfg)
 
 
+def _read_hotkey() -> str:
+    """当前全局快捷键（配置在 [dash] hotkey），读不到就用默认值。"""
+    try:
+        from chat2todo.config import load
+
+        return (load().get("dash") or {}).get("hotkey") or "ctrl+alt+d"
+    except Exception:  # noqa: BLE001
+        return "ctrl+alt+d"
+
+
 def _probe_ai(base: str, key: str, model: str) -> tuple[bool, str, list[str]]:
     """探测 AI 端点：本地 Ollama 查 /api/tags，云端查 /models。
 
@@ -514,6 +524,15 @@ class Console(tk.Tk):
         mk.bind("<Button-1>", flip)
         draw_switch()
 
+        r = self._card_row(p, page, "⌨", "全局快捷键",
+                           "看板贴在桌面层时，按这个组合唤出；录制后重启看板生效")
+        self.hotkey_label = tk.Label(r, text=_read_hotkey(), bg=p["card"], fg=p["text"],
+                                     font=("Consolas", 9))
+        self.hotkey_label.pack(side="left", padx=(0, 10))
+        tk.Button(r, text="录制", command=self._record_hotkey, bg=p["btn"],
+                  fg=p["btn_text"], bd=0, padx=12, pady=4, cursor="hand2",
+                  font=("Microsoft YaHei UI", 8)).pack(side="left")
+
         r = self._card_row(p, page, "🗄", "聊天数据库", str(DB))
         tk.Label(r, text="只读", bg=p["card"], fg=p["ok"],
                  font=("Microsoft YaHei UI", 8, "bold")).pack(side="left")
@@ -601,6 +620,58 @@ class Console(tk.Tk):
             self.model_entry.delete(0, "end"); self.model_entry.insert(0, model)
 
         preset.bind("<<ComboboxSelected>>", on_preset)
+
+    def _record_hotkey(self) -> None:
+        """弹出录制窗：按下组合键即保存到 [dash] hotkey。"""
+        p = self._pal()
+        win = tk.Toplevel(self)
+        win.title("录制快捷键")
+        win.geometry("360x150")
+        win.transient(self)
+        win.configure(bg=p["bg"])
+        win.grab_set()
+        tk.Label(win, text="请按下组合键", bg=p["bg"], fg=p["text"],
+                 font=("Microsoft YaHei UI", 12, "bold")).pack(pady=(18, 4))
+        hint = tk.Label(win, text="至少包含 Ctrl / Alt / Shift 之一，例：Ctrl+Alt+D",
+                        bg=p["bg"], fg=p["muted"], font=("Microsoft YaHei UI", 8))
+        hint.pack()
+
+        def on_key(e) -> None:
+            import ctypes
+
+            if e.keysym in ("Control_L", "Control_R", "Alt_L", "Alt_R",
+                            "Shift_L", "Shift_R", "Win_L", "Win_R"):
+                return
+            u = ctypes.windll.user32
+
+            def down(vk: int) -> bool:
+                return bool(u.GetAsyncKeyState(vk) & 0x8000)
+
+            parts = []
+            if down(0x11):
+                parts.append("ctrl")
+            if down(0x12):
+                parts.append("alt")
+            if down(0x10):
+                parts.append("shift")
+            if down(0x5B) or down(0x5C):
+                parts.append("win")
+            key = e.keysym.lower()
+            if not (len(key) == 1 and (key.isalnum())) and not (
+                    key.startswith("f") and key[1:].isdigit()):
+                hint.config(text="只支持字母 / 数字 / F1-F12", fg=p["err"])
+                return
+            if not parts:
+                hint.config(text="必须带 Ctrl / Alt / Shift / Win 至少一个", fg=p["err"])
+                return
+            spec = "+".join(parts + [key])
+            _write_section("dash", {"hotkey": spec})
+            self.hotkey_label.config(text=spec)
+            self.write(f"快捷键已改为 {spec}（重启看板生效）\n")
+            win.destroy()
+
+        win.bind("<KeyPress>", on_key)
+        win.focus_force()
 
     def _do_probe(self) -> None:
         p = self._pal()

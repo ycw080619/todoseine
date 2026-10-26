@@ -66,6 +66,41 @@ def _single_instance(name: str = "Chat2TodoDashboard") -> bool:
         return True
 
 
+VK_LETTERS = {chr(c): c - 32 for c in range(ord("a"), ord("z") + 1)}
+VK_DIGITS = {str(d): 0x30 + d for d in range(10)}
+VK_FUNC = {f"f{i}": 0x6F + i for i in range(1, 13)}
+
+
+def parse_hotkey(spec: str):
+    """把 "ctrl+alt+d" 解析成 (mods, vk)。返回 None 表示无法识别。"""
+    if not spec:
+        return None
+    mods = 0
+    vk = None
+    for part in str(spec).lower().replace(" ", "").split("+"):
+        if part in ("ctrl", "control"):
+            mods |= 0x0002
+        elif part == "alt":
+            mods |= 0x0001
+        elif part == "shift":
+            mods |= 0x0004
+        elif part in ("win", "meta", "super"):
+            mods |= 0x0008
+        elif part in VK_LETTERS:
+            vk = VK_LETTERS[part]
+        elif part in VK_DIGITS:
+            vk = VK_DIGITS[part]
+        elif part in VK_FUNC:
+            vk = VK_FUNC[part]
+        elif part == "space":
+            vk = 0x20
+        else:
+            return None
+    if not vk or not mods:
+        return None
+    return mods | 0x4000, vk     # 附带 MOD_NOREPEAT
+
+
 def _start_hotkey(callback, mods: int = 0x0003 | 0x4000, vk: int = 0x44) -> None:
     """注册全局热键 Ctrl+Alt+D（MOD_ALT|MOD_CONTROL|MOD_NOREPEAT），后台线程收消息。"""
     def loop() -> None:
@@ -402,7 +437,21 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             pass
 
     # 全局热键只置一个标志，真正操作在 UI 线程的 tick 里做（避免跨线程动 Tk）
-    _start_hotkey(lambda: state.__setitem__("reveal", True))
+    hotkey_spec = "ctrl+alt+d"
+    try:
+        from pathlib import Path
+
+        from .config import load as _load_cfg
+
+        # 注意：config.load 的默认查找路径不含 ~/Chat2Todo/c2t.toml，必须显式传
+        cfg_path = Path.home() / "Chat2Todo" / "c2t.toml"
+        cfg_data = _load_cfg(str(cfg_path)) if cfg_path.exists() else _load_cfg()
+        hotkey_spec = ((cfg_data.get("dash") or {}).get("hotkey") or hotkey_spec)
+    except Exception:  # noqa: BLE001
+        pass
+    parsed = parse_hotkey(hotkey_spec)
+    if parsed:
+        _start_hotkey(lambda: state.__setitem__("reveal", True), parsed[0], parsed[1])
 
     def switch_tab(key: str) -> None:
         if state["tab"] == key:
