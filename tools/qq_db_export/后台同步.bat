@@ -5,4 +5,4 @@ rem 内置引擎直读 QQ 数据库，无需 Docker；日志追加到 %USERPROFI
 for %%i in ("%~dp0..\..") do set "PYTHONPATH=%%~fi\src"
 set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
-py -3 -u -m chat2todo db-import --days 1 --db "%USERPROFILE%\Chat2Todo\qq.db" >> "%USERPROFILE%\Chat2Todo\sync.log" 2>&1
+py -3 -u -m chat2todo --config "%USERPROFILE%\Chat2Todo\c2t.toml" db-import --days 1 --db "%USERPROFILE%\Chat2Todo\qq.db" >> "%USERPROFILE%\Chat2Todo\sync.log" 2>&1

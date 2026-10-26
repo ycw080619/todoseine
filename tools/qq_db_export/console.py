@@ -193,6 +193,8 @@ def _toml_val(v) -> str:
     """TOML 字面量：bool 写 true/false，其余写带引号字符串。"""
     if isinstance(v, bool):
         return "true" if v else "false"
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(f"'{x}'" for x in v) + "]"
     return f"'{v}'"
 
 
@@ -252,18 +254,25 @@ def _read_snap_refine() -> str:
         return "True"
 
 
-def _read_filter(key: str) -> str:
-    """读 [filter] 段的列表并拼成逗号串（控制台输入框用）。"""
+def _read_filter(key: str) -> list:
+    """读 [filter] 段的列表（去重、去空）。"""
     try:
         from chat2todo.config import load
 
-        cfg = load().get("filter") or {}
+        # 注意：config.load() 的默认查找路径不含 %USERPROFILE%\Chat2Todo\c2t.toml，
+        # 必须显式传路径，否则读到的永远是默认值。
+        cfg = load(str(CONFIG) if CONFIG.exists() else None).get("filter") or {}
         val = cfg.get(key) or []
         if isinstance(val, str):
-            return val
-        return ",".join(str(v) for v in val)
+            val = _split_ids(val)
+        out = []
+        for v in val:
+            v = str(v).strip()
+            if v and v not in out:
+                out.append(v)
+        return out
     except Exception:  # noqa: BLE001
-        return ""
+        return []
 
 
 def _split_ids(text: str) -> list:
@@ -367,6 +376,100 @@ class Console(tk.Tk):
         b.pack(side="left", padx=(6, 0))
         return b
 
+    def _chip_card(self, p: dict, parent, icon: str, title: str, sub: str,
+                   values: list, placeholder: str):
+        """列表式编辑器：已有项做成可删除的胶囊，输入框回车/点添加；重复项自动拦住。"""
+        outer = tk.Frame(parent, bg=p["card"], highlightbackground=p["border"],
+                         highlightthickness=1)
+        outer.pack(fill="x", pady=(0, 8))
+        inner = tk.Frame(outer, bg=p["card"])
+        inner.pack(fill="x", padx=14, pady=12)
+
+        head = tk.Frame(inner, bg=p["card"])
+        head.pack(fill="x")
+        tk.Label(head, text=icon, bg=p["card"], fg=p["title"],
+                 font=("Segoe UI Emoji", 13)).pack(side="left", padx=(0, 12))
+        texts = tk.Frame(head, bg=p["card"])
+        texts.pack(side="left", fill="x", expand=True)
+        tk.Label(texts, text=title, bg=p["card"], fg=p["text"], anchor="w",
+                 font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+        if sub:
+            tk.Label(texts, text=sub, bg=p["card"], fg=p["muted"], anchor="w",
+                     justify="left", wraplength=520,
+                     font=("Microsoft YaHei UI", 8)).pack(anchor="w", pady=(1, 0))
+
+        state = {"items": []}
+        for v in values:
+            v = str(v).strip()
+            if v and v not in state["items"]:
+                state["items"].append(v)
+
+        chips = tk.Frame(inner, bg=p["card"])
+        chips.pack(fill="x", pady=(8, 0))
+        hint = tk.Label(inner, text="", bg=p["card"], fg=p["muted"],
+                        font=("Microsoft YaHei UI", 8))
+        hint.pack(anchor="w", pady=(4, 0))
+
+        def remove(item: str) -> None:
+            state["items"].remove(item)
+            hint.config(text=f"已移除 {item}", fg=p["muted"])
+            redraw()
+
+        def redraw() -> None:
+            for w in chips.winfo_children():
+                w.destroy()
+            if not state["items"]:
+                tk.Label(chips, text="（还没有条目）", bg=p["card"], fg=p["muted"],
+                         font=("Microsoft YaHei UI", 8)).pack(anchor="w")
+                return
+            row = None
+            used = 0
+            for item in state["items"]:
+                width = len(item) * 9 + 54
+                if row is None or used + width > 560:
+                    row = tk.Frame(chips, bg=p["card"])
+                    row.pack(fill="x", pady=2)
+                    used = 0
+                chip = tk.Frame(row, bg=p["field"], highlightbackground=p["border"],
+                                highlightthickness=1)
+                chip.pack(side="left", padx=(0, 6))
+                tk.Label(chip, text=item, bg=p["field"], fg=p["text"],
+                         font=("Consolas", 9)).pack(side="left", padx=(8, 2), pady=2)
+                tk.Button(chip, text="×", command=lambda x=item: remove(x), bd=0,
+                          bg=p["field"], fg=p["muted"], activebackground=p["field"],
+                          activeforeground=p["err"], cursor="hand2",
+                          font=("Microsoft YaHei UI", 9), padx=4).pack(side="left")
+                used += width
+
+        bar = tk.Frame(inner, bg=p["card"])
+        bar.pack(fill="x", pady=(6, 0))
+        ent = tk.Entry(bar, width=22, bg=p["field"], fg=p["field_text"],
+                       insertbackground=p["field_text"], bd=0, relief="flat",
+                       highlightthickness=1, highlightbackground=p["border"],
+                       highlightcolor=p["accent"], font=("Microsoft YaHei UI", 9))
+        ent.pack(side="left", ipady=3)
+
+        def add(_evt=None) -> None:
+            v = ent.get().strip()
+            if not v:
+                return
+            if v in state["items"]:
+                hint.config(text=f"「{v}」已经在列表里，不会重复添加", fg=p["err"])
+                return
+            state["items"].append(v)
+            ent.delete(0, "end")
+            hint.config(text=f"已添加 {v}", fg=p["ok"])
+            redraw()
+
+        ent.bind("<Return>", add)
+        tk.Button(bar, text="添加", command=add, bg=p["btn"], fg=p["btn_text"], bd=0,
+                  padx=14, pady=4, cursor="hand2",
+                  font=("Microsoft YaHei UI", 9)).pack(side="left", padx=(8, 0))
+        tk.Label(bar, text=placeholder, bg=p["card"], fg=p["muted"],
+                 font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(10, 0))
+        redraw()
+        return state
+
     # ---------- 单窗口：侧栏 + 分页 ----------
     NAV = [
         ("console", "◈", "控制台"),
@@ -442,15 +545,38 @@ class Console(tk.Tk):
         self._show_page(getattr(self, "_current_page", "console"))
 
     def _new_page(self) -> tk.Frame:
-        f = tk.Frame(self.body, bg=self._pal()["bg"])
-        return f
+        """可滚动页面：内容超出窗口时出现滚动条，内容区宽度跟随窗口。"""
+        p = self._pal()
+        holder = tk.Frame(self.body, bg=p["bg"])
+        canvas = tk.Canvas(holder, bg=p["bg"], highlightthickness=0)
+        bar = ttk.Scrollbar(holder, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner = tk.Frame(canvas, bg=p["bg"])
+        win = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>",
+                   lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(win, width=e.width))
+
+        def on_wheel(e) -> None:
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+        canvas.bind_all("<MouseWheel>", on_wheel, add="+")
+        inner._holder = holder  # type: ignore[attr-defined]
+        inner._canvas = canvas  # type: ignore[attr-defined]
+        return inner
 
     def _show_page(self, key: str) -> None:
         p = self._pal()
         self._current_page = key
         for frame in self._pages.values():
-            frame.pack_forget()
-        self._pages[key].pack(fill="both", expand=True)
+            holder = getattr(frame, "_holder", frame)
+            holder.pack_forget()
+        holder = getattr(self._pages[key], "_holder", self._pages[key])
+        holder.pack(fill="both", expand=True)
         label = next(n for n in self.NAV if n[0] == key)
         self.page_title.config(text=label[2])
         sub = {
@@ -583,23 +709,15 @@ class Console(tk.Tk):
                                  highlightcolor=p["accent"], font=("Microsoft YaHei UI", 9))
         self.pw_entry.pack(side="left", ipady=4)
 
-        r = self._card_row(p, page, "🚫", "免打扰群（不统计）",
-                           "填群号，多个用逗号分隔；这些群的消息完全不参与抽取")
-        self.ignore_entry = tk.Entry(r, width=30, bg=p["field"], fg=p["field_text"],
-                                     insertbackground=p["field_text"], bd=0, relief="flat",
-                                     highlightthickness=1, highlightbackground=p["border"],
-                                     highlightcolor=p["accent"], font=("Microsoft YaHei UI", 9))
-        self.ignore_entry.insert(0, _read_filter("ignore_groups"))
-        self.ignore_entry.pack(side="left", ipady=4)
+        self.ignore_state = self._chip_card(
+            p, page, "🚫", "免打扰群（不统计）",
+            "这些群的消息完全不参与抽取；填群号，重复添加会自动拦住",
+            _read_filter("ignore_groups"), "例如 179723007")
 
-        r = self._card_row(p, page, "★", "特别关心（标重点）",
-                           "群号或 QQ 号，多个用逗号分隔；这些来源的待办标记为★重点")
-        self.star_entry = tk.Entry(r, width=30, bg=p["field"], fg=p["field_text"],
-                                   insertbackground=p["field_text"], bd=0, relief="flat",
-                                   highlightthickness=1, highlightbackground=p["border"],
-                                   highlightcolor=p["accent"], font=("Microsoft YaHei UI", 9))
-        self.star_entry.insert(0, _read_filter("star_groups"))
-        self.star_entry.pack(side="left", ipady=4)
+        self.star_state = self._chip_card(
+            p, page, "★", "特别关心（标重点）",
+            "群号或 QQ 号；这些来源产生的待办会标记为 ★重点，看板里有独立标签页",
+            _read_filter("star_groups"), "群号或 QQ 号")
 
         r = self._card_row(p, page, "⏱", "定时同步", "由 Windows 计划任务每小时触发")
         tk.Button(r, text="打开计划任务", command=lambda: subprocess.Popen(
@@ -837,8 +955,8 @@ class Console(tk.Tk):
             except Exception as exc:  # noqa: BLE001
                 self.write(f"口令保存失败：{exc}\n")
         _write_section("filter", {
-            "ignore_groups": _split_ids(self.ignore_entry.get()),
-            "star_groups": _split_ids(self.star_entry.get()),
+            "ignore_groups": list(self.ignore_state["items"]),
+            "star_groups": list(self.star_state["items"]),
         })
         self.write("设置已保存（重启同步生效）\n")
         if enabled and not local:
@@ -918,7 +1036,8 @@ class Console(tk.Tk):
         self.sync_btn.config(state="disabled", text="同步中…")
 
         def worker() -> None:
-            cmd = [PY, "-u", "-m", "chat2todo", "db-import", "--days", "7", "--db", str(DB)]
+            cmd = [PY, "-u", "-m", "chat2todo", "--config", str(CONFIG),
+               "db-import", "--days", "7", "--db", str(DB)]
             try:
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                         text=True, encoding="utf-8", errors="replace", bufsize=1,
