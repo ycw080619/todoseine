@@ -290,6 +290,38 @@ class Console(tk.Tk):
     def _pal(self) -> dict:
         return THEMES.get(self.theme, THEMES["light"])
 
+    def _card_row(self, p: dict, parent, icon: str, title: str, sub: str):
+        """卡片行（与设置窗同款）：图标 · 标题/说明 · 右侧控件区。"""
+        outer = tk.Frame(parent, bg=p["card"], highlightbackground=p["border"],
+                         highlightthickness=1)
+        outer.pack(fill="x", pady=(0, 8))
+        inner = tk.Frame(outer, bg=p["card"])
+        inner.pack(fill="x", padx=14, pady=12)
+        tk.Label(inner, text=icon, bg=p["card"], fg=p["title"],
+                 font=("Segoe UI Emoji", 13)).pack(side="left", padx=(0, 12))
+        texts = tk.Frame(inner, bg=p["card"])
+        texts.pack(side="left", fill="x", expand=True)
+        tk.Label(texts, text=title, bg=p["card"], fg=p["text"], anchor="w",
+                 font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+        if sub:
+            tk.Label(texts, text=sub, bg=p["card"], fg=p["muted"], anchor="w",
+                     justify="left", wraplength=420,
+                     font=("Microsoft YaHei UI", 8)).pack(anchor="w", pady=(1, 0))
+        right = tk.Frame(inner, bg=p["card"])
+        right.pack(side="right")
+        return right
+
+    def _pill(self, p: dict, parent, text: str, cmd, primary: bool = False):
+        b = tk.Button(parent, text=text, command=cmd, relief="flat", cursor="hand2",
+                      bg=(p["accent"] if primary else p["btn"]),
+                      fg=(p["accent_fg"] if primary else p["btn_text"]),
+                      activebackground=(p["accent_hover"] if primary else p["border"]),
+                      activeforeground=(p["accent_fg"] if primary else p["text"]),
+                      font=("Microsoft YaHei UI", 9, "bold" if primary else "normal"),
+                      padx=14, pady=5, borderwidth=0, highlightthickness=0)
+        b.pack(side="left", padx=(6, 0))
+        return b
+
     def _build_ui(self) -> None:
         p = self._pal()
         self.configure(bg=p["bg"])
@@ -323,21 +355,43 @@ class Console(tk.Tk):
             self.write(keep)
         self.refresh_stats()
         if syncing:
-            self.sync_btn.config(state="disabled", text="  ⟳  同步中…")
+            self.sync_btn.config(state="disabled", text="同步中…")
         if watching:
-            self.watch_btn.config(text=" ◉  停止监视")
+            self.watch_btn.config(text="停止监视")
         if hotkey:
-            self.snap_btn.config(text=" ⌘  停止热键")
+            self.snap_btn.config(text="停止热键")
         self.write(f"\n▸ 已切换到{'深色' if self.theme == 'dark' else '浅色'}模式\n")
 
     def _build_header(self, p: dict, parent) -> None:
-        box = tk.Frame(parent, bg=p["bg"])
-        box.pack(fill="x", padx=22, pady=(20, 6))
-        tk.Label(box, text="聊天记录 → 待办", bg=p["bg"], fg=p["text"], anchor="w",
-                 font=("Microsoft YaHei UI", 15, "bold")).pack(anchor="w")
-        self.stats = tk.Label(box, text="", bg=p["bg"], fg=p["muted"], anchor="w",
+        head = tk.Frame(parent, bg=p["bg"])
+        head.pack(fill="x", padx=26, pady=(22, 10))
+        tk.Label(head, text="控制台", bg=p["bg"], fg=p["text"], anchor="w",
+                 font=("Microsoft YaHei UI", 17, "bold")).pack(anchor="w")
+        self.stats = tk.Label(head, text="", bg=p["bg"], fg=p["muted"], anchor="w",
                               font=("Microsoft YaHei UI", 9))
         self.stats.pack(anchor="w", pady=(2, 0))
+
+        body = tk.Frame(parent, bg=p["bg"])
+        body.pack(fill="both", expand=True, padx=26)
+
+        # 卡片 1：同步
+        r = self._card_row(p, body, "⟳", "立即同步",
+                           "从 QQ 数据库只读抓取 → 规则抽取 → 本地 AI 复核")
+        self.sync_btn = self._pill(p, r, "立即同步", self.on_sync, primary=True)
+
+        # 卡片 2：快捷操作
+        r = self._card_row(p, body, "▦", "快捷操作",
+                           "看板、导入、截图与监视入口")
+        self._pill(p, r, "打开看板", self.on_dashboard)
+        self._pill(p, r, "导入文件", self.on_import)
+        self._pill(p, r, "截图待办", self.on_snap)
+
+        r = self._card_row(p, body, "⚙", "更多",
+                           "截图热键、目录监视、定时同步与设置")
+        self.snap_btn = self._pill(p, r, "截图热键", self.on_snap_hotkey)
+        self.watch_btn = self._pill(p, r, "开始监视", self.on_watch)
+        self._pill(p, r, "定时同步", self.on_schedule)
+        self._pill(p, r, "设置", self.on_settings)
 
     def _build_buttons(self, p: dict, parent, nav_bg: str) -> None:
         def item(text: str, icon: str, cmd, primary: bool = False):
@@ -352,23 +406,35 @@ class Console(tk.Tk):
             b.pack(fill="x", padx=10, pady=1)
             return b
 
-        self.sync_btn = item("立即同步", "⟳", self.on_sync, primary=True)
+        # 当前页高亮：白底 + 左侧强调条（与设置窗一致）
+        cur = tk.Frame(parent, bg=p["card"])
+        cur.pack(fill="x", pady=2)
+        tk.Frame(cur, bg=p["accent"], width=3).pack(side="left", fill="y")
+        tk.Label(cur, text=" ◈   控制台", bg=p["card"], fg=p["text"], anchor="w",
+                 font=("Microsoft YaHei UI", 9, "bold")).pack(side="left", fill="x",
+                                                                expand=True, padx=9, pady=8)
+        item("立即同步", "⟳", self.on_sync)
         item("打开看板", "▦", self.on_dashboard)
         item("导入文件", "＋", self.on_import)
         item("截图待办", "◧", self.on_snap)
-        self.snap_btn = item("截图热键", "⌘", self.on_snap_hotkey)
-        self.watch_btn = item("开始监视", "◉", self.on_watch)
+        item("截图热键", "⌘", self.on_snap_hotkey)
+        item("开始监视", "◉", self.on_watch)
         item("定时同步", "◷", self.on_schedule)
         tk.Frame(parent, bg=nav_bg, height=12).pack(fill="x")
         item("设置", "⚙", self.on_settings)
 
     def _build_log(self, p: dict, parent) -> None:
-        wrap = tk.Frame(parent, bg=p["bg"])
-        wrap.pack(fill="both", expand=True, padx=22, pady=(8, 16))
-        self.log = tk.Text(wrap, bg=p["log_bg"], fg=p["log_fg"],
+        outer = tk.Frame(parent, bg=p["card"], highlightbackground=p["border"],
+                         highlightthickness=1)
+        outer.pack(fill="both", expand=True, padx=26, pady=(2, 18))
+        inner = tk.Frame(outer, bg=p["card"])
+        inner.pack(fill="both", expand=True, padx=14, pady=12)
+        tk.Label(inner, text="运行日志", bg=p["card"], fg=p["text"], anchor="w",
+                 font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
+        self.log = tk.Text(inner, bg=p["log_bg"], fg=p["log_fg"],
                            insertbackground=p["log_fg"], relief="flat",
                            font=("Consolas", 9), wrap="word", borderwidth=0,
-                           padx=12, pady=10)
+                           padx=12, pady=10, height=8)
         self.log.pack(fill="both", expand=True)
         self.log.configure(state="disabled")
 
