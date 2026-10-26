@@ -30,23 +30,25 @@ def _fmt_ts(ts) -> str:
     except (TypeError, ValueError, OSError):
         return str(ts or "")
 
-# ---- 外观参数（改这里就能换皮）----
+# ---- 外观参数（改这里就能换皮；参考 DeskBox 的 WinUI 深色卡片风格）----
 KEY = "#010203"        # 透明色键：窗口外圆角区域用这个颜色，Windows 会把它抠透
-PANEL = "#1c1a18"      # 面板底色
-TEXT = "#f5f3ef"       # 主文字
-SUB = "#b6b1a9"        # 次要文字
-LINE = "#4b4641"       # 分隔线
-FIELD = "#26231f"      # 输入框底色
-ACTIVE = "#332f2b"     # 选中标签底色
-ACCENTS = ["#ffffff", "#ff9f43", "#ffd93d", "#6ee7a8",
+PANEL = "#212024"      # 面板底色（偏中性深灰，WinUI 深色）
+BORDER = "#3a3940"     # 面板描边（1px，模拟 WinUI 卡片边）
+TEXT = "#f2f2f4"       # 主文字
+SUB = "#9c9ca6"        # 次要文字
+LINE = "#332f2f"       # 分隔线（更淡，仅用于必要分组）
+FIELD = "#2c2b31"      # 输入框底色
+ACTIVE = "#3a3942"     # 选中标签底色
+ACCENT = "#4cc2ff"     # WinUI 强调色（用于选中态与链接）
+ACCENTS = ["#ff6b6b", "#ff9f43", "#ffd93d", "#6ee7a8",
            "#4cc9f0", "#8aa4ff", "#ff8fab"]
 
 W, H = 360, 540        # 展开态
 W_MINI, H_MINI = 200, 108
 PAD = 16
-TOP = 176              # 列表起始 y
+TOP = 186              # 列表起始 y
 FOOT = 104              # 底部预留（输入框 + 页脚）
-ROW = 42               # 单行高度
+ROW = 40               # 单行高度
 TABS: List[Tuple[str, str]] = [("todo", "待办"), ("maybe", "待定"),
                                ("today", "今日"), ("done", "完成")]
 
@@ -141,7 +143,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
     cv = tk.Canvas(root, width=W, height=H, bg=KEY, highlightthickness=0)
     cv.pack()
-    _rounded(cv, 1, 1, W - 1, H - 1, 18, fill=PANEL, outline="", tags="bg")
+    _rounded(cv, 1, 1, W - 1, H - 1, 18, fill=PANEL, outline=BORDER, width=1, tags="bg")
 
     state = {
         "tab": {"pending": "todo", "unconfirmed": "maybe", "done": "done"}.get(status, "todo"),
@@ -154,7 +156,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     }
 
     # ---- 内联输入框（放在 Canvas 之上，可真正接收键盘）----
-    PLACEHOLDER = "＋ 添加一条，回车保存"
+    PLACEHOLDER = "＋ 添加任务，回车保存"
     entry = tk.Entry(root, bg=FIELD, fg=TEXT, insertbackground=TEXT, bd=0,
                      highlightthickness=0, font=("Microsoft YaHei UI", 9))
     entry.insert(0, PLACEHOLDER)
@@ -334,7 +336,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         root.geometry(f"{w}x{h}{pos}")
         cv.config(width=w, height=h)
         cv.delete("bg")
-        _rounded(cv, 1, 1, w - 1, h - 1, 18, fill=PANEL, outline="", tags="bg")
+        _rounded(cv, 1, 1, w - 1, h - 1, 18, fill=PANEL, outline=BORDER, width=1, tags="bg")
         cv.tag_lower("bg")
 
     state["w"] = W
@@ -421,31 +423,40 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         cv.itemconfig(clock, font=("Consolas", 30, "bold"))
         cv.coords(date_id, W // 2, 104)
 
-        # 顶部标题栏
-        cv.create_text(PAD, 22, text="Chat2Todo", anchor="w",
+        # 顶部标题栏：图标 + 标题 + 右侧控件（对齐 DeskBox 的卡片头）
+        cv.create_text(PAD, 22, text="▤", anchor="w",
+                       fill=ACCENT, font=("Segoe UI Symbol", 11), tags="body")
+        cv.create_text(PAD + 20, 22, text="待办", anchor="w",
                        fill=TEXT, font=("Microsoft YaHei UI", 10, "bold"), tags="body")
         cv.create_text(W - 22, 22, text="✕", anchor="e", fill=SUB,
                        font=("Microsoft YaHei UI", 11), tags=("body", "close"))
         cv.create_text(W - 52, 22, text="—", anchor="e", fill=SUB,
                        font=("Microsoft YaHei UI", 11), tags=("body", "mini"))
         pinned = bool(root.attributes("-topmost"))
-        cv.create_text(W - 82, 22, text="钉", anchor="e", fill=TEXT if pinned else SUB,
+        cv.create_text(W - 80, 22, text="钉", anchor="e", fill=ACCENT if pinned else SUB,
                        font=("Microsoft YaHei UI", 9), tags=("body", "pin"))
 
-        # 筛选标签
+        # 筛选标签：圆角胶囊 + 数量（DeskBox 的 All / Today / ... 风格）
+        counts = {
+            "todo": len(todo_items),
+            "maybe": unconfirmed,
+            "today": sum(1 for i in todo_items if _is_today_due(i)),
+            "done": None,
+        }
         seg = (W - 2 * PAD) / len(TABS)
         for idx, (key, label) in enumerate(TABS):
             x1 = PAD + idx * seg
             active = key == state["tab"]
-            if active:
-                _rounded(cv, x1 + 2, 134, x1 + seg - 2, 164, 10,
-                         fill=ACTIVE, outline="", tags="body")
-            cv.create_text(x1 + seg / 2, 149, text=label,
+            _rounded(cv, x1 + 2, 134, x1 + seg - 6, 166, 12,
+                     fill=(ACTIVE if active else FIELD), outline="",
+                     tags=("body", f"tab{idx}"))
+            n = counts.get(key)
+            text = f"{label} {n}" if n else label
+            cv.create_text(x1 + seg / 2 - 1, 150, text=text,
                            fill=TEXT if active else SUB,
-                           font=("Microsoft YaHei UI", 9, "bold" if active else "normal"),
+                           font=("Microsoft YaHei UI", 8, "bold" if active else "normal"),
                            tags=("body", f"tab{idx}"))
             cv.tag_bind(f"tab{idx}", "<Button-1>", lambda _e, k=key: switch_tab(k))
-        cv.create_line(PAD, 172, W - PAD, 172, fill=LINE, tags="body")
 
         rows_room = max(1, (h - TOP - FOOT) // ROW)
         max_offset = max(0, len(items) - rows_room)
@@ -458,10 +469,16 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             cv.create_text(PAD, y, text=f"读取失败：{err}", anchor="w", fill="#ff8fab",
                            width=W - 2 * PAD, tags="body")
         elif not items:
-            empty = {"todo": "没有待处理的事项 🎉", "maybe": "没有待确认的条目",
+            empty = {"todo": "暂无待办", "maybe": "没有待确认的条目",
                      "today": "今天没有到期的待办", "done": "还没有完成的记录"}[state["tab"]]
-            cv.create_text(PAD, y, text=empty, anchor="w", fill=SUB,
-                           font=("Microsoft YaHei UI", 9), tags="body")
+            hint = {"todo": "在下方添加，或等同步把聊天里的活儿捞进来",
+                    "maybe": "规则拿不准的条目会先放这里，点一下确认",
+                    "today": "今天没有截止项，轻松一点",
+                    "done": "完成一条就会出现在这里"}[state["tab"]]
+            cv.create_text(W / 2, y + 40, text=empty, anchor="center", fill=TEXT,
+                           font=("Microsoft YaHei UI", 10), tags="body")
+            cv.create_text(W / 2, y + 64, text=hint, anchor="center", fill=SUB,
+                           width=W - 2 * PAD, font=("Microsoft YaHei UI", 8), tags="body")
         else:
             from .core.deadline import label as due_label, parse as due_parse
 
@@ -511,22 +528,22 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                             lambda e, it=item: popup(e, it))
                 for t in (tag, f"dot{idx}", f"more{idx}"):
                     cv.tag_bind(t, "<Button-3>", lambda e, it=item: popup(e, it))
-                cv.create_line(PAD, y + 22, W - PAD, y + 22, fill=LINE, tags="body")
                 y += ROW
 
-        # 底部：输入框 + 页脚
-        foot_y = h - 28
+        # 底部：输入框（圆角底 + 占位提示） + 页脚
+        _rounded(cv, PAD, h - 74, W - PAD, h - 44, 12, fill=FIELD, outline="", tags="body")
+        foot_y = h - 26
         cv.create_text(PAD, foot_y, text=f"待办 {len(todo_items)} · 待定 {unconfirmed}",
-                       anchor="w", fill="#7d7973", font=("Microsoft YaHei UI", 8), tags="body")
-        cv.create_text(W - PAD, foot_y, text="清空", anchor="e", fill=SUB,
+                       anchor="w", fill=SUB, font=("Microsoft YaHei UI", 8), tags="body")
+        cv.create_text(W - PAD, foot_y, text="清除已完成", anchor="e", fill=SUB,
                        font=("Microsoft YaHei UI", 8), tags=("body", "clear"))
         cv.tag_bind("clear", "<Button-1>", lambda _e: clear_all())
         if state["undo"]:
-            cv.create_text(W - PAD - 44, foot_y, text="撤销", anchor="e", fill="#8aa4ff",
+            cv.create_text(W - PAD - 58, foot_y, text="撤销", anchor="e", fill=ACCENT,
                            font=("Microsoft YaHei UI", 8), tags=("body", "undo"))
             cv.tag_bind("undo", "<Button-1>", lambda _e: undo())
 
-        entry.place(x=PAD + 2, y=h - 70, width=W - 2 * PAD - 12, height=26)
+        entry.place(x=PAD + 10, y=h - 70, width=W - 2 * PAD - 20, height=22)
 
     # ---- 交互绑定 ----
     cv.tag_bind("close", "<Button-1>", lambda _e: close())
