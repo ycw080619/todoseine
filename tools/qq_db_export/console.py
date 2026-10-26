@@ -254,10 +254,16 @@ def _read_ui(key: str, default: str = "") -> str:
         return default
 
 
+def _save_ui_key(key: str, value, app, label: str = "") -> None:
+    """写 [ui] 单个键；看板会在 2 秒内热重载，无需重启。"""
+    _write_section("ui", {key: value})
+    app.write(f"{label or key} 已改为 {value}（看板会自动刷新）\n")
+
+
 def _save_ui_accent(color: str, app) -> None:
     """写入 [ui] accent 并提示。"""
     _write_section("ui", {"accent": color})
-    app.write(f"强调色已改为 {color}（重启看板生效）\n")
+    app.write(f"强调色已改为 {color}（看板会自动刷新）\n")
 
 
 def _read_snap_refine() -> str:
@@ -712,6 +718,17 @@ class Console(tk.Tk):
         self.op_entry.pack(side="right", padx=(6, 0))
         tk.Label(r, text="不透明度", bg=p["card"], fg=p["muted"],
                  font=("Microsoft YaHei UI", 8)).pack(side="right")
+        row2 = tk.Frame(r, bg=p["card"])
+        row2.pack(side="right", padx=(0, 8))
+        tk.Label(row2, text="面板", bg=p["card"], fg=p["muted"],
+                 font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(0, 4))
+        for color in ("#212024", "#17181c", "#2b2a33", "#4a3f5c", "#f8f8fb"):
+            dot = tk.Canvas(row2, width=16, height=16, bg=p["card"],
+                            highlightthickness=0, cursor="hand2")
+            dot.pack(side="left", padx=2)
+            dot.create_oval(1, 1, 15, 15, fill=color, outline="")
+            dot.bind("<Button-1>", lambda _e, c=color: _save_ui_key("panel", c, self, "面板底色"))
+
         swatches = tk.Frame(r, bg=p["card"])
         swatches.pack(side="right", padx=(0, 10))
         for color in ("#4cc2ff", "#7c9cff", "#ff8fab", "#6ee7a8", "#ffd93d"):
@@ -1122,7 +1139,7 @@ class Console(tk.Tk):
             op = None
         if op is not None:
             _write_section("ui", {"opacity": round(op, 2)})
-            self.write(f"不透明度已保存为 {round(op, 2)}（重启看板生效）\n")
+            self.write(f"不透明度已保存为 {round(op, 2)}（看板会自动刷新）\n")
         pw = self.pw_entry.get().strip()
         if pw:
             try:

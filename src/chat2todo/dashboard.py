@@ -188,6 +188,17 @@ def _ui_config() -> dict:
         return {}
 
 
+def _config_mtime() -> float:
+    """c2t.toml 的修改时间，用于热重载判断。"""
+    try:
+        from pathlib import Path
+
+        p = Path.home() / "Chat2Todo" / "c2t.toml"
+        return p.stat().st_mtime if p.exists() else 0.0
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
 def _apply_ui_config() -> dict:
     """按配置覆盖调色板全局变量，返回启动参数（透明度）。"""
     import re as _re
@@ -204,6 +215,9 @@ def _apply_ui_config() -> dict:
     accent = str(ui.get("accent") or "").strip()
     if _re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
         ACCENT = accent
+    panel = str(ui.get("panel") or "").strip()
+    if _re.fullmatch(r"#[0-9a-fA-F]{6}", panel):
+        PANEL = panel
     try:
         alpha = float(ui.get("opacity", 0.93))
     except (TypeError, ValueError):
@@ -281,6 +295,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         "undo": None,          # (todo_id, 原状态)
         "counts": (0, 0),
         "pin": False,          # False=贴桌面层，True=置顶
+        "cfg_mtime": None,     # 配置修改时间，用于外观热重载
         "batch": False,        # 批量模式
         "sel": set(),          # 批量模式下选中的 todo_id
     }
@@ -622,6 +637,22 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
         if state.pop("reveal", False):
             reveal()
+        # 配置改了（换色/改透明度）就热重载，不用重启看板
+        mtime = _config_mtime()
+        if mtime and mtime != state.get("cfg_mtime"):
+            first = state.get("cfg_mtime") is None
+            state["cfg_mtime"] = mtime
+            if not first:
+                ui = _apply_ui_config()
+                try:
+                    root.attributes("-alpha", ui["alpha"])
+                except Exception:  # noqa: BLE001
+                    pass
+                cv.delete("bg")
+                _rounded(cv, 1, 1, W - 1, state.get("h", H) - 1, 18,
+                         fill=PANEL, outline=BORDER, width=1, tags="bg")
+                cv.tag_lower("bg")
+                render()
         # 唤出状态到期 → 收起；平时贴桌面层，被点浮上来也会被压回去
         if state.get("reveal_on") and time.time() >= state.get("reveal_until", 0):
             state["reveal_on"] = False
