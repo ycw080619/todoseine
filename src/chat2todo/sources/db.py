@@ -156,7 +156,7 @@ class CommunityBackend:
     def available(self) -> bool:
         return bool(self.module) and os.path.exists(self.module)
 
-    def fetch(self, db: DBInfo, limit: int = 0) -> List[Dict]:
+    def fetch(self, db: DBInfo, limit: int = 0, since: int = 0) -> List[Dict]:
         if not self.available():
             raise C2TError("E4004", "社区解密模块未配置或不存在")
         cmd = [self.module]
@@ -184,17 +184,75 @@ class CommunityBackend:
         return rows
 
 
+# --------------------------------------------------------------------------
+# 内置后端：sqlcipher3 直读（可选依赖 pip install chat2todo[db]）
+# --------------------------------------------------------------------------
+
+#: 社区实测通过的 QQ NT 库 PRAGMA（key 之后执行，顺序不能变）
+SQLCIPHER_PRAGMAS = (
+    "PRAGMA kdf_iter = 4000",
+    "PRAGMA cipher_hmac_algorithm = HMAC_SHA1",
+    "PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512",
+)
+
+#: 页大小不是 SQLCipher 默认值，必须在 PRAGMA key 之前设置
+PRAGMA_BEFORE_KEY = "PRAGMA cipher_page_size = 4096"
+
+#: 消息表与列（数字列名是腾讯 WCDB 的列编码）
+MSG_TABLES = ("group_msg_table", "c2c_msg_table")
+MSG_COLUMNS = ('"40001"', '"40002"', '"40021"', '"40027"', '"40050"', '"40093"', '"40800"')
+
+
+def _clean_sender(name: object, sender: str) -> str:
+    """40093 有时不是昵称（纯数字或过短），这时退回 QQ 号。"""
+    n = str(name or "").strip()
+    return sender if (not n or n.isdigit() or len(n) <= 1) else n
+
+
+def _decode_records(records: Iterable[tuple]) -> List[Dict]:
+    """原始行 → 后端统一行格式；40800 用 pbbody 解 protobuf。"""
+    from ..core.pbbody import decode_message_text
+
+    rows: List[Dict] = []
+    for msg_id, chat_id, s1, s2, ts, nick, body in records:
+        content = decode_message_text(body or b"")
+        if len(content) < 2 or len(content) > 400:
+            continue
+        sender = str(s2 or s1 or "")
+        rows.append({
+            "timestamp": int(ts or 0),
+            "sender": sender,
+            "sender_name": _clean_sender(nick, sender),
+            "content": content,
+            "type": 0,
+            "chat_id": str(chat_id or ""),
+            "msg_id": str(msg_id or ""),
+        })
+    return rows
+
+
+def _snapshot_without_header(src: str, dst_dir: str) -> str:
+    """活库不能直接读：先拍快照，再剥掉 1024 字节自定义头。"""
+    import shutil
+
+    snap = os.path.join(dst_dir, "snap.db")
+    shutil.copy2(src, snap)
+    stripped = os.path.join(dst_dir, "stripped.db")
+    with open(snap, "rb") as fi, open(stripped, "wb") as fo:
+        fi.seek(HEADER_SIZE)
+        shutil.copyfileobj(fi, fo)
+    os.remove(snap)
+    return stripped
+
+
 @dataclass
 class BuiltinBackend:
-    """自建读取器骨架：标准 SQLCipher 页面布局，需要用户提供 key。"""
+    """内置读取器：sqlcipher3 引擎直读 QQ NT 库，全程只读、明文不落盘。"""
 
     key: str = ""
     key_file: str = ""
 
     name = "builtin"
-
-    def available(self) -> bool:
-        return bool(self._key())
 
     def _key(self) -> str:
         if self.key:
@@ -203,39 +261,105 @@ class BuiltinBackend:
             return Path(self.key_file).read_text(encoding="utf-8").strip()
         return ""
 
-    def fetch(self, db: DBInfo, limit: int = 0) -> List[Dict]:
-        if not self.available():
-            raise C2TError("E4002", "内置读取器需要 key（配置 [db].key 或 key_file）")
-        from ..core.crypto import verify_sqlcipher_key
+    @staticmethod
+    def engine_available() -> bool:
+        try:
+            import sqlcipher3  # noqa: F401
+        except ImportError:
+            return False
+        return True
 
-        if not verify_sqlcipher_key(self._key(), db.path):
-            raise C2TError("E4003", "密钥校验失败：无法解开首页，密钥或 KDF 参数不对")
-        raise C2TError(
-            "E4003",
-            "密钥有效，但内置读取器尚未实现整库抽取；请配置 [db].module 用社区工具导入",
-        )
+    def available(self) -> bool:
+        return bool(self._key()) and self.engine_available()
+
+    def fetch(self, db: DBInfo, limit: int = 0, since: int = 0) -> List[Dict]:
+        key = self._key()
+        if not key:
+            raise C2TError("E4002", "没有密钥：先 `c2t db-key --save` 保存，或配置 [db].key")
+        if not self.engine_available():
+            raise C2TError("E4002", "缺少 sqlcipher3 引擎：pip install chat2todo[db]")
+
+        import shutil
+        import tempfile
+
+        import sqlcipher3
+
+        tmp = tempfile.mkdtemp(prefix="c2t_db_")
+        try:
+            stripped = _snapshot_without_header(db.path, tmp)
+            conn = sqlcipher3.connect(stripped)
+            try:
+                conn.execute(PRAGMA_BEFORE_KEY)
+                # PRAGMA key 紧随其后；口令里的单引号按 SQL 规则翻倍
+                conn.execute(f"PRAGMA key = '{key.replace(chr(39), chr(39) * 2)}'")
+                for pragma in SQLCIPHER_PRAGMAS:
+                    conn.execute(pragma)
+                records: List[tuple] = []
+                for table in MSG_TABLES:
+                    cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{table}")')}
+                    if not {"40050", "40800"} <= cols:
+                        continue
+                    sql = (
+                        f"SELECT {', '.join(MSG_COLUMNS)} FROM \"{table}\" "
+                        'WHERE "40050" >= ? ORDER BY "40050" DESC'
+                    )
+                    params: list = [int(since)]
+                    if limit:
+                        sql += " LIMIT ?"
+                        params.append(int(limit))
+                    records.extend(conn.execute(sql, params))
+            finally:
+                conn.close()
+        except C2TError:
+            raise
+        except Exception as exc:  # sqlcipher3 的 DatabaseError 等
+            raise C2TError(
+                "E4003", f"解密或读取失败：{exc}（多为密钥错误或 QQ 版本变更）"
+            ) from exc
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        return _decode_records(records)
+
+
+def resolve_key(db_cfg: Dict) -> str:
+    """密钥解析优先级：配置 key > 环境变量 > key_file > DPAPI 本机密库。"""
+    key = db_cfg.get("key") or os.environ.get("C2T_DB_KEY", "")
+    if key:
+        return key
+    key_file = db_cfg.get("key_file", "")
+    if key_file and os.path.exists(key_file):
+        return Path(key_file).read_text(encoding="utf-8").strip()
+    from ..core import keybox
+
+    return keybox.load_key()
 
 
 def get_backend(cfg: Dict) -> object:
     """按配置挑一个可用后端；都没有就抛可读错误。"""
     db = cfg.get("db", {}) if isinstance(cfg, dict) else {}
     community = CommunityBackend(module=db.get("module", ""), extra_args=db.get("args", ""))
-    builtin = BuiltinBackend(key=db.get("key", ""), key_file=db.get("key_file", ""))
     if community.available():
         return community
+    builtin = BuiltinBackend(key=resolve_key(db))
     if builtin.available():
         return builtin
+    if not builtin.engine_available():
+        raise C2TError("E4002", "数据库通道需要 sqlcipher3：pip install chat2todo[db]")
     raise C2TError(
         "E4002",
-        "未配置可用的数据库后端：请在配置里设置 [db].module（社区解密工具路径）",
+        "没有可用密钥：运行 `c2t db-key --save` 交互保存（DPAPI 加密），或配置 [db].key",
     )
 
 
-def load_messages(cfg: Dict, limit: int = 0) -> List[Message]:
+def load_messages(cfg: Dict, limit: int = 0, days: int = 0) -> List[Message]:
+    import time
+
     db_cfg = cfg.get("db", {}) if isinstance(cfg, dict) else {}
     path = locate(db_cfg.get("path") or None)
     if not path:
         raise C2TError("E4001", "未找到 nt_msg.db：请用 [db].path 指定，或改用导出文件")
     info = inspect(str(path))
-    rows = get_backend(cfg).fetch(info, limit=limit)  # type: ignore[attr-defined]
+    since = int(time.time()) - days * 86400 if days > 0 else 0
+    backend = get_backend(cfg)
+    rows = backend.fetch(info, limit=limit, since=since)  # type: ignore[attr-defined]
     return _rows_to_messages(rows)

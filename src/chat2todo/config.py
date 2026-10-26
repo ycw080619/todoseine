@@ -34,6 +34,7 @@ DB_DEFAULTS: Dict[str, Any] = {
     "key": "",
     "key_file": "",
     "page_size": 4096,
+    "days": 0,
 }
 
 AI_DEFAULTS: Dict[str, Any] = {    "enabled": False,
@@ -140,16 +141,19 @@ def find_file(explicit: Optional[str] = None) -> Optional[str]:
 
 def load(path: Optional[str] = None) -> Dict[str, Any]:
     """返回合并后的配置；找不到文件时返回纯默认值。"""
+    from .semantic import VECTOR_DEFAULTS
+
     cfg: Dict[str, Any] = dict(DEFAULTS)
     cfg["ai"] = dict(AI_DEFAULTS)
     cfg["db"] = dict(DB_DEFAULTS)
+    cfg["vector"] = dict(VECTOR_DEFAULTS)
 
     real = find_file(path)
     if real:
         raw = _read(real)
         cfg["config_file"] = real
         for key, value in raw.items():
-            if key in ("ai", "db") and isinstance(value, dict):
+            if key in ("ai", "db", "vector") and isinstance(value, dict):
                 cfg[key].update(value)
             else:
                 cfg[key] = value
@@ -164,6 +168,12 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
         cfg["db"]["args"] = os.environ["C2T_DB_ARGS"]
     if os.environ.get("C2T_DB_KEY"):
         cfg["db"]["key"] = os.environ["C2T_DB_KEY"]
+    if os.environ.get("C2T_VECTOR_URL"):
+        cfg["vector"]["base_url"] = os.environ["C2T_VECTOR_URL"]
+    if os.environ.get("C2T_VECTOR_MODEL"):
+        cfg["vector"]["model"] = os.environ["C2T_VECTOR_MODEL"]
+    if os.environ.get("C2T_VECTOR_OFF"):
+        cfg["vector"]["enabled"] = False
     return cfg
 
 
@@ -190,12 +200,20 @@ api_key  = ""                 # 或用环境变量 C2T_AI_KEY
 model    = "gpt-4o-mini"
 timeout  = 15
 
+[vector]
+enabled       = true                     # 语义去重 + 公告过滤；Ollama 不在时自动退回纯规则
+base_url      = "http://127.0.0.1:11434" # 本机 Ollama；也可设环境变量 C2T_VECTOR_URL
+model         = "bge-m3"                 # 需先 ollama pull bge-m3
+sim_threshold = 0.92                     # 语义去重阈值（越高越保守）
+ann_threshold = 0.80                     # 公告过滤阈值
+
 [db]
 enabled  = false              # 数据库只读通道总开关
 path     = ""                 # nt_msg.db 路径；留空则自动探测
-module   = ""                 # 社区解密工具路径（推荐）
+key      = ""                 # 不推荐明文写这里；优先 `c2t db-key --save`（DPAPI 加密）
+key_file = ""                 # 或从文件读 key；也可用环境变量 C2T_DB_KEY
+days     = 0                  # db-import 默认只取最近 N 天，0 为全部
+module   = ""                 # 备用：社区解密工具路径（无 sqlcipher3 时用）
 args     = ""                 # 传给社区模块的额外参数
-key      = ""                 # 内置读取器用（或用环境变量 C2T_DB_KEY）
-key_file = ""                 # 从文件读 key
 page_size= 4096
 """

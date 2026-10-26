@@ -14,6 +14,10 @@ venv/
 *.db-shm
 out/
 *.log
+*.jsonl            # 导出的消息中间产物
+dbkey.dat          # DPAPI 密钥库（理论上在 ~/Chat2Todo，双保险）
+*.key
+key.txt
 
 # Editor
 .vscode/

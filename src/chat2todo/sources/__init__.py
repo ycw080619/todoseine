@@ -8,4 +8,5 @@ from .db import (  # noqa: F401
     inspect,
     load_messages,
     locate,
+    resolve_key,
 )

@@ -99,6 +99,10 @@ def cmd_import(args) -> int:
     unique = dedupe(raw, strict=bool(cfg.get("strict_dedupe")))
     todos = extract_todos(unique, session=session)
 
+    from .semantic import vector_pass
+
+    todos, vec_note = vector_pass(todos, cfg)
+
     # AI 默认全关；开启后失败也只是退回规则结果
     ai = AI(cfg)
     ai_note = ""
@@ -158,7 +162,7 @@ def cmd_import(args) -> int:
     print(f"适配器      : {adapter_name}")
     print(f"读到消息    : {len(raw)}")
     print(f"去重后      : {len(unique)}（新增入库 {added}）")
-    print(f"抽取待办    : {len(todos)}（新增 {added_todos}）{ai_note}")
+    print(f"抽取待办    : {len(todos)}（新增 {added_todos}）{vec_note}{ai_note}")
     print(f"库内总计    : 消息 {stats['messages']} / 待办 {stats['todos']} / 待处理 {stats['pending']}")
 
     if args.out:
@@ -365,9 +369,56 @@ def cmd_dash(args) -> int:
     return run(_db(args), interval=int(args.interval), status=status)
 
 
+def cmd_db_key(args) -> int:
+    """数据库口令管理：DPAPI 加密存本机，只有当前 Windows 用户能解开。"""
+    from .core import keybox
+    from .sources import locate
+
+    cfg = _cfg(args)
+    db_cfg = cfg.get("db", {})
+
+    if args.delete:
+        print("已删除本机保存的口令" if keybox.delete_key() else "本机没有保存过口令")
+        return 0
+
+    if args.save:
+        import getpass
+
+        key = getpass.getpass("请输入 QQ 数据库口令（输入时不显示）：").strip()
+        if len(key) < 8:
+            print("口令太短，已放弃")
+            return 1
+        # 能找到库就先验证一把，解不开首页的口令存了也没用
+        path = locate(db_cfg.get("path") or None)
+        if path:
+            from .core.crypto import verify_sqlcipher_key
+
+            ok = verify_sqlcipher_key(key, str(path), iterations=4000, digest="sha512")
+            if not ok and not args.force:
+                print("[E4003] 该口令解不开当前数据库首页，未保存")
+                print("  建议：保持 QQ 登录运行，用提取工具重新扫描；执意保存请加 --force")
+                return 1
+        target = keybox.save_key(key)
+        print(f"已加密保存到 {target}（DPAPI，仅当前用户可解）")
+        return 0
+
+    if args.check:
+        saved = keybox.load_key()
+        print(f"本机密库  : {'有口令（' + keybox.key_file_path().__str__() + '）' if saved else '空'}")
+        env = bool(os.environ.get("C2T_DB_KEY"))
+        print(f"环境变量  : {'已设置 C2T_DB_KEY' if env else '未设置'}")
+        conf = "已配置" if db_cfg.get("key") or db_cfg.get("key_file") else "未配置"
+        print(f"配置文件  : {conf}")
+        return 0
+
+    print("用法：c2t db-key --save | --check | --delete")
+    return 1
+
+
 def cmd_db(args) -> int:
-    """检查数据库只读通道：库在哪里、是不是加密、有哪些后端可用。"""
-    from .sources import BuiltinBackend, CommunityBackend, inspect, locate
+    """检查数据库只读通道：库在哪里、是不是加密、引擎和密钥是否就绪。"""
+    from .core import keybox
+    from .sources import BuiltinBackend, CommunityBackend, inspect, locate, resolve_key
 
     cfg = _cfg(args)
     db_cfg = cfg.get("db", {})
@@ -380,17 +431,28 @@ def cmd_db(args) -> int:
     print(f"数据库    : {info.path}")
     print(f"大小      : {info.size / 1048576:.1f} MB（{info.pages} 页 × 4096）")
     print(f"加密      : {'是（腾讯 WCDB 变体）' if info.encrypted else '否，可直接用 sqlite 打开'}")
-    community = CommunityBackend(module=db_cfg.get("module", ""))
-    builtin = BuiltinBackend(key=db_cfg.get("key", ""), key_file=db_cfg.get("key_file", ""))
-    print(f"社区后端  : {'可用 → ' + db_cfg.get('module', '') if community.available() else '未配置'}")
-    print(f"内置后端  : {'有 key，可尝试' if builtin.available() else '未提供 key'}")
-    if builtin.available():
-        from .core.crypto import verify_sqlcipher_key
 
-        ok = verify_sqlcipher_key(builtin._key(), info.path)
-        print(f"密钥校验  : {'通过，可解开首页（SQLite format 3）' if ok else '未通过——密钥或 KDF 参数不对'}")
-    if not community.available() and not builtin.available():
-        print("  → 现在无法读取；配置 [db].module 或 [db].key 后重试")
+    community = CommunityBackend(module=db_cfg.get("module", ""))
+    print(f"社区后端  : {'可用 → ' + db_cfg.get('module', '') if community.available() else '未配置'}")
+
+    engine = BuiltinBackend.engine_available()
+    print(f"内置引擎  : {'sqlcipher3 已就绪' if engine else '缺 sqlcipher3：pip install chat2todo[db]'}")
+
+    key = resolve_key(db_cfg)
+    if not key:
+        print("密钥      : 未找到 → 运行 c2t db-key --save 交互保存（DPAPI 加密）")
+    elif engine and info.encrypted:
+        ok = BuiltinBackend(key=key)
+        try:
+            ok.fetch(info, limit=1)
+            print("密钥      : 通过（试读 1 条成功）")
+        except C2TError as exc:
+            print(f"密钥      : 试读失败——{exc.detail}")
+    else:
+        print("密钥      : 已提供")
+    if not community.available() and not (engine and key):
+        print("  → 现在无法读取；先装引擎、存密钥后重试")
+        return 1
     return 0
 
 
@@ -400,12 +462,17 @@ def cmd_db_import(args) -> int:
     from .sources import load_messages
 
     cfg = _cfg(args)
-    messages = load_messages(cfg, limit=int(args.limit))
+    days = int(args.days or cfg.get("db", {}).get("days", 0) or 0)
+    messages = load_messages(cfg, limit=int(args.limit), days=days)
     if not messages:
         print("没有读到消息（可能后端返回空）")
         return 1
     messages = dedupe(messages)
     todos = extract_todos(messages, session=args.session or "qq")
+
+    from .semantic import vector_pass
+
+    todos, vec_note = vector_pass(todos, cfg)
 
     # 本地模型清洗待办：复核 / 意图过滤 / 改写（默认全关，失败静默退规则）
     ai = AI(cfg)
@@ -437,7 +504,7 @@ def cmd_db_import(args) -> int:
     print(f"来源        : 数据库（只读）")
     print(f"读到消息    : {len(messages)}")
     print(f"去重后      : {len(messages)}（新增入库 {added}）")
-    print(f"抽取待办    : {len(todos)}（新增 {tadded}）")
+    print(f"抽取待办    : {len(todos)}（新增 {tadded}）{vec_note}{ai_note}")
     print(f"库内总计    : 消息 {s['messages']} / 待办 {s['todos']} / 待处理 {s['pending']}")
     return 0
 
@@ -590,11 +657,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status", default="pending", choices=["pending", "unconfirmed", "done"])
     p.set_defaults(func=cmd_dash)
 
-    p = sub.add_parser("db", help="检查数据库只读通道（需要解密后端）")
+    p = sub.add_parser("db", help="检查数据库只读通道（引擎 / 密钥 / 试读）")
     p.set_defaults(func=cmd_db)
+    p = sub.add_parser("db-key", help="管理本机保存的数据库口令（DPAPI 加密）")
+    p.add_argument("--save", action="store_true", help="交互输入口令，验证后加密保存")
+    p.add_argument("--check", action="store_true", help="查看各来源口令状态")
+    p.add_argument("--delete", action="store_true", help="删除本机保存的口令")
+    p.add_argument("--force", action="store_true", help="验证不通过也强制保存")
+    p.set_defaults(func=cmd_db_key)
     p = sub.add_parser("db-import", help="从 QQ 数据库只读拉取消息并抽取待办")
     p.add_argument("--db", default="")
-    p.add_argument("--limit", type=int, default=0, help="只取最近 N 条，0 表示全部")
+    p.add_argument("--limit", type=int, default=0, help="每张表最多取 N 条，0 表示不限")
+    p.add_argument("--days", type=int, default=0, help="只取最近 N 天，0 表示全部")
     p.add_argument("--session", default="")
     p.set_defaults(func=cmd_db_import)
 

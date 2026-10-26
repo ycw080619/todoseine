@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
@@ -41,7 +42,7 @@ class FakeBackend:
     def available(self) -> bool:
         return True
 
-    def fetch(self, info, limit=0):
+    def fetch(self, info, limit=0, since=0):
         return self.rows
 
 
@@ -64,8 +65,11 @@ class TestDBProbe(unittest.TestCase):
             self.assertEqual(found.name, "nt_msg.db")
 
     def test_no_backend_raises_readable_error(self) -> None:
-        with self.assertRaises(C2TError) as ctx:
-            dbmod.get_backend({"db": {}})
+        # 环境可能真装了引擎/存了密钥：把两者都置空，确保走到「无后端」分支
+        with mock.patch.object(dbmod, "resolve_key", return_value=""), \
+                mock.patch.object(dbmod.BuiltinBackend, "engine_available", return_value=True):
+            with self.assertRaises(C2TError) as ctx:
+                dbmod.get_backend({"db": {}})
         self.assertEqual(ctx.exception.code, "E4002")
 
 
