@@ -4,6 +4,8 @@
 
 > Local-first chat-to-todo extractor. Zero-dependency core, offline by default. Windows 11 only.
 
+![Chat2Todo 桌面看板：待办 / 待定 / 今日 / 完成 四个标签，右侧显示到期时间](docs/dashboard.png)
+
 ---
 
 ## 它解决什么问题

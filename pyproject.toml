@@ -30,7 +30,7 @@ db = ["sqlcipher3>=0.6.2"]
 c2t = "chat2todo.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/<you>/chat2todo"
+Homepage = "https://github.com/your-name/chat2todo"
 
 [tool.setuptools.packages.find]
 where = ["src"]

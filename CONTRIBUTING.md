@@ -16,7 +16,7 @@
 ## 开发环境
 
 ```bash
-git clone https://github.com/<you>/chat2todo.git
+git clone https://github.com/your-name/chat2todo.git
 cd chat2todo
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
