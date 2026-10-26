@@ -125,8 +125,10 @@ def _hwnd_of(root) -> int:
     try:
         import ctypes
 
-        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
-        return hwnd or root.winfo_id()
+        wid = root.winfo_id()
+        user32 = ctypes.windll.user32
+        anc = user32.GetAncestor(wid, 2)      # GA_ROOT：取真正的顶层窗口
+        return anc or wid
     except Exception:  # noqa: BLE001
         return 0
 
@@ -394,6 +396,10 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             return
         state["reveal_until"] = time.time() + seconds
         _set_layer(root, True)
+        try:
+            root.lift()
+        except Exception:  # noqa: BLE001
+            pass
 
     # 全局热键只置一个标志，真正操作在 UI 线程的 tick 里做（避免跨线程动 Tk）
     _start_hotkey(lambda: state.__setitem__("reveal", True))
