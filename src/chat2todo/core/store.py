@@ -276,6 +276,26 @@ class Store:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def set_status_many(self, ids, status: str = "done") -> int:
+        """批量改状态（看板批量操作）。"""
+        ids = [int(i) for i in ids]
+        if not ids:
+            return 0
+        today = self._today() if status == "done" else ""
+        self.conn.executemany(
+            "UPDATE todos SET status=?, done_at=? WHERE id=?",
+            [(status, today, i) for i in ids],
+        )
+        self.conn.commit()
+        return len(ids)
+
+    def trash_many(self, ids) -> int:
+        """批量丢进回收站。"""
+        n = 0
+        for i in [int(x) for x in ids]:
+            n += 1 if self.trash_item(i) else 0
+        return n
+
     # --- 完成归档 / 回收站 ---------------------------------------
     def archive_completed(self, keep_date: Optional[str] = None) -> int:
         """把「不是今天完成的」done 条目移进回收站，返回条数。

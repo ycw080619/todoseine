@@ -240,6 +240,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         "undo": None,          # (todo_id, 原状态)
         "counts": (0, 0),
         "pin": False,          # False=贴桌面层，True=置顶
+        "batch": False,        # 批量模式
+        "sel": set(),          # 批量模式下选中的 todo_id
     }
 
     def housekeeping() -> None:
@@ -312,6 +314,50 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             _mark(item, "pending")
         else:
             _mark(item, "done")
+
+    def toggle_batch() -> None:
+        """进入/退出批量模式。"""
+        state["batch"] = not state["batch"]
+        state["sel"] = set()
+        render()
+
+    def toggle_sel(item) -> None:
+        tid = item.todo_id
+        if tid is None:
+            return
+        if tid in state["sel"]:
+            state["sel"].discard(tid)
+        else:
+            state["sel"].add(tid)
+        render()
+
+    def batch_action(tag: str) -> None:
+        sel = list(state["sel"])
+        if tag == "bcancel":
+            state["batch"] = False
+            state["sel"] = set()
+            render()
+            return
+        if not sel:
+            return
+        st = _store()
+        try:
+            if tag == "bdone":
+                n = st.set_status_many(sel, "done")
+                msg = f"已批量标记完成 {n} 条"
+            else:
+                n = st.trash_many(sel)
+                msg = f"已批量移到回收站 {n} 条"
+        finally:
+            st.close()
+        state["batch"] = False
+        state["sel"] = set()
+        render()
+        try:
+            self_write = _store()
+            self_write.close()
+        except Exception:  # noqa: BLE001
+            pass
 
     def undo() -> None:
         u = state["undo"]
@@ -609,10 +655,35 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         cv.create_text(W - 76, 24, text="钉", anchor="e", fill=ACCENT if pinned else SUB,
                        font=("Microsoft YaHei UI", 9), tags=("body", "pin"))
 
-        # 顶部输入卡（借鉴参考图：先说「添加待办」，再列条目）
+        # 顶部输入卡：平时是「＋ 添加待办」，批量模式下变成操作条
         _rounded(cv, PAD, 48, W - PAD, 88, 12, fill=FIELD, outline=BORDER, width=1, tags="body")
-        cv.create_text(PAD + 18, 68, text="＋", anchor="center", fill=SUB,
-                       font=("Microsoft YaHei UI", 12), tags="body")
+        if state["batch"]:
+            n_sel = len(state["sel"])
+            cv.create_text(PAD + 14, 68, text=f"已选 {n_sel}", anchor="w", fill=TEXT,
+                           font=("Microsoft YaHei UI", 9, "bold"), tags="body")
+            bx = W - PAD - 12
+            for label, tag, fn in (("取消", "bcancel", None),
+                                   ("删除", "bdel", None),
+                                   ("完成", "bdone", None)):
+                wlab = 44 if label != "取消" else 40
+                x1 = bx - wlab
+                fill = ACCENT if tag == "bdone" else "none"
+                fg = "#0b1a22" if tag == "bdone" else SUB
+                if fill != "none":
+                    _rounded(cv, x1, 57, bx, 79, 8, fill=fill, outline="", tags=("body", tag))
+                cv.create_text((x1 + bx) / 2, 68, text=label, anchor="center", fill=fg,
+                               font=("Microsoft YaHei UI", 8), tags=("body", tag))
+                cv.tag_bind(tag, "<Button-1>",
+                            lambda _e, t=tag: batch_action(t))
+                bx = x1 - 8
+            cv.create_text(PAD + 14, 68, text=f"已选 {n_sel}", anchor="w", fill=TEXT,
+                           font=("Microsoft YaHei UI", 9, "bold"), tags="body")
+        else:
+            cv.create_text(PAD + 18, 68, text="＋", anchor="center", fill=SUB,
+                           font=("Microsoft YaHei UI", 12), tags="body")
+            cv.create_text(W - PAD - 12, 68, text="批量", anchor="e", fill=SUB,
+                           font=("Microsoft YaHei UI", 8), tags=("body", "batch"))
+            cv.tag_bind("batch", "<Button-1>", lambda _e: toggle_batch())
 
         # 筛选标签：圆角胶囊 + 数量（DeskBox 的 All / Today / ... 风格）
         open_count = sum(1 for i in todo_items if i.status != "done")
@@ -680,8 +751,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 else:
                     bar = ACCENTS[i % len(ACCENTS)]
                 # 卡片：圆角底 + 1px 描边，勾选框 / 色条 / 标题 / 说明 / ⋯
+                picked = item.todo_id in state["sel"]
                 _rounded(cv, PAD, y - 26, W - PAD, y + 26, 14,
-                         fill=FIELD, outline=BORDER, width=1, tags="body")
+                         fill=(ACTIVE if picked else FIELD),
+                         outline=(ACCENT if picked else BORDER), width=(2 if picked else 1),
+                         tags="body")
                 # 勾选框（点击切换完成）
                 if item.status == "done":
                     _rounded(cv, PAD + 12, y - 9, PAD + 30, y + 9, 5,
@@ -731,9 +805,13 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 cv.create_text(W - PAD - 14, y - 8, text="⋯", anchor="e", fill="#6f6a64",
                                font=("Microsoft YaHei UI", 9), tags=("body", f"more{idx}"))
 
-                cv.tag_bind(tag, "<Button-1>", lambda _e, it=item: show_detail(it))
-                cv.tag_bind(f"dot{idx}", "<Button-1>",
-                            lambda _e, it=item: toggle_item(it))
+                if state["batch"]:
+                    cv.tag_bind(tag, "<Button-1>", lambda _e, it=item: toggle_sel(it))
+                    cv.tag_bind(f"dot{idx}", "<Button-1>", lambda _e, it=item: toggle_sel(it))
+                else:
+                    cv.tag_bind(tag, "<Button-1>", lambda _e, it=item: show_detail(it))
+                    cv.tag_bind(f"dot{idx}", "<Button-1>",
+                                lambda _e, it=item: toggle_item(it))
                 cv.tag_bind(f"more{idx}", "<Button-1>",
                             lambda e, it=item: popup(e, it))
 
@@ -758,8 +836,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                        font=("Microsoft YaHei UI", 8), tags=("body", "clear"))
         cv.tag_bind("clear", "<Button-1>", lambda _e: clear_all())
 
-        # 输入框压在顶部「添加待办」卡片上
-        entry.place(x=PAD + 42, y=57, width=W - 2 * PAD - 52, height=22)
+        # 输入框压在顶部「添加待办」卡片上（批量模式下隐藏）
+        if state["batch"]:
+            entry.place_forget()
+        else:
+            entry.place(x=PAD + 42, y=57, width=W - 2 * PAD - 52, height=22)
 
     # ---- 交互绑定 ----
     cv.tag_bind("close", "<Button-1>", lambda _e: close())
