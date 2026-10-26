@@ -25,6 +25,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import zlib
 from ctypes import wintypes
@@ -314,8 +315,13 @@ def _dpi_scale() -> float:
         return 1.0
 
 
-def confirm_dialog(text: str, engine: str = "") -> Optional[str]:
-    """预填识别文字，返回用户确认后的文本；取消返回 None。"""
+def confirm_dialog(text: str, engine: str = "", refine=None) -> Optional[str]:
+    """预填识别文字，返回用户确认后的文本；取消返回 None。
+
+    refine：可选的「后台 AI 整理」函数，接收当前文本返回整理后文本。
+    传入时窗口**立刻弹出**，整理在后台线程跑，完成后再把内容替换进输入框，
+    这样用户不用干等模型。
+    """
     import tkinter as tk
 
     dark = _read_theme() == "dark"
@@ -334,13 +340,39 @@ def confirm_dialog(text: str, engine: str = "") -> Optional[str]:
     root.geometry(f"{wpx}x{hpx}+{max(0, (root.winfo_screenwidth() - wpx) // 2)}"
                   f"+{max(0, (root.winfo_screenheight() - hpx) // 2)}")
     root.configure(bg=bg)
-    tk.Label(root, text=f"识别结果（引擎：{engine or '未知'}，可直接编辑），确认后提取待办：",
-             bg=bg, fg=fg, anchor="w", font=("Microsoft YaHei UI", -int(15 * k)),
-             ).pack(fill="x", padx=12, pady=(10, 4))
+    head = tk.Label(root,
+                    text=f"识别结果（引擎：{engine or '未知'}，可直接编辑），确认后提取待办：",
+                    bg=bg, fg=fg, anchor="w", font=("Microsoft YaHei UI", -int(15 * k)))
+    head.pack(fill="x", padx=12, pady=(10, 4))
     box = tk.Text(root, font=("Microsoft YaHei UI", -int(16 * k)), wrap="word", relief="solid", bd=1,
                   bg=field_bg, fg=fg, insertbackground=fg)
     box.pack(fill="both", expand=True, padx=12)
     box.insert("1.0", text)
+
+    if refine is not None:
+        head.config(text=f"识别结果（引擎：{engine or '未知'}）· AI 整理中，可先编辑…")
+        box.configure(state="normal")
+
+        def worker() -> None:
+            try:
+                out = refine(text)
+            except Exception:  # noqa: BLE001
+                out = None
+
+            def apply() -> None:
+                if out:
+                    box.delete("1.0", "end")
+                    box.insert("1.0", out)
+                    head.config(text=f"识别结果（引擎：{engine or '未知'} + AI 整理），可直接编辑：")
+                else:
+                    head.config(text=f"识别结果（引擎：{engine or '未知'}），可直接编辑：")
+
+            try:
+                root.after(0, apply)
+            except Exception:  # noqa: BLE001
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
     bar = tk.Frame(root, bg=bg)
     bar.pack(fill="x", padx=12, pady=10)
 
@@ -570,8 +602,12 @@ def capture_once(args, cfg: dict) -> int:
     if not text:
         _notify("warn", f"识别完成（{engine}），但没有认出文字。")
         return 1
-    text, note = ai_refine(text, cfg)
-    confirmed = confirm_dialog(text, engine + note)
+    def _refine(t: str):
+        out, _note = ai_refine(t, cfg)
+        return out if out != t else None
+
+    enabled = str((cfg.get("snap") or {}).get("ai_refine", "true")).lower() != "false"
+    confirmed = confirm_dialog(text, engine, refine=_refine if enabled else None)
     if not confirmed:
         return 0
     total, added = ingest(confirmed, args.db, cfg)
