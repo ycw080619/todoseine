@@ -393,11 +393,12 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         _set_layer(root, state["pin"])
         render()
 
-    def reveal(seconds: int = 8) -> None:
-        """热键唤出：临时浮到最前，seconds 秒后自动沉回桌面层（钉住时不沉）。"""
+    def reveal() -> None:
+        """热键唤出：每次都浮到最前；闲置 15 秒后自动沉回桌面层（钉住则常驻）。"""
         if state.get("pin"):
             return
-        state["reveal_until"] = time.time() + seconds
+        state["reveal_on"] = True
+        state["reveal_until"] = time.time() + 15
         _set_layer(root, True)
         try:
             root.lift()
@@ -460,8 +461,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             cv.itemconfig(date_id, text=time.strftime("%Y年%m月%d日", now) + f"　星期{week}")
         if state.pop("reveal", False):
             reveal()
+        # 唤出状态到期 → 收起；平时贴桌面层，被点浮上来也会被压回去
+        if state.get("reveal_on") and time.time() >= state.get("reveal_until", 0):
+            state["reveal_on"] = False
         # 贴桌面层时要定期压回去：否则被人点一下就会浮到前面挡住别的窗口
-        if not state.get("pin") and time.time() >= state.get("reveal_until", 0):
+        if not state.get("pin") and not state.get("reveal_on"):
             try:
                 focused = root.focus_get()
             except Exception:  # noqa: BLE001

@@ -443,8 +443,22 @@ def watch_loop(args, cfg: dict) -> int:
         return 0
 
 
+def _single_instance(name: str = "Chat2TodoSnapHotkey") -> bool:
+    """热键常驻模式单实例；重复启动直接退出，避免抢同一个组合键。"""
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.CreateMutexW(None, False, name)
+        return ctypes.windll.kernel32.GetLastError() != 183
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def hotkey_loop(args, cfg: dict) -> int:
-    """常驻模式：注册 Ctrl+Alt+S 全局热键，按下即唤出截图待办（独立子进程，互不阻塞）。"""
+    """常驻模式：注册全局热键（默认 Ctrl+Alt+S），按下即唤出截图待办。"""
+    if not _single_instance():
+        print("截图热键已在运行")
+        return 0
     u, _ = _win32()
     u.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT]
     u.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
