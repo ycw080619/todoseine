@@ -31,7 +31,7 @@ snap = ["winsdk>=1.0.0b10"]   # 截图待办的快速 OCR（不装则回退 Powe
 c2t = "chat2todo.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/your-name/chat2todo"
+Homepage = "https://github.com/ycw080619/chat2todo"
 
 [tool.setuptools.packages.find]
 where = ["src"]
