@@ -55,7 +55,7 @@ def _make_qq_like_db(tmp_path) -> str:
         conn.execute(pragma)
     conn.execute(
         f'CREATE TABLE "{MSG_TABLES[0]}" ('
-        '"40001" INTEGER, "40002" INTEGER, "40021" INTEGER, "40027" INTEGER, '
+        '"40001" INTEGER, "40033" INTEGER, "40021" INTEGER, "40027" INTEGER, '
         '"40050" INTEGER, "40093" TEXT, "40800" BLOB)'
     )
     conn.execute(
@@ -83,6 +83,8 @@ def test_builtin_backend_end_to_end(tmp_path):
     assert len(rows) == 1
     assert rows[0]["content"] == "明天下午三点前把周报发我"
     assert rows[0]["sender_name"] == "小李"
+    # 会话号必须取 40033（群表=群号/私聊=对方QQ），不是 40002(msgRandom)
+    assert rows[0]["chat_id"] == "222"
 
 
 def test_builtin_backend_wrong_key(tmp_path):

@@ -205,7 +205,9 @@ PRAGMA_BEFORE_KEY = "PRAGMA cipher_page_size = 4096"
 
 #: 消息表与列（数字列名是腾讯 WCDB 的列编码）
 MSG_TABLES = ("group_msg_table", "c2c_msg_table")
-MSG_COLUMNS = ('"40001"', '"40002"', '"40021"', '"40027"', '"40050"', '"40093"', '"40800"')
+# 40001=msgId 40033=会话号（群表=群号，私聊表=对方QQ）40021/40027=发送者
+# 40050=时间戳 40093=昵称 40800=protobuf 正文；注意 40002 是 msgRandom，不是群号
+MSG_COLUMNS = ('"40001"', '"40033"', '"40021"', '"40027"', '"40050"', '"40093"', '"40800"')
 
 
 def _clean_sender(name: object, sender: str) -> str:
