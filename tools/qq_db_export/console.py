@@ -710,33 +710,39 @@ class Console(tk.Tk):
         draw_switch()
 
         r = self._card_row(p, page, "🎨", "外观",
-                           "不透明度与强调色，改完重启看板生效")
-        self.op_entry = tk.Entry(r, width=6, bg=p["field"], fg=p["text"], bd=0,
+                           "强调色、面板底色、不透明度；改完看板会自己刷新，无需重启")
+        box = tk.Frame(r, bg=p["card"])
+        box.pack(side="right")
+
+        def _swatch_row(parent, label, colors, on_pick):
+            row = tk.Frame(parent, bg=p["card"])
+            row.pack(side="top", anchor="e", pady=2)
+            tk.Label(row, text=label, bg=p["card"], fg=p["muted"],
+                     font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(0, 4))
+            for color in colors:
+                dot = tk.Canvas(row, width=16, height=16, bg=p["card"],
+                                highlightthickness=0, cursor="hand2")
+                dot.pack(side="left", padx=2)
+                dot.create_oval(1, 1, 15, 15, fill=color, outline="#8b8b95")
+                dot.bind("<Button-1>", lambda _e, c=color: on_pick(c))
+
+        _swatch_row(box, "强调色",
+                    ("#4cc2ff", "#7c9cff", "#ff8fab", "#6ee7a8", "#ffd93d"),
+                    lambda c: _save_ui_accent(c, self))
+        _swatch_row(box, "面板",
+                    ("#212024", "#17181c", "#2b2a33", "#4a3f5c", "#f8f8fb"),
+                    lambda c: _save_ui_key("panel", c, self, "面板底色"))
+
+        op_row = tk.Frame(box, bg=p["card"])
+        op_row.pack(side="top", anchor="e", pady=2)
+        tk.Label(op_row, text="不透明度", bg=p["card"], fg=p["muted"],
+                 font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(0, 4))
+        self.op_entry = tk.Entry(op_row, width=6, bg=p["field"], fg=p["text"], bd=0,
                                  relief="flat", justify="center",
                                  font=("Consolas", 9))
         self.op_entry.insert(0, str(_read_ui("opacity", "0.93")))
-        self.op_entry.pack(side="right", padx=(6, 0))
-        tk.Label(r, text="不透明度", bg=p["card"], fg=p["muted"],
-                 font=("Microsoft YaHei UI", 8)).pack(side="right")
-        row2 = tk.Frame(r, bg=p["card"])
-        row2.pack(side="right", padx=(0, 8))
-        tk.Label(row2, text="面板", bg=p["card"], fg=p["muted"],
-                 font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(0, 4))
-        for color in ("#212024", "#17181c", "#2b2a33", "#4a3f5c", "#f8f8fb"):
-            dot = tk.Canvas(row2, width=16, height=16, bg=p["card"],
-                            highlightthickness=0, cursor="hand2")
-            dot.pack(side="left", padx=2)
-            dot.create_oval(1, 1, 15, 15, fill=color, outline="")
-            dot.bind("<Button-1>", lambda _e, c=color: _save_ui_key("panel", c, self, "面板底色"))
+        self.op_entry.pack(side="left")
 
-        swatches = tk.Frame(r, bg=p["card"])
-        swatches.pack(side="right", padx=(0, 10))
-        for color in ("#4cc2ff", "#7c9cff", "#ff8fab", "#6ee7a8", "#ffd93d"):
-            dot = tk.Canvas(swatches, width=16, height=16, bg=p["card"],
-                            highlightthickness=0, cursor="hand2")
-            dot.pack(side="left", padx=2)
-            dot.create_oval(1, 1, 15, 15, fill=color, outline="")
-            dot.bind("<Button-1>", lambda _e, c=color: _save_ui_accent(c, self))
 
         r = self._card_row(p, page, "⌨", "全局快捷键",
                            "看板贴在桌面层时，按这个组合唤出；录制后重启看板生效")
