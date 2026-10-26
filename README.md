@@ -64,6 +64,9 @@ c2t import chat.txt --db qq.db      # 导入导出文件（txt / ChatLab JSON）
 c2t db-key --save                   # 保存 QQ 库口令（DPAPI 加密）
 c2t db                              # 数据库通道自检：定位 / 引擎 / 试读
 c2t db-import --days 7 --db qq.db   # 只读拉取最近 7 天消息
+c2t db-backfill                     # 给历史消息补来源群（不跑抽取、不调用 AI）
+c2t purge-chat --list               # 看库里各来源群及条数
+c2t purge-chat --chat 123456 --dry-run   # 按群清理前先预览
 c2t todos / done / search / show    # 查看 / 完成 / 检索 / 上下文
 c2t export --format md --out out    # 导出 md / csv / json
 c2t dash --db qq.db                 # 悬浮待办看板

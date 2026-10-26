@@ -161,5 +161,134 @@ class TestP2SearchAndExport(unittest.TestCase):
                 store.close()
 
 
+class TestChatPurge(unittest.TestCase):
+    """P1：消息记录来源群，并按群清理历史。"""
+
+    def _store(self, tmp: str) -> Store:
+        return Store(os.path.join(tmp, "chat.db"))
+
+    def test_messages_keep_chat_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            try:
+                store.add_messages([
+                    Message(timestamp=1000, sender_id="1", sender_name="A",
+                            content="记得交周报", chat_id="111"),
+                    Message(timestamp=2000, sender_id="2", sender_name="B",
+                            content="闲聊", chat_id="222"),
+                ], session="qq")
+                chats = {r["chat_id"]: r["n"] for r in store.list_chats()}
+                self.assertEqual(chats, {"111": 1, "222": 1})
+            finally:
+                store.close()
+
+    def test_backfill_chat_id_on_resync(self):
+        """老库没有 chat_id，重新同步同一条消息时应补上来源群。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            try:
+                store.add_messages([Message(timestamp=1000, sender_id="1",
+                                            sender_name="A", content="记得交周报")])
+                store.add_messages([Message(timestamp=1000, sender_id="1",
+                                            sender_name="A", content="记得交周报",
+                                            chat_id="111")])
+                chats = store.list_chats()
+                self.assertEqual(len(chats), 1)
+                self.assertEqual(chats[0]["chat_id"], "111")
+            finally:
+                store.close()
+
+    def test_migrate_old_messages_table(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "old.db")
+            conn = sqlite3.connect(path)
+            conn.execute(
+                "CREATE TABLE messages ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, "
+                "sender_id TEXT NOT NULL, sender_name TEXT NOT NULL, "
+                "content TEXT NOT NULL, type INTEGER NOT NULL DEFAULT 0, "
+                "content_len INTEGER NOT NULL, content_hash TEXT NOT NULL, "
+                "session TEXT NOT NULL DEFAULT '', "
+                "UNIQUE (ts, sender_id, content_len, content_hash))"
+            )
+            conn.commit()
+            conn.close()
+            store = Store(path)
+            try:
+                cols = {r[1] for r in store.conn.execute("PRAGMA table_info(messages)")}
+                self.assertIn("chat_id", cols)
+            finally:
+                store.close()
+
+    def test_purge_chat_removes_messages_and_todos(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            try:
+                msgs = [
+                    Message(timestamp=1000, sender_id="1", sender_name="A",
+                            content="记得交周报", chat_id="111"),
+                    Message(timestamp=2000, sender_id="2", sender_name="B",
+                            content="明天开会对齐需求", chat_id="222"),
+                ]
+                store.add_messages(msgs, session="qq")
+                store.add_todos(extract_todos(msgs, session="qq"))
+                total_todos = len(store.list_todos())
+                hit = store.chat_counts("222")
+                self.assertEqual(hit["messages"], 1)
+                self.assertGreaterEqual(hit["todos"], 1)
+
+                res = store.purge_chat("222")
+                self.assertEqual(res["messages"], 1)
+                self.assertEqual(res["todos"], hit["todos"])
+                self.assertEqual(len(store.list_todos()), total_todos - hit["todos"])
+                self.assertEqual(store.chat_counts("111")["messages"], 1)
+                self.assertEqual(store.search("需求"), [])
+            finally:
+                store.close()
+
+    def test_backfill_only_touches_unlabeled_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            try:
+                store.add_messages([
+                    Message(timestamp=1000, sender_id="1", sender_name="A",
+                            content="记得交周报"),
+                    Message(timestamp=2000, sender_id="2", sender_name="B",
+                            content="明天开会", chat_id="222"),
+                ])
+                filled = store.backfill_chat_ids([
+                    (1000, "1", len("记得交周报"), Message(timestamp=1000, sender_id="1",
+                                                       sender_name="A",
+                                                       content="记得交周报").content_hash,
+                     "111"),
+                    (2000, "2", len("明天开会"), Message(timestamp=2000, sender_id="2",
+                                                      sender_name="B",
+                                                      content="明天开会").content_hash,
+                     "999"),
+                ])
+                self.assertEqual(filled, 1)
+                chats = {r["chat_id"]: r["n"] for r in store.list_chats()}
+                self.assertEqual(chats, {"111": 1, "222": 1})
+            finally:
+                store.close()
+
+    def test_purge_keep_todos(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            try:
+                msgs = [Message(timestamp=1000, sender_id="1", sender_name="A",
+                                content="记得交周报", chat_id="111")]
+                store.add_messages(msgs, session="qq")
+                store.add_todos(extract_todos(msgs, session="qq"))
+                total = len(store.list_todos())
+                res = store.purge_chat("111", with_todos=False)
+                self.assertEqual(res, {"messages": 1, "todos": 0})
+                self.assertEqual(len(store.list_todos()), total)
+            finally:
+                store.close()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -509,6 +509,69 @@ def cmd_db_import(args) -> int:
     return 0
 
 
+def cmd_db_backfill(args) -> int:
+    """只给历史消息补来源群，不重新抽取待办（不调用 AI）。"""
+    from .sources import load_messages
+
+    cfg = _cfg(args)
+    days = int(args.days or 0)
+    messages = load_messages(cfg, days=days, keep_ignored=True)
+    if not messages:
+        print("没有读到消息")
+        return 1
+    store = Store(_db(args))
+    try:
+        filled = store.backfill_chat_ids(
+            (m.timestamp, m.sender_id, len(m.content or ""), m.content_hash, m.chat_id)
+            for m in messages
+        )
+        remain = store.conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE chat_id = ''"
+        ).fetchone()[0]
+    finally:
+        store.close()
+    print(f"扫描消息    : {len(messages)}")
+    print(f"回填来源群  : {filled} 条")
+    print(f"仍未标记    : {remain} 条（导出文件导入的旧消息没有来源群，属正常）")
+    return 0
+
+
+def cmd_purge_chat(args) -> int:
+    """按群清理历史：--list 看有哪些来源群，--chat 指定清理。"""
+    store = Store(_db(args))
+    try:
+        if args.list:
+            rows = store.list_chats()
+            if not rows:
+                print("库里还没有消息。")
+                return 0
+            print(f"{'chat_id':<22}{'消息':>7}{'最早':>13}{'最晚':>13}")
+            for r in rows:
+                name = r["chat_id"] or "(未标记)"
+                print(f"{name:<22}{r['n']:>7}{_fmt_ts(r['first_ts']):>13}"
+                      f"{_fmt_ts(r['last_ts']):>13}")
+            return 0
+        chat = (args.chat or "").strip()
+        if not chat:
+            print("用法：c2t purge-chat --list 查看来源群；"
+                  "c2t purge-chat --chat <群号> [--dry-run]")
+            return 2
+        counts = store.chat_counts(chat)
+        if args.dry_run:
+            print(f"[预览] {chat}：消息 {counts['messages']} 条，待办 {counts['todos']} 条"
+                  f"（加 --keep-todos 则只删消息）")
+            return 0
+        if not counts["messages"]:
+            print(f"{chat} 在库里没有消息：老数据可能还没回填来源群，"
+                  "先跑一次 db-import 再试")
+            return 1
+        res = store.purge_chat(chat, with_todos=not args.keep_todos)
+    finally:
+        store.close()
+    print(f"已清理 {chat}：消息 {res['messages']} 条，待办 {res['todos']} 条")
+    return 0
+
+
 def _pipeline(path: str, cfg: dict, encoding: str = "") -> tuple:
     """把一份导出文件跑完 读→去重→抽取→AI 清洗，返回 (messages, todos)。"""
     src = path
@@ -671,6 +734,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--days", type=int, default=0, help="只取最近 N 天，0 表示全部")
     p.add_argument("--session", default="")
     p.set_defaults(func=cmd_db_import)
+
+    p = sub.add_parser("db-backfill", help="给历史消息回填来源群（不跑抽取、不调用 AI）")
+    p.add_argument("--days", type=int, default=0, help="只回填最近 N 天，0 表示全部")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_db_backfill)
+
+    p = sub.add_parser("purge-chat", help="按来源群清理历史消息（可一并删对应待办）")
+    p.add_argument("--chat", default="", help="群号 / 会话号，先用 --list 查看")
+    p.add_argument("--list", action="store_true", help="列出库里各来源群及条数")
+    p.add_argument("--dry-run", action="store_true", help="只预览，不删除")
+    p.add_argument("--keep-todos", action="store_true", help="只删消息，保留待办")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_purge_chat)
 
     p = sub.add_parser("watch", help="监视文件夹，自动导入新导出的聊天记录")
     p.add_argument("--dir", default="", help="默认监视桌面")

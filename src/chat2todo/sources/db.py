@@ -143,6 +143,7 @@ def _rows_to_messages(rows: Iterable[Dict], star_groups: set = frozenset(),
                 content=str(text),
                 type=int(row.get("type", 0)),
                 star=starred,
+                chat_id=chat,
             )
         )
     return out
@@ -366,8 +367,12 @@ def _id_set(value: object) -> set:
     return {str(x).strip() for x in items if str(x).strip()}
 
 
-def _apply_filters(rows: Iterable[Dict], cfg: Dict):
-    """按 [filter] 做两件事：免打扰的群整条丢弃；特别关心的群/人打上 star。"""
+def _apply_filters(rows: Iterable[Dict], cfg: Dict, keep_ignored: bool = False):
+    """按 [filter] 做两件事：免打扰的群整条丢弃；特别关心的群/人打上 star。
+
+    keep_ignored=True 时只打星标、不丢免打扰群——回填历史来源群时要用，
+    因为这些群的消息早就在库里了，需要知道它们属于哪个群才能清理。
+    """
     conf = cfg.get("filter", {}) if isinstance(cfg, dict) else {}
     ignore = _id_set(conf.get("ignore_groups", []))
     star_groups = _id_set(conf.get("star_groups", []))
@@ -379,13 +384,14 @@ def _apply_filters(rows: Iterable[Dict], cfg: Dict):
     for row in rows:
         chat = str(row.get("chat_id") or "")
         sender = str(row.get("sender") or "")
-        if chat and chat in ignore:
+        if chat and chat in ignore and not keep_ignored:
             continue
         kept.append(row)
     return kept, star_groups, star_senders
 
 
-def load_messages(cfg: Dict, limit: int = 0, days: int = 0) -> List[Message]:
+def load_messages(cfg: Dict, limit: int = 0, days: int = 0,
+                  keep_ignored: bool = False) -> List[Message]:
     import time
 
     db_cfg = cfg.get("db", {}) if isinstance(cfg, dict) else {}
@@ -396,5 +402,6 @@ def load_messages(cfg: Dict, limit: int = 0, days: int = 0) -> List[Message]:
     since = int(time.time()) - days * 86400 if days > 0 else 0
     backend = get_backend(cfg)
     rows = backend.fetch(info, limit=limit, since=since)  # type: ignore[attr-defined]
-    rows, star_groups, star_senders = _apply_filters(rows, cfg)
+    rows, star_groups, star_senders = _apply_filters(
+        rows, cfg, keep_ignored=keep_ignored)
     return _rows_to_messages(rows, star_groups=star_groups, star_senders=star_senders)

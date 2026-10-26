@@ -67,6 +67,7 @@ class Message:
     type: MsgType = MsgType.TEXT
     msg_id: Optional[str] = None
     star: bool = False            # 来自「特别关心」群/对象的消息，抽取时标为重点
+    chat_id: str = ""             # 来源群 / 会话号；用于按群过滤与清理历史
 
     @property
     def content_hash(self) -> str:

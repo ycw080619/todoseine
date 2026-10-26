@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS messages (
     content_len  INTEGER NOT NULL,
     content_hash TEXT NOT NULL,
     session      TEXT NOT NULL DEFAULT '',
+    chat_id      TEXT NOT NULL DEFAULT '',
     UNIQUE (ts, sender_id, content_len, content_hash)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages (ts);
@@ -84,6 +85,17 @@ class Store:
                 "ALTER TABLE todos ADD COLUMN done_at TEXT NOT NULL DEFAULT ''"
             )
             self.conn.commit()
+        msg_cols = {r[1] for r in self.conn.execute("PRAGMA table_info(messages)")}
+        if "chat_id" not in msg_cols:
+            # 来源群号：过滤只对新同步生效，历史记录靠重新同步回填
+            self.conn.execute(
+                "ALTER TABLE messages ADD COLUMN chat_id TEXT NOT NULL DEFAULT ''"
+            )
+            self.conn.commit()
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages (chat_id)"
+        )
+        self.conn.commit()
 
     # --- 全文索引（P2） -------------------------------------------
     def _init_fts(self) -> bool:
@@ -155,19 +167,26 @@ class Store:
 
     # --- 写入 -----------------------------------------------------
     def add_messages(self, messages: Iterable[Message], session: str = "") -> int:
-        """写入消息，返回真正新增的条数（重复的会被忽略）。"""
+        """写入消息，返回真正新增的条数（重复的会被忽略）。
+
+        已有记录若缺少 chat_id，会借这次同步顺带回填（历史数据也能补上来源群）。
+        """
         rows = [
             (
                 m.timestamp, m.sender_id, m.sender_name, m.content or "",
                 int(m.type), len(m.content or ""), m.content_hash, session,
+                m.chat_id or "",
             )
             for m in messages
         ]
         before = self._count("messages")
         self.conn.executemany(
-            "INSERT OR IGNORE INTO messages "
-            "(ts, sender_id, sender_name, content, type, content_len, content_hash, session) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO messages "
+            "(ts, sender_id, sender_name, content, type, content_len, content_hash, "
+            "session, chat_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (ts, sender_id, content_len, content_hash) DO UPDATE SET "
+            "chat_id = excluded.chat_id WHERE messages.chat_id = ''",
             rows,
         )
         self.conn.commit()
@@ -185,6 +204,80 @@ class Store:
         )
         self.conn.commit()
         return self._count("todos") - before
+
+    # --- 按群清理 -------------------------------------------------
+    def list_chats(self, limit: int = 50) -> List[dict]:
+        """已入库消息按来源群聚合（消息多的排前面），用于挑选清理对象。"""
+        rows = self.conn.execute(
+            "SELECT chat_id, COUNT(*) AS n, MIN(ts) AS first_ts, MAX(ts) AS last_ts "
+            "FROM messages GROUP BY chat_id ORDER BY n DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def _chat_todo_ids(self, chat_id: str) -> List[int]:
+        """这些消息抽出的待办：同发送者（昵称或号）、同时间戳视为同一条源消息。"""
+        rows = self.conn.execute(
+            "SELECT t.id FROM todos t WHERE EXISTS ("
+            "SELECT 1 FROM messages m WHERE m.chat_id = ? AND m.ts = t.ts "
+            "AND (m.sender_name = t.sender OR m.sender_id = t.sender))",
+            (chat_id,),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def chat_counts(self, chat_id: str) -> dict:
+        """清理前预览：这个群在库里有多少消息 / 待办。"""
+        chat_id = (chat_id or "").strip()
+        if not chat_id:
+            return {"messages": 0, "todos": 0}
+        n = self.conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE chat_id = ?", (chat_id,)
+        ).fetchone()[0]
+        return {"messages": n, "todos": len(self._chat_todo_ids(chat_id))}
+
+    def purge_chat(self, chat_id: str, with_todos: bool = True) -> dict:
+        """按群清理历史：删除该群的消息，可选一并删除由它们抽出的待办。
+
+        待办直接删除（不进回收站）——这是主动清理噪声，不是误删恢复场景。
+        返回实际删除条数。
+        """
+        chat_id = (chat_id or "").strip()
+        if not chat_id:
+            return {"messages": 0, "todos": 0}
+        todo_ids = self._chat_todo_ids(chat_id) if with_todos else []
+        if todo_ids:
+            self.conn.executemany("DELETE FROM todos WHERE id = ?",
+                                  [(i,) for i in todo_ids])
+        cur = self.conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
+        removed = cur.rowcount
+        self.conn.commit()
+        if removed and self._fts:
+            # FTS5 不支持按普通列删除，直接重建索引（万级消息也是毫秒级）
+            self.conn.execute("DELETE FROM messages_fts")
+            self._sync_fts()
+        return {"messages": removed, "todos": len(todo_ids)}
+
+    def backfill_chat_ids(self, rows: Iterable[tuple]) -> int:
+        """给历史消息补来源群：只更新 chat_id 为空的已有行，不新增消息。
+
+        rows 每项为 (ts, sender_id, content_len, content_hash, chat_id)。
+        """
+        payload = [(chat, ts, sid, ln, h) for ts, sid, ln, h, chat in rows if chat]
+        if not payload:
+            return 0
+        before = self.conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE chat_id != ''"
+        ).fetchone()[0]
+        self.conn.executemany(
+            "UPDATE messages SET chat_id = ? WHERE ts = ? AND sender_id = ? "
+            "AND content_len = ? AND content_hash = ? AND chat_id = ''",
+            payload,
+        )
+        self.conn.commit()
+        after = self.conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE chat_id != ''"
+        ).fetchone()[0]
+        return after - before
 
     # --- 查询 -----------------------------------------------------
     def list_todos(self, status: Optional[str] = None) -> List[TodoItem]:
