@@ -937,9 +937,12 @@ class Console(tk.Tk):
 
         bar = tk.Frame(card, bg=p["card"])
         bar.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(bar, text="全选", command=self.on_trash_select_all, bg=p["btn"],
+                  fg=p["btn_text"], bd=0, padx=10, pady=5, cursor="hand2",
+                  font=("Microsoft YaHei UI", 8)).pack(side="left")
         tk.Button(bar, text="还原选中", command=self.on_restore_trash, bg=p["btn"],
                   fg=p["btn_text"], bd=0, padx=12, pady=5, cursor="hand2",
-                  font=("Microsoft YaHei UI", 8)).pack(side="left")
+                  font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(8, 0))
         tk.Button(bar, text="清空回收站", command=self.on_clear_trash, bg=p["btn"],
                   fg=p["btn_text"], bd=0, padx=12, pady=5, cursor="hand2",
                   font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(8, 0))
@@ -989,24 +992,37 @@ class Console(tk.Tk):
                 text = text[:40] + "…"
             box.insert("end", f"{r.get('deleted_at', '')}  {text}")
 
+    def on_trash_select_all(self) -> None:
+        """全选回收站列表（再点一次＝全不选）。"""
+        if not hasattr(self, "trash_box"):
+            return
+        n = self.trash_box.size()
+        if n and len(self.trash_box.curselection()) == n:
+            self.trash_box.selection_clear(0, "end")
+        else:
+            self.trash_box.selection_set(0, "end")
+
     def on_restore_trash(self) -> None:
         sel = self.trash_box.curselection() if hasattr(self, "trash_box") else ()
         if not sel:
             messagebox.showinfo("最近删除", "先在列表里选一条")
             return
-        row = self._trash_rows[sel[0]]
+        rows = [self._trash_rows[i] for i in sel if i < len(self._trash_rows)]
+        done = 0
         try:
             from chat2todo.core.store import Store
 
             st = Store(str(DB))
             try:
-                st.restore(int(row["id"]))
+                for row in rows:
+                    if st.restore(int(row["id"])):
+                        done += 1
             finally:
                 st.close()
         except Exception as exc:  # noqa: BLE001
             self.write(f"还原失败：{exc}\n")
             return
-        self.write(f"已还原：{row.get('text', '')[:20]}\n")
+        self.write(f"已还原 {done} 条\n")
         self._refresh_trash()
 
     def on_clear_trash(self) -> None:
@@ -1253,13 +1269,25 @@ class Console(tk.Tk):
         self._show_page("general")
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    page = ""
+    for i, a in enumerate(argv):
+        if a == "--page" and i + 1 < len(argv):
+            page = argv[i + 1]
+        elif a.startswith("--page="):
+            page = a.split("=", 1)[1]
     try:
         app = Console()
     except tk.TclError as exc:
         print(f"无法创建窗口：{exc}", file=sys.stderr)
         return 1
     app.write("欢迎使用 Chat2Todo 控制台。\n点「立即同步」从 QQ 数据库抓取并清洗待办。\n")
+    if page:
+        try:
+            app._show_page(page)
+        except Exception:  # noqa: BLE001
+            pass
     app.mainloop()
     return 0
 

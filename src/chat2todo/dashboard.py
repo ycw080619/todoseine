@@ -331,6 +331,30 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             state["sel"].add(tid)
         render()
 
+    def batch_select_all() -> None:
+        """全选当前可见条目；已经全选则清空（再按一次＝全不选）。"""
+        ids = [i.todo_id for i in state.get("visible", []) if i.todo_id is not None]
+        if ids and state["sel"].issuperset(ids):
+            state["sel"] = set()
+        else:
+            state["sel"] = set(ids)
+        render()
+
+    def open_settings() -> None:
+        """打开控制台并直接落到「常规」页。"""
+        import subprocess
+        from pathlib import Path as _Path
+
+        root_dir = _Path(__file__).resolve().parents[2]
+        console = root_dir / "tools" / "qq_db_export" / "console.py"
+        if not console.exists():
+            return
+        try:
+            subprocess.Popen([sys.executable, str(console), "--page", "general"],
+                             cwd=str(root_dir))
+        except Exception:  # noqa: BLE001
+            pass
+
     def batch_action(tag: str) -> None:
         sel = list(state["sel"])
         if tag == "bcancel":
@@ -645,15 +669,18 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                        font=("Microsoft YaHei UI", 9, "bold"), tags="body")
         cv.create_text(PAD + 28, 24, text="待办", anchor="w",
                        fill=TEXT, font=("Microsoft YaHei UI", 11, "bold"), tags="body")
-        cv.create_text(W - 110, 24, text=time.strftime("%H:%M"), anchor="e", fill=SUB,
+        cv.create_text(W - 130, 24, text=time.strftime("%H:%M"), anchor="e", fill=SUB,
                        font=("Consolas", 10), tags=("body", "hclock"))
-        cv.create_text(W - 22, 24, text="✕", anchor="e", fill=SUB,
+        cv.create_text(W - 20, 24, text="✕", anchor="e", fill=SUB,
                        font=("Microsoft YaHei UI", 11), tags=("body", "close"))
-        cv.create_text(W - 50, 24, text="—", anchor="e", fill=SUB,
+        cv.create_text(W - 44, 24, text="—", anchor="e", fill=SUB,
                        font=("Microsoft YaHei UI", 11), tags=("body", "mini"))
         pinned = bool(state.get("pin"))
-        cv.create_text(W - 76, 24, text="钉", anchor="e", fill=ACCENT if pinned else SUB,
+        cv.create_text(W - 68, 24, text="钉", anchor="e", fill=ACCENT if pinned else SUB,
                        font=("Microsoft YaHei UI", 9), tags=("body", "pin"))
+        cv.create_text(W - 94, 24, text="⚙", anchor="e", fill=SUB,
+                       font=("Segoe UI Symbol", 11), tags=("body", "gear"))
+        cv.tag_bind("gear", "<Button-1>", lambda _e: open_settings())
 
         # 顶部输入卡：平时是「＋ 添加待办」，批量模式下变成操作条
         _rounded(cv, PAD, 48, W - PAD, 88, 12, fill=FIELD, outline=BORDER, width=1, tags="body")
@@ -661,6 +688,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             n_sel = len(state["sel"])
             cv.create_text(PAD + 14, 68, text=f"已选 {n_sel}", anchor="w", fill=TEXT,
                            font=("Microsoft YaHei UI", 9, "bold"), tags="body")
+            selected_all = bool(items) and len(state["sel"]) >= len([i for i in items])
+            cv.create_text(PAD + 96, 68, text=("全不选" if selected_all else "全选"),
+                           anchor="w", fill=ACCENT,
+                           font=("Microsoft YaHei UI", 8), tags=("body", "ball"))
+            cv.tag_bind("ball", "<Button-1>", lambda _e: batch_select_all())
             bx = W - PAD - 12
             for label, tag, fn in (("取消", "bcancel", None),
                                    ("删除", "bdel", None),
@@ -720,6 +752,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         if state["offset"] > max_offset:
             state["offset"] = max_offset
         visible = items[state["offset"]:state["offset"] + rows_room]
+        state["visible"] = visible
 
         y = TOP + 14
         if err:
@@ -821,6 +854,18 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 y += ROW
 
         # 页脚：左边统计，右边「清除已完成」胶囊按钮
+        # 底部折叠堆叠提示：还有条目没显示时，画两层逐渐变窄的卡片边
+        rows_room = max(1, (h - TOP - FOOT) // ROW)
+        if len(items) > state["offset"] + rows_room:
+            rest = len(items) - state["offset"] - rows_room
+            for k, inset in enumerate((26, 13)):
+                yy = h - 92 - k * 7
+                _rounded(cv, PAD + inset, yy, W - PAD - inset, yy + 10, 6,
+                         fill=FIELD, outline=BORDER, width=1, tags="body")
+            cv.create_text(W / 2, h - 106, text=f"还有 {rest} 条 · 滚轮继续",
+                           anchor="center", fill=SUB,
+                           font=("Microsoft YaHei UI", 7), tags="body")
+
         foot_y = h - 26
         cv.create_text(PAD, foot_y, text=f"待办 {len(todo_items)} · 待定 {unconfirmed}",
                        anchor="w", fill=SUB, font=("Microsoft YaHei UI", 8), tags="body")
