@@ -530,73 +530,186 @@ class Console(tk.Tk):
             self.write(f"监视启动失败：{exc}\n")
 
     def on_settings(self) -> None:
-        """设置面板：卡片式分组（AI 服务商 / 截图识别 / 数据库），支持深色模式。"""
+        """设置窗口：左侧导航 + 右侧卡片行（参考 DeskBox 的设置布局）。"""
         cfg = _read_cfg()
+        p = THEMES[self.theme]
         win = tk.Toplevel(self)
         win.title("设置 · Chat2Todo")
-        win.geometry("660x700")
-        win.minsize(620, 640)
+        win.geometry("880x640")
+        win.minsize(820, 600)
         win.transient(self)
+        win.configure(bg=p["bg"])
 
         style = ttk.Style(win)
         _apply_ui_style(style, self.theme)
-        win.configure(bg=THEMES[self.theme]["bg"])
 
         def sync_listbox_colors(theme: str) -> None:
-            p = THEMES[theme]
-            win.option_add("*TCombobox*Listbox.background", p["list_bg"])
-            win.option_add("*TCombobox*Listbox.foreground", p["list_fg"])
-            win.option_add("*TCombobox*Listbox.selectBackground", p["accent"])
-            win.option_add("*TCombobox*Listbox.selectForeground", p["accent_fg"])
+            q = THEMES[theme]
+            win.option_add("*TCombobox*Listbox.background", q["list_bg"])
+            win.option_add("*TCombobox*Listbox.foreground", q["list_fg"])
+            win.option_add("*TCombobox*Listbox.selectBackground", q["accent"])
+            win.option_add("*TCombobox*Listbox.selectForeground", q["accent_fg"])
 
         sync_listbox_colors(self.theme)
 
-        shell = ttk.Frame(win, style="Page.TFrame")
-        shell.pack(fill="both", expand=True, padx=16, pady=12)
+        # ---------------- 左侧导航 ----------------
+        nav_bg = "#12151a" if self.theme == "dark" else "#e9edf3"
+        sidebar = tk.Frame(win, bg=nav_bg, width=212)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
 
-        head = ttk.Frame(shell, style="Page.TFrame")
-        head.pack(fill="x", pady=(0, 10))
-        ttk.Label(head, text="设置", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(head, text="配置 AI 服务商、截图识别与数据库口令 · 保存后重启同步生效",
-                  style="Sub.TLabel").pack(anchor="w")
+        tk.Label(sidebar, text="◈  Chat2Todo", bg=nav_bg, fg=p["title"],
+                 font=("Microsoft YaHei UI", 11, "bold"), anchor="w").pack(
+            fill="x", padx=18, pady=(20, 18))
 
-        def card(title: str) -> ttk.Frame:
-            box = ttk.LabelFrame(shell, text=f"  {title}  ", style="Card.TLabelframe")
-            box.pack(fill="x", pady=(0, 10))
-            body = ttk.Frame(box, style="Card.TFrame")
-            body.pack(fill="x", padx=12, pady=(8, 10))
-            body.columnconfigure(1, weight=1)
-            return body
+        # ---------------- 右侧内容 ----------------
+        content = tk.Frame(win, bg=p["bg"])
+        content.pack(side="left", fill="both", expand=True)
 
-        def field(parent: ttk.Frame, r: int, label: str, value: str = "") -> ttk.Entry:
-            ttk.Label(parent, text=label, style="Card.TLabel").grid(
-                row=r, column=0, sticky="w", pady=5)
-            e = ttk.Entry(parent)
-            if value:
-                e.insert(0, value)
-            e.grid(row=r, column=1, sticky="ew", padx=(12, 0), pady=5)
+        head = tk.Frame(content, bg=p["bg"])
+        head.pack(fill="x", padx=26, pady=(22, 8))
+        page_title = tk.Label(head, text="常规", bg=p["bg"], fg=p["text"],
+                              font=("Microsoft YaHei UI", 17, "bold"), anchor="w")
+        page_title.pack(anchor="w")
+        page_sub = tk.Label(head, text="", bg=p["bg"], fg=p["muted"],
+                            font=("Microsoft YaHei UI", 9), anchor="w", justify="left")
+        page_sub.pack(anchor="w", pady=(2, 0))
+
+        body = tk.Frame(content, bg=p["bg"])
+        body.pack(fill="both", expand=True, padx=26, pady=(6, 0))
+
+        def new_page() -> tk.Frame:
+            f = tk.Frame(body, bg=p["bg"])
+            return f
+
+        pages = {"general": new_page(), "ai": new_page(), "snap": new_page(), "about": new_page()}
+
+        def card_row(parent, icon: str, title: str, sub: str) -> tk.Frame:
+            """一行卡片：图标 · 标题/说明 · 右侧控件区（返回右侧容器）。"""
+            outer = tk.Frame(parent, bg=p["card"], highlightbackground=p["border"],
+                             highlightthickness=1)
+            outer.pack(fill="x", pady=(0, 8))
+            inner = tk.Frame(outer, bg=p["card"])
+            inner.pack(fill="x", padx=14, pady=12)
+            tk.Label(inner, text=icon, bg=p["card"], fg=p["title"],
+                     font=("Segoe UI Emoji", 13)).pack(side="left", padx=(0, 12))
+            texts = tk.Frame(inner, bg=p["card"])
+            texts.pack(side="left", fill="x", expand=True)
+            tk.Label(texts, text=title, bg=p["card"], fg=p["text"], anchor="w",
+                     font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
+            if sub:
+                tk.Label(texts, text=sub, bg=p["card"], fg=p["muted"], anchor="w",
+                         justify="left", wraplength=430,
+                         font=("Microsoft YaHei UI", 8)).pack(anchor="w", pady=(1, 0))
+            right = tk.Frame(inner, bg=p["card"])
+            right.pack(side="right")
+            return right
+
+        def mk_entry(parent, width: int = 26, show: str = "") -> tk.Entry:
+            e = tk.Entry(parent, width=width, show=show, bg=p["field"], fg=p["field_text"],
+                         insertbackground=p["field_text"], bd=0, relief="flat",
+                         highlightthickness=1, highlightbackground=p["border"],
+                         highlightcolor=p["accent"], font=("Microsoft YaHei UI", 9))
+            e.pack(side="left", ipady=4)
             return e
 
-        # ---------- 卡片 1：AI 服务商 ----------
-        ai = card("AI 服务商")
+        def mk_switch(parent, initial: bool, on_change) -> tk.Canvas:
+            """自绘开关：圆角轨道 + 圆点，点击切换。"""
+            cv = tk.Canvas(parent, width=46, height=24, bg=p["card"],
+                           highlightthickness=0, cursor="hand2")
+            cv.pack(side="left")
+            state = {"on": bool(initial)}
+
+            def draw() -> None:
+                cv.delete("all")
+                on = state["on"]
+                track = p["accent"] if on else ("#c7ccd6" if self.theme == "light" else "#3a4553")
+                cv.create_oval(2, 4, 22, 24, fill=track, outline="")
+                cv.create_oval(24, 4, 44, 24, fill=track, outline="")
+                cv.create_rectangle(12, 4, 34, 24, fill=track, outline="")
+                x = 32 if on else 12
+                cv.create_oval(x - 9, 3, x + 9, 21, fill="#ffffff", outline="")
+
+            def click(_e=None) -> None:
+                state["on"] = not state["on"]
+                draw()
+                on_change(state["on"])
+
+            cv.bind("<Button-1>", click)
+            draw()
+            return cv
+
+        saved = {"theme": self.theme}
+
+        # ---------------- 常规页 ----------------
+        g = pages["general"]
+
+        def on_theme_toggle(on: bool) -> None:
+            t = "dark" if on else "light"
+            saved["theme"] = t
+            self.set_theme(t)
+            _write_section("ui", {"theme": t})
+            win.destroy()
+            self.on_settings()      # 重新打开以套用新配色
+
+        r = card_row(g, "🎨", "深色模式", "关闭后整个控制台与看板切换为浅色")
+        mk_switch(r, self.theme == "dark", on_theme_toggle)
+
+        r = card_row(g, "🗄", "聊天数据库", str(DB))
+        tk.Label(r, text="只读", bg=p["card"], fg=p["ok"],
+                 font=("Microsoft YaHei UI", 8, "bold")).pack(side="left")
+
+        has_key = (ROOT / "dbkey.dat").exists()
+        r = card_row(g, "🔑", "解密口令",
+                     "已保存（DPAPI 加密，仅本机当前用户可解）；留空表示不修改"
+                     if has_key else "尚未保存，首次同步前必须填写")
+        pw_entry = mk_entry(r, 24, show="*")
+
+        r = card_row(g, "⏱", "定时同步", "由 Windows 计划任务每小时触发，可在任务计划程序里改")
+        tk.Button(r, text="打开计划任务", command=lambda: subprocess.Popen(
+            ["control", "schedtasks"]), bg=p["btn"], fg=p["btn_text"], bd=0,
+            padx=12, pady=4, cursor="hand2",
+            font=("Microsoft YaHei UI", 8)).pack(side="left")
+
+        # ---------------- AI 页 ----------------
+        a = pages["ai"]
         ai_ok = str(cfg.get("enabled")).lower() == "true"
         local_now = str(cfg.get("base_url", "")).startswith(("http://127.0.0.1", "http://localhost"))
-        status = ttk.Label(
-            ai, style="Ok.TLabel" if ai_ok else "Status.TLabel",
-            text=(f"● 已启用 · {'本地 Ollama' if local_now else '云端'} · {cfg.get('model', '')}"
-                  if ai_ok else "○ 未启用（仅用规则抽取）"))
-        status.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
-        ttk.Label(ai, text="服务商", style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=5)
-        preset = ttk.Combobox(ai, values=list(AI_PRESETS), state="readonly",
+        r = card_row(a, "✨", "服务状态",
+                     f"已启用 · {'本地 Ollama' if local_now else '云端'} · {cfg.get('model', '')}"
+                     if ai_ok else "未启用（仅用规则抽取，不联网）")
+        tk.Label(r, text="● 运行中" if ai_ok else "○ 未启用", bg=p["card"],
+                 fg=p["ok"] if ai_ok else p["muted"],
+                 font=("Microsoft YaHei UI", 9, "bold")).pack(side="left")
+
+        r = card_row(a, "🏷", "服务商", "选择后自动填入地址与模型，也可手动改")
+        preset = ttk.Combobox(r, values=list(AI_PRESETS), state="readonly", width=22,
                               font=("Microsoft YaHei UI", 9))
-        preset.grid(row=1, column=1, sticky="ew", padx=(12, 0), pady=5)
+        preset.pack(side="left")
         preset.set("本地 Ollama（免费无需 Key）")
 
-        base_entry = field(ai, 2, "API 地址", cfg["base_url"])
-        model_entry = field(ai, 3, "模型", cfg["model"])
-        key_entry = field(ai, 4, "API Key", cfg["api_key"])
-        key_entry.config(show="*")
+        r = card_row(a, "🌐", "API 地址", "OpenAI 兼容端点，本地为 127.0.0.1:11434/v1")
+        base_entry = mk_entry(r, 30)
+        base_entry.insert(0, cfg["base_url"])
+
+        r = card_row(a, "🧠", "模型", "本地建议 qwen2.5:14b；云端填对应模型名")
+        model_entry = mk_entry(r, 26)
+        model_entry.insert(0, cfg["model"])
+
+        r = card_row(a, "🔐", "API Key", "本地 Ollama 可留空（自动用占位值）")
+        key_entry = mk_entry(r, 30, show="*")
+        if cfg["api_key"] and cfg["api_key"] != "ollama":
+            key_entry.insert(0, cfg["api_key"])
+
+        r = card_row(a, "🔌", "连接测试", "会向服务端发一次最小请求，不写入配置")
+        probe_btn = tk.Button(r, text="测试连接", bg=p["accent"], fg=p["accent_fg"],
+                              bd=0, padx=14, pady=4, cursor="hand2",
+                              font=("Microsoft YaHei UI", 9))
+        probe_btn.pack(side="left")
+        hint = tk.Label(r, text="", bg=p["card"], fg=p["muted"],
+                        font=("Microsoft YaHei UI", 8))
+        hint.pack(side="left", padx=(10, 0))
 
         def on_preset(_evt=None) -> None:
             base, model = AI_PRESETS.get(preset.get(), ("", ""))
@@ -604,33 +717,21 @@ class Console(tk.Tk):
                 return
             base_entry.delete(0, "end"); base_entry.insert(0, base)
             model_entry.delete(0, "end"); model_entry.insert(0, model)
-            hint.config(text="", style="Status.TLabel")
 
         preset.bind("<<ComboboxSelected>>", on_preset)
-        ttk.Label(ai, text="国内：DeepSeek · 豆包 · 通义千问　　海外：OpenAI GPT/Codex · Claude（OpenRouter）",
-                  style="Hint.TLabel").grid(row=5, column=1, sticky="w", padx=(12, 0))
-
-        probe_bar = ttk.Frame(ai, style="Card.TFrame")
-        probe_bar.grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        probe_btn = ttk.Button(probe_bar, text="测试连接", style="Accent.TButton")
-        probe_btn.pack(side="left")
-        hint = ttk.Label(probe_bar, text="", style="Status.TLabel")
-        hint.pack(side="left", padx=10)
-        ttk.Label(ai, text="云端服务需到对应平台申请 Key（保存后明文存于本机配置文件）",
-                  style="Hint.TLabel").grid(row=7, column=1, sticky="w", padx=(12, 0), pady=(4, 0))
 
         def do_probe() -> None:
             base = base_entry.get().strip()
             model = model_entry.get().strip()
             key = key_entry.get().strip()
-            hint.config(text="测试中…", style="Status.TLabel")
+            hint.config(text="测试中…", fg=p["muted"])
             probe_btn.config(state="disabled")
 
             def run() -> None:
                 ok, msg, models = _probe_ai(base, key, model)
 
                 def show() -> None:
-                    hint.config(text=msg, style="Ok.TLabel" if ok else "Err.TLabel")
+                    hint.config(text=msg, fg=p["ok"] if ok else p["err"])
                     probe_btn.config(state="normal")
                     if models:
                         vision.config(values=["（不使用）"] + models)
@@ -641,59 +742,89 @@ class Console(tk.Tk):
 
         probe_btn.config(command=do_probe)
 
-        # ---------- 卡片 2：截图识别 ----------
-        snap_body = card("截图识别")
-        ttk.Label(snap_body, text="视觉模型", style="Card.TLabel").grid(
-            row=0, column=0, sticky="w", pady=5)
-        vision = ttk.Combobox(snap_body, values=["（不使用）"], font=("Consolas", 9))
-        vision.grid(row=0, column=1, sticky="ew", padx=(12, 0), pady=5)
+        # ---------------- 截图页 ----------------
+        s = pages["snap"]
+        r = card_row(s, "📷", "视觉模型",
+                     "留空=只用系统 OCR（离线零安装）；填视觉模型=看图直提，如 qwen2.5vl:7b")
+        vision = ttk.Combobox(r, values=["（不使用）", _read_snap_model() or ""], width=24,
+                              font=("Microsoft YaHei UI", 9))
+        vision.pack(side="left")
         vision.set(_read_snap_model() or "（不使用）")
-        ttk.Label(snap_body,
-                  text="留空=只用系统 OCR（离线零安装）；填视觉模型=看图直提，如 qwen2.5vl:7b",
-                  style="Hint.TLabel", justify="left", wraplength=520).grid(
-            row=1, column=1, sticky="w", padx=(12, 0), pady=(2, 0))
 
-        # ---------- 卡片 3：数据库 ----------
-        db_body = card("数据库")
-        has_key = (ROOT / "dbkey.dat").exists()
-        ttk.Label(db_body, text="聊天库", style="Card.TLabel").grid(
-            row=0, column=0, sticky="w", pady=5)
-        ttk.Label(db_body, text=str(DB), style="Hint.TLabel").grid(
-            row=0, column=1, sticky="w", padx=(12, 0), pady=5)
-        ttk.Label(db_body, text="解密口令", style="Card.TLabel").grid(
-            row=1, column=0, sticky="w", pady=5)
-        pw_entry = ttk.Entry(db_body, show="*")
-        pw_entry.grid(row=1, column=1, sticky="ew", padx=(12, 0), pady=5)
-        ttk.Label(db_body,
-                  text=("已保存口令（DPAPI 加密，仅本机当前用户可解）；留空表示不修改"
-                        if has_key else "尚未保存口令，首次同步前必须填写"),
-                  style="Hint.TLabel", justify="left", wraplength=520).grid(
-            row=2, column=1, sticky="w", padx=(12, 0), pady=(2, 0))
+        r = card_row(s, "⌨", "截图热键", "在控制台首页点「截图热键」开启，默认 Ctrl+Alt+S")
+        tk.Label(r, text="Ctrl+Alt+S", bg=p["card"], fg=p["muted"],
+                 font=("Consolas", 9)).pack(side="left")
 
-        # ---------- 底部：深色模式 + 按钮 ----------
-        foot = ttk.Frame(shell, style="Page.TFrame")
-        foot.pack(fill="x", pady=(2, 0))
+        # ---------------- 关于页 ----------------
+        ab = pages["about"]
+        try:
+            from chat2todo import __version__ as ver
+        except Exception:  # noqa: BLE001
+            ver = "—"
+        for icon, title, sub in (
+            ("◈", "Chat2Todo", f"版本 {ver} · 本地优先的聊天记录待办提取器"),
+            ("💾", "数据目录", str(ROOT)),
+            ("📄", "许可", "MIT License"),
+        ):
+            r = card_row(ab, icon, title, sub)
 
-        dark_var = tk.BooleanVar(value=self.theme == "dark")
-        p0 = THEMES[self.theme]
-        dark_check = tk.Checkbutton(foot, text="深色模式", variable=dark_var,
-                                    command=lambda: on_toggle(), cursor="hand2",
-                                    bg=p0["bg"], fg=p0["text"],
-                                    activebackground=p0["bg"], activeforeground=p0["text"],
-                                    selectcolor=p0["field"], bd=0, highlightthickness=0,
-                                    font=("Microsoft YaHei UI", 9))
-        dark_check.pack(side="left")
+        # ---------------- 导航切换 ----------------
+        nav_items = [("general", "🏠", "常规", "外观、数据库口令与定时同步"),
+                     ("ai", "✨", "AI 服务", "服务商、密钥与连接测试"),
+                     ("snap", "📷", "截图识别", "截图待办使用的识别引擎"),
+                     ("about", "ⓘ", "关于", "版本与数据位置")]
 
-        def on_toggle() -> None:
-            t = "dark" if dark_var.get() else "light"
-            p = THEMES[t]
-            _apply_ui_style(style, t)
-            win.configure(bg=p["bg"])
-            dark_check.config(bg=p["bg"], fg=p["text"], activebackground=p["bg"],
-                              activeforeground=p["text"], selectcolor=p["field"])
-            sync_listbox_colors(t)
-            self.set_theme(t)                 # 控制台主窗口同步换肤
-            _write_section("ui", {"theme": t})
+        nav_widgets = {}
+        current = {"key": "general"}
+
+        def show_page(key: str) -> None:
+            current["key"] = key
+            for k, frame in pages.items():
+                frame.pack_forget()
+            pages[key].pack(fill="both", expand=True)
+            label = next(n for n in nav_items if n[0] == key)
+            page_title.config(text=label[2])
+            page_sub.config(text=label[3])
+            for k, widget in nav_widgets.items():
+                active = k == key
+                bg = p["card"] if active else nav_bg
+                fg = p["text"] if active else p["muted"]
+                widget.configure(bg=bg)
+                kids = widget.winfo_children()
+                if kids and isinstance(kids[0], tk.Frame) and kids[0].cget("width") == 3:
+                    kids[0].configure(bg=(p["accent"] if active else bg))
+                for child in widget.winfo_children():
+                    child.configure(bg=bg)
+                    for gchild in child.winfo_children():
+                        try:
+                            gchild.configure(bg=bg, fg=fg)
+                        except tk.TclError:
+                            pass
+
+        for key, icon, name, _sub in nav_items:
+            item = tk.Frame(sidebar, bg=nav_bg, cursor="hand2")
+            item.pack(fill="x", padx=(0, 8), pady=2)
+            bar = tk.Frame(item, bg=nav_bg, width=3)
+            bar.pack(side="left", fill="y")
+            inner = tk.Frame(item, bg=nav_bg)
+            inner.pack(fill="x")
+            tk.Label(inner, text=icon, bg=nav_bg, fg=p["muted"],
+                     font=("Segoe UI Emoji", 11), width=3).pack(side="left", padx=(8, 0), pady=8)
+            tk.Label(inner, text=name, bg=nav_bg, fg=p["muted"], anchor="w",
+                     font=("Microsoft YaHei UI", 10)).pack(side="left", fill="x", expand=True)
+            nav_widgets[key] = item
+            for w in (item, inner, *inner.winfo_children()):
+                w.bind("<Button-1>", lambda _e, k=key: show_page(k))
+
+        # ---------------- 底部按钮 ----------------
+        foot = tk.Frame(content, bg=p["bg"])
+        foot.pack(fill="x", padx=26, pady=(4, 16))
+        tk.Button(foot, text="取消", bg=p["btn"], fg=p["btn_text"], bd=0,
+                  padx=18, pady=6, cursor="hand2",
+                  font=("Microsoft YaHei UI", 9), command=win.destroy).pack(side="right", padx=(10, 0))
+        tk.Button(foot, text="保存", bg=p["accent"], fg=p["accent_fg"], bd=0,
+                  padx=22, pady=6, cursor="hand2",
+                  font=("Microsoft YaHei UI", 9, "bold")).pack(side="right")
 
         def save() -> None:
             base = base_entry.get().strip() or cfg["base_url"]
@@ -723,8 +854,9 @@ class Console(tk.Tk):
                 self.write("提示：已启用云端 AI 复核，待办文字会发送到云端 API（按量计费）\n")
             win.destroy()
 
-        ttk.Button(foot, text="保存", style="Accent.TButton", command=save).pack(side="right")
-        ttk.Button(foot, text="取消", command=win.destroy).pack(side="right", padx=8)
+        foot.winfo_children()[-1].config(command=save)
+
+        show_page("general")
 
 
 def main() -> int:
