@@ -622,9 +622,9 @@ class Console(tk.Tk):
 
         preset.bind("<<ComboboxSelected>>", on_preset)
 
-    def _record_hotkey(self, section: str = "dash", key: str = "hotkey",
+    def _record_hotkey(self, section: str = "dash", cfg_key: str = "hotkey",
                        label=None, default: str = "ctrl+alt+d") -> None:
-        """弹出录制窗：按下组合键即写入 [section] key。"""
+        """弹出录制窗：按下组合键即写入 [section] cfg_key。"""
         p = self._pal()
         win = tk.Toplevel(self)
         win.title("录制快捷键")
@@ -658,16 +658,16 @@ class Console(tk.Tk):
                 parts.append("shift")
             if down(0x5B) or down(0x5C):
                 parts.append("win")
-            key = e.keysym.lower()
-            if not (len(key) == 1 and (key.isalnum())) and not (
-                    key.startswith("f") and key[1:].isdigit()):
+            pressed = e.keysym.lower()
+            if not (len(pressed) == 1 and pressed.isalnum()) and not (
+                    pressed.startswith("f") and pressed[1:].isdigit()):
                 hint.config(text="只支持字母 / 数字 / F1-F12", fg=p["err"])
                 return
             if not parts:
                 hint.config(text="必须带 Ctrl / Alt / Shift / Win 至少一个", fg=p["err"])
                 return
-            spec = "+".join(parts + [key])
-            _write_section(section, {key: spec})
+            spec = "+".join(parts + [pressed])
+            _write_section(section, {cfg_key: spec})
             if label is not None:
                 label.config(text=spec)
             self.write(f"快捷键已改为 {spec}（重启对应功能生效）\n")
