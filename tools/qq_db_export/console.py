@@ -322,111 +322,153 @@ class Console(tk.Tk):
         b.pack(side="left", padx=(6, 0))
         return b
 
+    # ---------- 单窗口：侧栏 + 分页 ----------
+    NAV = [
+        ("console", "◈", "控制台"),
+        ("general", "🏠", "常规"),
+        ("ai", "✨", "AI 服务"),
+        ("snap", "📷", "截图识别"),
+        ("about", "ⓘ", "关于"),
+    ]
+
     def _build_ui(self) -> None:
         p = self._pal()
         self.configure(bg=p["bg"])
         nav_bg = "#12151a" if self.theme == "dark" else "#e9edf3"
-        side = tk.Frame(self, bg=nav_bg, width=196)
+        self._nav_bg = nav_bg
+
+        side = tk.Frame(self, bg=nav_bg, width=200)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
         tk.Label(side, text="◈  Chat2Todo", bg=nav_bg, fg=p["title"], anchor="w",
-                 font=("Microsoft YaHei UI", 11, "bold")).pack(fill="x", padx=16, pady=(18, 12))
-        self._build_buttons(p, side, nav_bg)
+                 font=("Microsoft YaHei UI", 11, "bold")).pack(fill="x", padx=16, pady=(18, 14))
+
+        self._nav = {}
+        for key, icon, name in self.NAV:
+            item = tk.Frame(side, bg=nav_bg, cursor="hand2")
+            item.pack(fill="x", pady=2)
+            bar = tk.Frame(item, bg=nav_bg, width=3)
+            bar.pack(side="left", fill="y")
+            inner = tk.Frame(item, bg=nav_bg)
+            inner.pack(fill="x")
+            ic = tk.Label(inner, text=icon, bg=nav_bg, fg=p["muted"],
+                          font=("Segoe UI Emoji", 11), width=3)
+            ic.pack(side="left", padx=(8, 0), pady=8)
+            tx = tk.Label(inner, text=name, bg=nav_bg, fg=p["muted"], anchor="w",
+                          font=("Microsoft YaHei UI", 10))
+            tx.pack(side="left", fill="x", expand=True)
+            for w in (item, inner, ic, tx):
+                w.bind("<Button-1>", lambda _e, k=key: self._show_page(k))
+            self._nav[key] = (item, bar, ic, tx)
 
         right = tk.Frame(self, bg=p["bg"])
         right.pack(side="left", fill="both", expand=True)
-        self._build_header(p, right)
-        self._build_log(p, right)
+
+        head = tk.Frame(right, bg=p["bg"])
+        head.pack(fill="x", padx=26, pady=(22, 8))
+        self.page_title = tk.Label(head, text="控制台", bg=p["bg"], fg=p["text"], anchor="w",
+                                   font=("Microsoft YaHei UI", 17, "bold"))
+        self.page_title.pack(anchor="w")
+        self.page_sub = tk.Label(head, text="", bg=p["bg"], fg=p["muted"], anchor="w",
+                                 font=("Microsoft YaHei UI", 9))
+        self.page_sub.pack(anchor="w", pady=(2, 0))
+        self.stats = tk.Label(head, text="", bg=p["bg"], fg=p["muted"], anchor="w",
+                              font=("Microsoft YaHei UI", 9))
+        self.stats.pack(anchor="w", pady=(2, 0))
+
+        self.body = tk.Frame(right, bg=p["bg"])
+        self.body.pack(fill="both", expand=True, padx=26)
+
+        foot = tk.Frame(right, bg=p["bg"])
+        foot.pack(fill="x", padx=26, pady=(4, 16))
+        self.save_btn = tk.Button(foot, text="保存设置", bg=p["accent"], fg=p["accent_fg"],
+                                  bd=0, padx=22, pady=6, cursor="hand2",
+                                  font=("Microsoft YaHei UI", 9, "bold"),
+                                  command=self._save_settings)
+        self.save_btn.pack(side="right")
+
+        self._pages = {}
+        self._build_page_console()
+        self._build_page_general()
+        self._build_page_ai()
+        self._build_page_snap()
+        self._build_page_about()
+
+        self._show_page(getattr(self, "_current_page", "console"))
+
+    def _new_page(self) -> tk.Frame:
+        f = tk.Frame(self.body, bg=self._pal()["bg"])
+        return f
+
+    def _show_page(self, key: str) -> None:
+        p = self._pal()
+        self._current_page = key
+        for frame in self._pages.values():
+            frame.pack_forget()
+        self._pages[key].pack(fill="both", expand=True)
+        label = next(n for n in self.NAV if n[0] == key)
+        self.page_title.config(text=label[2])
+        sub = {
+            "console": "同步、看板与运行日志",
+            "general": "外观、数据库口令与定时同步",
+            "ai": "服务商、密钥与连接测试",
+            "snap": "截图待办使用的识别引擎",
+            "about": "版本与数据位置",
+        }.get(key, "")
+        self.page_sub.config(text=sub)
+        self.stats.pack_forget()
+        if key == "console":
+            self.stats.pack(anchor="w", pady=(2, 0))
+        for k, (item, bar, ic, tx) in self._nav.items():
+            active = k == key
+            bg = p["card"] if active else self._nav_bg
+            fg = p["text"] if active else p["muted"]
+            item.configure(bg=bg)
+            item.master  # noqa: B018 - 保持引用
+            bar.configure(bg=(p["accent"] if active else bg))
+            ic.configure(bg=bg, fg=fg)
+            tx.configure(bg=bg, fg=fg)
+            item.winfo_children()[1].configure(bg=bg)
 
     def set_theme(self, theme: str) -> None:
-        """切换主题：整窗重建（保留日志内容与各按钮运行状态）。"""
+        """切换主题：整窗重建（保留日志与当前页）。"""
         if theme == self.theme:
             return
         self.theme = theme if theme in THEMES else "light"
         keep = self.log.get("1.0", "end-1c") if hasattr(self, "log") else ""
-        syncing, watching = self.syncing, bool(self.watch_proc and self.watch_proc.poll() is None)
-        hotkey = bool(self.snap_proc and self.snap_proc.poll() is None)
         for child in self.winfo_children():
-            if isinstance(child, tk.Toplevel):   # 设置窗等独立窗口不受换肤影响
+            if isinstance(child, tk.Toplevel):
                 continue
             child.destroy()
         self._build_ui()
         if keep:
             self.write(keep)
         self.refresh_stats()
-        if syncing:
-            self.sync_btn.config(state="disabled", text="同步中…")
-        if watching:
-            self.watch_btn.config(text="停止监视")
-        if hotkey:
-            self.snap_btn.config(text="停止热键")
         self.write(f"\n▸ 已切换到{'深色' if self.theme == 'dark' else '浅色'}模式\n")
 
-    def _build_header(self, p: dict, parent) -> None:
-        head = tk.Frame(parent, bg=p["bg"])
-        head.pack(fill="x", padx=26, pady=(22, 10))
-        tk.Label(head, text="控制台", bg=p["bg"], fg=p["text"], anchor="w",
-                 font=("Microsoft YaHei UI", 17, "bold")).pack(anchor="w")
-        self.stats = tk.Label(head, text="", bg=p["bg"], fg=p["muted"], anchor="w",
-                              font=("Microsoft YaHei UI", 9))
-        self.stats.pack(anchor="w", pady=(2, 0))
+    # ---------- 页：控制台 ----------
+    def _build_page_console(self) -> None:
+        p = self._pal()
+        page = self._new_page()
+        self._pages["console"] = page
 
-        body = tk.Frame(parent, bg=p["bg"])
-        body.pack(fill="both", expand=True, padx=26)
-
-        # 卡片 1：同步
-        r = self._card_row(p, body, "⟳", "立即同步",
+        r = self._card_row(p, page, "⟳", "立即同步",
                            "从 QQ 数据库只读抓取 → 规则抽取 → 本地 AI 复核")
         self.sync_btn = self._pill(p, r, "立即同步", self.on_sync, primary=True)
 
-        # 卡片 2：快捷操作
-        r = self._card_row(p, body, "▦", "快捷操作",
-                           "看板、导入、截图与监视入口")
+        r = self._card_row(p, page, "▦", "快捷操作", "看板、导入与截图待办")
         self._pill(p, r, "打开看板", self.on_dashboard)
         self._pill(p, r, "导入文件", self.on_import)
         self._pill(p, r, "截图待办", self.on_snap)
 
-        r = self._card_row(p, body, "⚙", "更多",
-                           "截图热键、目录监视、定时同步与设置")
+        r = self._card_row(p, page, "⚙", "更多", "截图热键、目录监视与定时同步")
         self.snap_btn = self._pill(p, r, "截图热键", self.on_snap_hotkey)
         self.watch_btn = self._pill(p, r, "开始监视", self.on_watch)
         self._pill(p, r, "定时同步", self.on_schedule)
-        self._pill(p, r, "设置", self.on_settings)
 
-    def _build_buttons(self, p: dict, parent, nav_bg: str) -> None:
-        def item(text: str, icon: str, cmd, primary: bool = False):
-            b = tk.Button(parent, text=f" {icon}   {text}", command=cmd, relief="flat",
-                          cursor="hand2", anchor="w", padx=12, pady=8,
-                          bg=(p["accent"] if primary else nav_bg),
-                          fg=(p["accent_fg"] if primary else p["btn_text"]),
-                          activebackground=(p["accent_hover"] if primary else p["border"]),
-                          activeforeground=(p["accent_fg"] if primary else p["text"]),
-                          font=("Microsoft YaHei UI", 9, "bold" if primary else "normal"),
-                          borderwidth=0, highlightthickness=0)
-            b.pack(fill="x", padx=10, pady=1)
-            return b
-
-        # 当前页高亮：白底 + 左侧强调条（与设置窗一致）
-        cur = tk.Frame(parent, bg=p["card"])
-        cur.pack(fill="x", pady=2)
-        tk.Frame(cur, bg=p["accent"], width=3).pack(side="left", fill="y")
-        tk.Label(cur, text=" ◈   控制台", bg=p["card"], fg=p["text"], anchor="w",
-                 font=("Microsoft YaHei UI", 9, "bold")).pack(side="left", fill="x",
-                                                                expand=True, padx=9, pady=8)
-        item("立即同步", "⟳", self.on_sync)
-        item("打开看板", "▦", self.on_dashboard)
-        item("导入文件", "＋", self.on_import)
-        item("截图待办", "◧", self.on_snap)
-        item("截图热键", "⌘", self.on_snap_hotkey)
-        item("开始监视", "◉", self.on_watch)
-        item("定时同步", "◷", self.on_schedule)
-        tk.Frame(parent, bg=nav_bg, height=12).pack(fill="x")
-        item("设置", "⚙", self.on_settings)
-
-    def _build_log(self, p: dict, parent) -> None:
-        outer = tk.Frame(parent, bg=p["card"], highlightbackground=p["border"],
+        outer = tk.Frame(page, bg=p["card"], highlightbackground=p["border"],
                          highlightthickness=1)
-        outer.pack(fill="both", expand=True, padx=26, pady=(2, 18))
+        outer.pack(fill="both", expand=True, pady=(0, 8))
         inner = tk.Frame(outer, bg=p["card"])
         inner.pack(fill="both", expand=True, padx=14, pady=12)
         tk.Label(inner, text="运行日志", bg=p["card"], fg=p["text"], anchor="w",
@@ -437,6 +479,207 @@ class Console(tk.Tk):
                            padx=12, pady=10, height=8)
         self.log.pack(fill="both", expand=True)
         self.log.configure(state="disabled")
+
+    # ---------- 页：常规 ----------
+    def _build_page_general(self) -> None:
+        p = self._pal()
+        page = self._new_page()
+        self._pages["general"] = page
+        cfg = _read_cfg()
+
+        r = self._card_row(p, page, "🎨", "深色模式", "开启后整个控制台与看板切换为深色")
+        mk = tk.Canvas(r, width=46, height=24, bg=p["card"], highlightthickness=0,
+                       cursor="hand2")
+        mk.pack(side="left")
+        state = {"on": self.theme == "dark"}
+
+        def draw_switch() -> None:
+            mk.delete("all")
+            on = state["on"]
+            track = p["accent"] if on else ("#c7ccd6" if self.theme == "light" else "#3a4553")
+            mk.create_oval(2, 4, 22, 24, fill=track, outline="")
+            mk.create_oval(24, 4, 44, 24, fill=track, outline="")
+            mk.create_rectangle(12, 4, 34, 24, fill=track, outline="")
+            x = 32 if on else 12
+            mk.create_oval(x - 9, 3, x + 9, 21, fill="#ffffff", outline="")
+
+        def flip(_e=None) -> None:
+            state["on"] = not state["on"]
+            draw_switch()
+            t = "dark" if state["on"] else "light"
+            _write_section("ui", {"theme": t})
+            self._show_page("general")
+            self.set_theme(t)
+
+        mk.bind("<Button-1>", flip)
+        draw_switch()
+
+        r = self._card_row(p, page, "🗄", "聊天数据库", str(DB))
+        tk.Label(r, text="只读", bg=p["card"], fg=p["ok"],
+                 font=("Microsoft YaHei UI", 8, "bold")).pack(side="left")
+
+        has_key = (ROOT / "dbkey.dat").exists()
+        r = self._card_row(
+            p, page, "🔑", "解密口令",
+            "已保存（DPAPI 加密，仅本机当前用户可解）；留空表示不修改"
+            if has_key else "尚未保存，首次同步前必须填写")
+        self.pw_entry = tk.Entry(r, width=24, show="*", bg=p["field"], fg=p["field_text"],
+                                 insertbackground=p["field_text"], bd=0, relief="flat",
+                                 highlightthickness=1, highlightbackground=p["border"],
+                                 highlightcolor=p["accent"], font=("Microsoft YaHei UI", 9))
+        self.pw_entry.pack(side="left", ipady=4)
+
+        r = self._card_row(p, page, "⏱", "定时同步", "由 Windows 计划任务每小时触发")
+        tk.Button(r, text="打开计划任务", command=lambda: subprocess.Popen(
+            ["control", "schedtasks"]), bg=p["btn"], fg=p["btn_text"], bd=0,
+            padx=12, pady=4, cursor="hand2",
+            font=("Microsoft YaHei UI", 8)).pack(side="left")
+
+    # ---------- 页：AI ----------
+    def _build_page_ai(self) -> None:
+        p = self._pal()
+        page = self._new_page()
+        self._pages["ai"] = page
+        cfg = _read_cfg()
+        ai_ok = str(cfg.get("enabled")).lower() == "true"
+        local_now = str(cfg.get("base_url", "")).startswith(("http://127.0.0.1", "http://localhost"))
+
+        r = self._card_row(
+            p, page, "✨", "服务状态",
+            f"已启用 · {'本地 Ollama' if local_now else '云端'} · {cfg.get('model', '')}"
+            if ai_ok else "未启用（仅用规则抽取，不联网）")
+        tk.Label(r, text="● 运行中" if ai_ok else "○ 未启用", bg=p["card"],
+                 fg=p["ok"] if ai_ok else p["muted"],
+                 font=("Microsoft YaHei UI", 9, "bold")).pack(side="left")
+
+        r = self._card_row(p, page, "🏷", "服务商", "选择后自动填入地址与模型")
+        preset = ttk.Combobox(r, values=list(AI_PRESETS), state="readonly", width=22,
+                              font=("Microsoft YaHei UI", 9))
+        preset.pack(side="left")
+        preset.set("本地 Ollama（免费无需 Key）")
+        self._preset = preset
+
+        r = self._card_row(p, page, "🌐", "API 地址", "OpenAI 兼容端点")
+        self.base_entry = tk.Entry(r, width=30, bg=p["field"], fg=p["field_text"],
+                                   insertbackground=p["field_text"], bd=0, relief="flat",
+                                   highlightthickness=1, highlightbackground=p["border"],
+                                   font=("Microsoft YaHei UI", 9))
+        self.base_entry.pack(side="left", ipady=4)
+        self.base_entry.insert(0, cfg["base_url"])
+
+        r = self._card_row(p, page, "🧠", "模型", "本地建议 qwen2.5:14b")
+        self.model_entry = tk.Entry(r, width=26, bg=p["field"], fg=p["field_text"],
+                                    insertbackground=p["field_text"], bd=0, relief="flat",
+                                    highlightthickness=1, highlightbackground=p["border"],
+                                    font=("Microsoft YaHei UI", 9))
+        self.model_entry.pack(side="left", ipady=4)
+        self.model_entry.insert(0, cfg["model"])
+
+        r = self._card_row(p, page, "🔐", "API Key", "本地 Ollama 可留空（自动用占位值）")
+        self.key_entry = tk.Entry(r, width=30, show="*", bg=p["field"], fg=p["field_text"],
+                                  insertbackground=p["field_text"], bd=0, relief="flat",
+                                  highlightthickness=1, highlightbackground=p["border"],
+                                  font=("Microsoft YaHei UI", 9))
+        self.key_entry.pack(side="left", ipady=4)
+        if cfg["api_key"] and cfg["api_key"] != "ollama":
+            self.key_entry.insert(0, cfg["api_key"])
+
+        r = self._card_row(p, page, "🔌", "连接测试", "会向服务端发一次最小请求")
+        self.probe_btn = tk.Button(r, text="测试连接", bg=p["accent"], fg=p["accent_fg"],
+                                   bd=0, padx=14, pady=4, cursor="hand2",
+                                   font=("Microsoft YaHei UI", 9), command=self._do_probe)
+        self.probe_btn.pack(side="left")
+        self.hint = tk.Label(r, text="", bg=p["card"], fg=p["muted"],
+                             font=("Microsoft YaHei UI", 8))
+        self.hint.pack(side="left", padx=(10, 0))
+
+        def on_preset(_evt=None) -> None:
+            base, model = AI_PRESETS.get(self._preset.get(), ("", ""))
+            if not base:
+                return
+            self.base_entry.delete(0, "end"); self.base_entry.insert(0, base)
+            self.model_entry.delete(0, "end"); self.model_entry.insert(0, model)
+
+        preset.bind("<<ComboboxSelected>>", on_preset)
+
+    def _do_probe(self) -> None:
+        p = self._pal()
+        base = self.base_entry.get().strip()
+        model = self.model_entry.get().strip()
+        key = self.key_entry.get().strip()
+        self.hint.config(text="测试中…", fg=p["muted"])
+        self.probe_btn.config(state="disabled")
+
+        def run() -> None:
+            ok, msg, models = _probe_ai(base, key, model)
+
+            def show() -> None:
+                self.hint.config(text=msg, fg=p["ok"] if ok else p["err"])
+                self.probe_btn.config(state="normal")
+
+            self.after(0, show)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    # ---------- 页：截图 ----------
+    def _build_page_snap(self) -> None:
+        p = self._pal()
+        page = self._new_page()
+        self._pages["snap"] = page
+
+        r = self._card_row(
+            p, page, "📷", "视觉模型",
+            "留空=只用系统 OCR（离线零安装）；填视觉模型=看图直提，如 qwen2.5vl:7b")
+        self.vision = ttk.Combobox(r, values=["（不使用）", _read_snap_model() or ""],
+                                   width=24, font=("Microsoft YaHei UI", 9))
+        self.vision.pack(side="left")
+        self.vision.set(_read_snap_model() or "（不使用）")
+
+        r = self._card_row(p, page, "⌨", "截图热键", "在控制台页点「截图热键」开启")
+        tk.Label(r, text="Ctrl+Alt+S", bg=p["card"], fg=p["muted"],
+                 font=("Consolas", 9)).pack(side="left")
+
+    # ---------- 页：关于 ----------
+    def _build_page_about(self) -> None:
+        p = self._pal()
+        page = self._new_page()
+        self._pages["about"] = page
+        try:
+            from chat2todo import __version__ as ver
+        except Exception:  # noqa: BLE001
+            ver = "—"
+        for icon, title, sub in (
+            ("◈", "Chat2Todo", f"版本 {ver} · 本地优先的聊天记录待办提取器"),
+            ("💾", "数据目录", str(ROOT)),
+            ("📄", "许可", "MIT License"),
+        ):
+            self._card_row(p, page, icon, title, sub)
+
+    def _save_settings(self) -> None:
+        cfg = _read_cfg()
+        base = self.base_entry.get().strip() or cfg["base_url"]
+        model = self.model_entry.get().strip() or cfg["model"]
+        key = self.key_entry.get().strip()
+        local = base.startswith(("http://127.0.0.1", "http://localhost"))
+        if local and not key:
+            key = "ollama"
+        enabled = bool(base and key)
+        _write_section("ai", {"base_url": base, "model": model, "api_key": key,
+                              "enabled": enabled, "review": enabled})
+        vm = self.vision.get().strip()
+        _write_section("snap", {"vision_model": "" if vm == "（不使用）" else vm})
+        pw = self.pw_entry.get().strip()
+        if pw:
+            try:
+                from chat2todo.core import keybox
+
+                keybox.save_key(pw)
+                self.write("口令已加密保存（DPAPI，仅本机当前用户可解）\n")
+            except Exception as exc:  # noqa: BLE001
+                self.write(f"口令保存失败：{exc}\n")
+        self.write("设置已保存（重启同步生效）\n")
+        if enabled and not local:
+            self.write("提示：已启用云端 AI 复核，待办文字会发送到云端 API（按量计费）\n")
 
     def write(self, text: str) -> None:
         self.log.configure(state="normal")
@@ -605,333 +848,8 @@ class Console(tk.Tk):
             self.write(f"监视启动失败：{exc}\n")
 
     def on_settings(self) -> None:
-        """设置窗口：左侧导航 + 右侧卡片行（参考 DeskBox 的设置布局）。"""
-        cfg = _read_cfg()
-        p = THEMES[self.theme]
-        win = tk.Toplevel(self)
-        win.title("设置 · Chat2Todo")
-        win.geometry("880x640")
-        win.minsize(820, 600)
-        win.transient(self)
-        win.configure(bg=p["bg"])
-
-        style = ttk.Style(win)
-        _apply_ui_style(style, self.theme)
-
-        def sync_listbox_colors(theme: str) -> None:
-            q = THEMES[theme]
-            win.option_add("*TCombobox*Listbox.background", q["list_bg"])
-            win.option_add("*TCombobox*Listbox.foreground", q["list_fg"])
-            win.option_add("*TCombobox*Listbox.selectBackground", q["accent"])
-            win.option_add("*TCombobox*Listbox.selectForeground", q["accent_fg"])
-
-        sync_listbox_colors(self.theme)
-
-        # ---------------- 左侧导航 ----------------
-        nav_bg = "#12151a" if self.theme == "dark" else "#e9edf3"
-        sidebar = tk.Frame(win, bg=nav_bg, width=212)
-        sidebar.pack(side="left", fill="y")
-        sidebar.pack_propagate(False)
-
-        tk.Label(sidebar, text="◈  Chat2Todo", bg=nav_bg, fg=p["title"],
-                 font=("Microsoft YaHei UI", 11, "bold"), anchor="w").pack(
-            fill="x", padx=18, pady=(20, 18))
-
-        # ---------------- 右侧内容 ----------------
-        content = tk.Frame(win, bg=p["bg"])
-        content.pack(side="left", fill="both", expand=True)
-
-        head = tk.Frame(content, bg=p["bg"])
-        head.pack(fill="x", padx=26, pady=(22, 8))
-        page_title = tk.Label(head, text="常规", bg=p["bg"], fg=p["text"],
-                              font=("Microsoft YaHei UI", 17, "bold"), anchor="w")
-        page_title.pack(anchor="w")
-        page_sub = tk.Label(head, text="", bg=p["bg"], fg=p["muted"],
-                            font=("Microsoft YaHei UI", 9), anchor="w", justify="left")
-        page_sub.pack(anchor="w", pady=(2, 0))
-
-        body = tk.Frame(content, bg=p["bg"])
-        body.pack(fill="both", expand=True, padx=26, pady=(6, 0))
-
-        def new_page() -> tk.Frame:
-            f = tk.Frame(body, bg=p["bg"])
-            return f
-
-        pages = {"general": new_page(), "ai": new_page(), "snap": new_page(), "about": new_page()}
-
-        def card_row(parent, icon: str, title: str, sub: str) -> tk.Frame:
-            """一行卡片：图标 · 标题/说明 · 右侧控件区（返回右侧容器）。"""
-            outer = tk.Frame(parent, bg=p["card"], highlightbackground=p["border"],
-                             highlightthickness=1)
-            outer.pack(fill="x", pady=(0, 8))
-            inner = tk.Frame(outer, bg=p["card"])
-            inner.pack(fill="x", padx=14, pady=12)
-            tk.Label(inner, text=icon, bg=p["card"], fg=p["title"],
-                     font=("Segoe UI Emoji", 13)).pack(side="left", padx=(0, 12))
-            texts = tk.Frame(inner, bg=p["card"])
-            texts.pack(side="left", fill="x", expand=True)
-            tk.Label(texts, text=title, bg=p["card"], fg=p["text"], anchor="w",
-                     font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w")
-            if sub:
-                tk.Label(texts, text=sub, bg=p["card"], fg=p["muted"], anchor="w",
-                         justify="left", wraplength=430,
-                         font=("Microsoft YaHei UI", 8)).pack(anchor="w", pady=(1, 0))
-            right = tk.Frame(inner, bg=p["card"])
-            right.pack(side="right")
-            return right
-
-        def mk_entry(parent, width: int = 26, show: str = "") -> tk.Entry:
-            e = tk.Entry(parent, width=width, show=show, bg=p["field"], fg=p["field_text"],
-                         insertbackground=p["field_text"], bd=0, relief="flat",
-                         highlightthickness=1, highlightbackground=p["border"],
-                         highlightcolor=p["accent"], font=("Microsoft YaHei UI", 9))
-            e.pack(side="left", ipady=4)
-            return e
-
-        def mk_switch(parent, initial: bool, on_change) -> tk.Canvas:
-            """自绘开关：圆角轨道 + 圆点，点击切换。"""
-            cv = tk.Canvas(parent, width=46, height=24, bg=p["card"],
-                           highlightthickness=0, cursor="hand2")
-            cv.pack(side="left")
-            state = {"on": bool(initial)}
-
-            def draw() -> None:
-                cv.delete("all")
-                on = state["on"]
-                track = p["accent"] if on else ("#c7ccd6" if self.theme == "light" else "#3a4553")
-                cv.create_oval(2, 4, 22, 24, fill=track, outline="")
-                cv.create_oval(24, 4, 44, 24, fill=track, outline="")
-                cv.create_rectangle(12, 4, 34, 24, fill=track, outline="")
-                x = 32 if on else 12
-                cv.create_oval(x - 9, 3, x + 9, 21, fill="#ffffff", outline="")
-
-            def click(_e=None) -> None:
-                state["on"] = not state["on"]
-                draw()
-                on_change(state["on"])
-
-            cv.bind("<Button-1>", click)
-            draw()
-            return cv
-
-        saved = {"theme": self.theme}
-
-        # ---------------- 常规页 ----------------
-        g = pages["general"]
-
-        def on_theme_toggle(on: bool) -> None:
-            t = "dark" if on else "light"
-            saved["theme"] = t
-            self.set_theme(t)
-            _write_section("ui", {"theme": t})
-            win.destroy()
-            self.on_settings()      # 重新打开以套用新配色
-
-        r = card_row(g, "🎨", "深色模式", "关闭后整个控制台与看板切换为浅色")
-        mk_switch(r, self.theme == "dark", on_theme_toggle)
-
-        r = card_row(g, "🗄", "聊天数据库", str(DB))
-        tk.Label(r, text="只读", bg=p["card"], fg=p["ok"],
-                 font=("Microsoft YaHei UI", 8, "bold")).pack(side="left")
-
-        has_key = (ROOT / "dbkey.dat").exists()
-        r = card_row(g, "🔑", "解密口令",
-                     "已保存（DPAPI 加密，仅本机当前用户可解）；留空表示不修改"
-                     if has_key else "尚未保存，首次同步前必须填写")
-        pw_entry = mk_entry(r, 24, show="*")
-
-        r = card_row(g, "⏱", "定时同步", "由 Windows 计划任务每小时触发，可在任务计划程序里改")
-        tk.Button(r, text="打开计划任务", command=lambda: subprocess.Popen(
-            ["control", "schedtasks"]), bg=p["btn"], fg=p["btn_text"], bd=0,
-            padx=12, pady=4, cursor="hand2",
-            font=("Microsoft YaHei UI", 8)).pack(side="left")
-
-        # ---------------- AI 页 ----------------
-        a = pages["ai"]
-        ai_ok = str(cfg.get("enabled")).lower() == "true"
-        local_now = str(cfg.get("base_url", "")).startswith(("http://127.0.0.1", "http://localhost"))
-
-        r = card_row(a, "✨", "服务状态",
-                     f"已启用 · {'本地 Ollama' if local_now else '云端'} · {cfg.get('model', '')}"
-                     if ai_ok else "未启用（仅用规则抽取，不联网）")
-        tk.Label(r, text="● 运行中" if ai_ok else "○ 未启用", bg=p["card"],
-                 fg=p["ok"] if ai_ok else p["muted"],
-                 font=("Microsoft YaHei UI", 9, "bold")).pack(side="left")
-
-        r = card_row(a, "🏷", "服务商", "选择后自动填入地址与模型，也可手动改")
-        preset = ttk.Combobox(r, values=list(AI_PRESETS), state="readonly", width=22,
-                              font=("Microsoft YaHei UI", 9))
-        preset.pack(side="left")
-        preset.set("本地 Ollama（免费无需 Key）")
-
-        r = card_row(a, "🌐", "API 地址", "OpenAI 兼容端点，本地为 127.0.0.1:11434/v1")
-        base_entry = mk_entry(r, 30)
-        base_entry.insert(0, cfg["base_url"])
-
-        r = card_row(a, "🧠", "模型", "本地建议 qwen2.5:14b；云端填对应模型名")
-        model_entry = mk_entry(r, 26)
-        model_entry.insert(0, cfg["model"])
-
-        r = card_row(a, "🔐", "API Key", "本地 Ollama 可留空（自动用占位值）")
-        key_entry = mk_entry(r, 30, show="*")
-        if cfg["api_key"] and cfg["api_key"] != "ollama":
-            key_entry.insert(0, cfg["api_key"])
-
-        r = card_row(a, "🔌", "连接测试", "会向服务端发一次最小请求，不写入配置")
-        probe_btn = tk.Button(r, text="测试连接", bg=p["accent"], fg=p["accent_fg"],
-                              bd=0, padx=14, pady=4, cursor="hand2",
-                              font=("Microsoft YaHei UI", 9))
-        probe_btn.pack(side="left")
-        hint = tk.Label(r, text="", bg=p["card"], fg=p["muted"],
-                        font=("Microsoft YaHei UI", 8))
-        hint.pack(side="left", padx=(10, 0))
-
-        def on_preset(_evt=None) -> None:
-            base, model = AI_PRESETS.get(preset.get(), ("", ""))
-            if not base:
-                return
-            base_entry.delete(0, "end"); base_entry.insert(0, base)
-            model_entry.delete(0, "end"); model_entry.insert(0, model)
-
-        preset.bind("<<ComboboxSelected>>", on_preset)
-
-        def do_probe() -> None:
-            base = base_entry.get().strip()
-            model = model_entry.get().strip()
-            key = key_entry.get().strip()
-            hint.config(text="测试中…", fg=p["muted"])
-            probe_btn.config(state="disabled")
-
-            def run() -> None:
-                ok, msg, models = _probe_ai(base, key, model)
-
-                def show() -> None:
-                    hint.config(text=msg, fg=p["ok"] if ok else p["err"])
-                    probe_btn.config(state="normal")
-                    if models:
-                        vision.config(values=["（不使用）"] + models)
-
-                win.after(0, show)
-
-            threading.Thread(target=run, daemon=True).start()
-
-        probe_btn.config(command=do_probe)
-
-        # ---------------- 截图页 ----------------
-        s = pages["snap"]
-        r = card_row(s, "📷", "视觉模型",
-                     "留空=只用系统 OCR（离线零安装）；填视觉模型=看图直提，如 qwen2.5vl:7b")
-        vision = ttk.Combobox(r, values=["（不使用）", _read_snap_model() or ""], width=24,
-                              font=("Microsoft YaHei UI", 9))
-        vision.pack(side="left")
-        vision.set(_read_snap_model() or "（不使用）")
-
-        r = card_row(s, "⌨", "截图热键", "在控制台首页点「截图热键」开启，默认 Ctrl+Alt+S")
-        tk.Label(r, text="Ctrl+Alt+S", bg=p["card"], fg=p["muted"],
-                 font=("Consolas", 9)).pack(side="left")
-
-        # ---------------- 关于页 ----------------
-        ab = pages["about"]
-        try:
-            from chat2todo import __version__ as ver
-        except Exception:  # noqa: BLE001
-            ver = "—"
-        for icon, title, sub in (
-            ("◈", "Chat2Todo", f"版本 {ver} · 本地优先的聊天记录待办提取器"),
-            ("💾", "数据目录", str(ROOT)),
-            ("📄", "许可", "MIT License"),
-        ):
-            r = card_row(ab, icon, title, sub)
-
-        # ---------------- 导航切换 ----------------
-        nav_items = [("general", "🏠", "常规", "外观、数据库口令与定时同步"),
-                     ("ai", "✨", "AI 服务", "服务商、密钥与连接测试"),
-                     ("snap", "📷", "截图识别", "截图待办使用的识别引擎"),
-                     ("about", "ⓘ", "关于", "版本与数据位置")]
-
-        nav_widgets = {}
-        current = {"key": "general"}
-
-        def show_page(key: str) -> None:
-            current["key"] = key
-            for k, frame in pages.items():
-                frame.pack_forget()
-            pages[key].pack(fill="both", expand=True)
-            label = next(n for n in nav_items if n[0] == key)
-            page_title.config(text=label[2])
-            page_sub.config(text=label[3])
-            for k, widget in nav_widgets.items():
-                active = k == key
-                bg = p["card"] if active else nav_bg
-                fg = p["text"] if active else p["muted"]
-                widget.configure(bg=bg)
-                kids = widget.winfo_children()
-                if kids and isinstance(kids[0], tk.Frame) and kids[0].cget("width") == 3:
-                    kids[0].configure(bg=(p["accent"] if active else bg))
-                for child in widget.winfo_children():
-                    child.configure(bg=bg)
-                    for gchild in child.winfo_children():
-                        try:
-                            gchild.configure(bg=bg, fg=fg)
-                        except tk.TclError:
-                            pass
-
-        for key, icon, name, _sub in nav_items:
-            item = tk.Frame(sidebar, bg=nav_bg, cursor="hand2")
-            item.pack(fill="x", padx=(0, 8), pady=2)
-            bar = tk.Frame(item, bg=nav_bg, width=3)
-            bar.pack(side="left", fill="y")
-            inner = tk.Frame(item, bg=nav_bg)
-            inner.pack(fill="x")
-            tk.Label(inner, text=icon, bg=nav_bg, fg=p["muted"],
-                     font=("Segoe UI Emoji", 11), width=3).pack(side="left", padx=(8, 0), pady=8)
-            tk.Label(inner, text=name, bg=nav_bg, fg=p["muted"], anchor="w",
-                     font=("Microsoft YaHei UI", 10)).pack(side="left", fill="x", expand=True)
-            nav_widgets[key] = item
-            for w in (item, inner, *inner.winfo_children()):
-                w.bind("<Button-1>", lambda _e, k=key: show_page(k))
-
-        # ---------------- 底部按钮 ----------------
-        foot = tk.Frame(content, bg=p["bg"])
-        foot.pack(fill="x", padx=26, pady=(4, 16))
-        tk.Button(foot, text="取消", bg=p["btn"], fg=p["btn_text"], bd=0,
-                  padx=18, pady=6, cursor="hand2",
-                  font=("Microsoft YaHei UI", 9), command=win.destroy).pack(side="right", padx=(10, 0))
-        tk.Button(foot, text="保存", bg=p["accent"], fg=p["accent_fg"], bd=0,
-                  padx=22, pady=6, cursor="hand2",
-                  font=("Microsoft YaHei UI", 9, "bold")).pack(side="right")
-
-        def save() -> None:
-            base = base_entry.get().strip() or cfg["base_url"]
-            model = model_entry.get().strip() or cfg["model"]
-            key = key_entry.get().strip()
-            local = base.startswith(("http://127.0.0.1", "http://localhost"))
-            if local and not key:
-                key = "ollama"          # 本地 Ollama 不校验，但核心要求非空
-            enabled = bool(base and key)
-            _write_section("ai", {
-                "base_url": base, "model": model, "api_key": key,
-                "enabled": enabled, "review": enabled,
-            })
-            vm = vision.get().strip()
-            _write_section("snap", {"vision_model": "" if vm == "（不使用）" else vm})
-            pw = pw_entry.get().strip()
-            if pw:
-                try:
-                    from chat2todo.core import keybox
-
-                    keybox.save_key(pw)
-                    self.write("口令已加密保存（DPAPI，仅本机当前用户可解）\n")
-                except Exception as exc:  # noqa: BLE001
-                    self.write(f"口令保存失败：{exc}\n")
-            self.write("设置已保存（重启同步生效）\n")
-            if enabled and not local:
-                self.write("提示：已启用云端 AI 复核，待办文字会发送到云端 API（按量计费）\n")
-            win.destroy()
-
-        foot.winfo_children()[-1].config(command=save)
-
-        show_page("general")
+        """兼容旧入口：直接切到「常规」页。"""
+        self._show_page("general")
 
 
 def main() -> int:
