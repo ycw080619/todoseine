@@ -762,7 +762,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         # 筛选标签：圆角胶囊 + 数量（DeskBox 的 All / Today / ... 风格）
         open_count = sum(1 for i in todo_items if i.status != "done")
         counts = {
-            "todo": open_count,
+            "todo": len(items),
             "maybe": unconfirmed,
             "star": sum(1 for i in todo_items if "★重点" in (i.reason or "")),
             "today": sum(1 for i in todo_items if _is_today_due(i)),
@@ -909,7 +909,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                            font=("Microsoft YaHei UI", 7), tags="body")
 
         foot_y = h - 26
-        cv.create_text(PAD, foot_y, text=f"待办 {open_count} · 待定 {unconfirmed}",
+        cv.create_text(PAD, foot_y, text=f"待办 {open_count} · 已完成 {max(0, len(items) - open_count)}",
                        anchor="w", fill=SUB, font=("Microsoft YaHei UI", 8), tags="body")
         if state["undo"]:
             cv.create_text(PAD + 92, foot_y, text="撤销", anchor="w", fill=ACCENT,
