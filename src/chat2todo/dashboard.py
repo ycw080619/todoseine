@@ -669,8 +669,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                        font=("Microsoft YaHei UI", 9, "bold"), tags="body")
         cv.create_text(PAD + 28, 24, text="待办", anchor="w",
                        fill=TEXT, font=("Microsoft YaHei UI", 11, "bold"), tags="body")
-        cv.create_text(W - 130, 24, text=time.strftime("%H:%M"), anchor="e", fill=SUB,
+        cv.create_text(W - 152, 24, text=time.strftime("%H:%M"), anchor="e", fill=SUB,
                        font=("Consolas", 10), tags=("body", "hclock"))
+        cv.create_text(W - 122, 24, text="☑", anchor="e",
+                       fill=(ACCENT if state["batch"] else SUB),
+                       font=("Segoe UI Symbol", 11), tags=("body", "multi"))
         cv.create_text(W - 20, 24, text="✕", anchor="e", fill=SUB,
                        font=("Microsoft YaHei UI", 11), tags=("body", "close"))
         cv.create_text(W - 44, 24, text="—", anchor="e", fill=SUB,
@@ -681,6 +684,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         cv.create_text(W - 94, 24, text="⚙", anchor="e", fill=SUB,
                        font=("Segoe UI Symbol", 11), tags=("body", "gear"))
         cv.tag_bind("gear", "<Button-1>", lambda _e: open_settings())
+        cv.tag_bind("multi", "<Button-1>", lambda _e: toggle_batch())
 
         # 顶部输入卡：平时是「＋ 添加待办」，批量模式下变成操作条
         _rounded(cv, PAD, 48, W - PAD, 88, 12, fill=FIELD, outline=BORDER, width=1, tags="body")
@@ -713,9 +717,6 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         else:
             cv.create_text(PAD + 18, 68, text="＋", anchor="center", fill=SUB,
                            font=("Microsoft YaHei UI", 12), tags="body")
-            cv.create_text(W - PAD - 12, 68, text="批量", anchor="e", fill=SUB,
-                           font=("Microsoft YaHei UI", 8), tags=("body", "batch"))
-            cv.tag_bind("batch", "<Button-1>", lambda _e: toggle_batch())
 
         # 筛选标签：圆角胶囊 + 数量（DeskBox 的 All / Today / ... 风格）
         open_count = sum(1 for i in todo_items if i.status != "done")
@@ -867,7 +868,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                            font=("Microsoft YaHei UI", 7), tags="body")
 
         foot_y = h - 26
-        cv.create_text(PAD, foot_y, text=f"待办 {len(todo_items)} · 待定 {unconfirmed}",
+        cv.create_text(PAD, foot_y, text=f"待办 {open_count} · 待定 {unconfirmed}",
                        anchor="w", fill=SUB, font=("Microsoft YaHei UI", 8), tags="body")
         if state["undo"]:
             cv.create_text(PAD + 92, foot_y, text="撤销", anchor="w", fill=ACCENT,
