@@ -87,6 +87,37 @@ def _is_today_due(item: TodoItem, now=None) -> bool:
     return text == "已过期" or text.startswith("今天")
 
 
+def _hwnd_of(root) -> int:
+    """拿到顶层窗口句柄（overrideredirect 下 winfo_id 可能是子窗口）。"""
+    try:
+        import ctypes
+
+        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+        return hwnd or root.winfo_id()
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _set_layer(root, keep_topmost: bool) -> None:
+    """贴桌面层 / 置顶二选一。
+
+    keep_topmost=False 时把窗口压到 Z 序最底（HWND_BOTTOM），
+    效果是「贴在桌面上、不挡别的窗口」；True 则常驻最上层。
+    """
+    try:
+        import ctypes
+
+        hwnd = _hwnd_of(root)
+        if not hwnd:
+            return
+        root.attributes("-topmost", keep_topmost)
+        hwnd_insert_after = -1 if keep_topmost else 1   # HWND_TOPMOST / HWND_BOTTOM
+        flags = 0x0001 | 0x0002 | 0x0010                # NOSIZE|NOMOVE|NOACTIVATE
+        ctypes.windll.user32.SetWindowPos(hwnd, hwnd_insert_after, 0, 0, 0, 0, flags)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _rounded(canvas, x1, y1, x2, y2, r, **kw):
     """用平滑多边形画圆角矩形（避免依赖第三方绘图库）。"""
     pts = [
@@ -132,7 +163,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
     root = tk.Tk()
     root.overrideredirect(True)          # 无边框
-    root.attributes("-topmost", True)    # 置顶
+    root.attributes("-topmost", False)   # 默认贴桌面层，点「钉」才置顶
     try:
         root.attributes("-alpha", alpha)
         root.attributes("-transparentcolor", KEY)
@@ -143,6 +174,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
     cv = tk.Canvas(root, width=W, height=H, bg=KEY, highlightthickness=0)
     cv.pack()
+    root.after(150, lambda: _set_layer(root, False))
     _rounded(cv, 1, 1, W - 1, H - 1, 18, fill=PANEL, outline=BORDER, width=1, tags="bg")
 
     state = {
@@ -153,6 +185,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         "busy": False,
         "undo": None,          # (todo_id, 原状态)
         "counts": (0, 0),
+        "pin": False,          # False=贴桌面层，True=置顶
     }
 
     # ---- 内联输入框（放在 Canvas 之上，可真正接收键盘）----
@@ -315,8 +348,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         render()
 
     def toggle_pin() -> None:
-        on = not bool(root.attributes("-topmost"))
-        root.attributes("-topmost", on)
+        state["pin"] = not bool(state.get("pin"))
+        _set_layer(root, state["pin"])
         render()
 
     def switch_tab(key: str) -> None:
@@ -356,6 +389,14 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         else:
             cv.itemconfig(clock, text=time.strftime("%H:%M:%S", now))
             cv.itemconfig(date_id, text=time.strftime("%Y年%m月%d日", now) + f"　星期{week}")
+        # 贴桌面层时要定期压回去：否则被人点一下就会浮到前面挡住别的窗口
+        if not state.get("pin"):
+            try:
+                focused = root.focus_get()
+            except Exception:  # noqa: BLE001
+                focused = None
+            if focused not in (entry,):
+                _set_layer(root, False)
         root.after(1000, tick)
 
     def render() -> None:
@@ -432,7 +473,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                        font=("Microsoft YaHei UI", 11), tags=("body", "close"))
         cv.create_text(W - 52, 22, text="—", anchor="e", fill=SUB,
                        font=("Microsoft YaHei UI", 11), tags=("body", "mini"))
-        pinned = bool(root.attributes("-topmost"))
+        pinned = bool(state.get("pin"))
         cv.create_text(W - 80, 22, text="钉", anchor="e", fill=ACCENT if pinned else SUB,
                        font=("Microsoft YaHei UI", 9), tags=("body", "pin"))
 
