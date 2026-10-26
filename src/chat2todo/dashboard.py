@@ -46,9 +46,9 @@ ACCENTS = ["#ff6b6b", "#ff9f43", "#ffd93d", "#6ee7a8",
 W, H = 360, 540        # 展开态
 W_MINI, H_MINI = 200, 108
 PAD = 16
-TOP = 186              # 列表起始 y
+TOP = 196              # 列表起始 y
 FOOT = 104              # 底部预留（输入框 + 页脚）
-ROW = 40               # 单行高度
+ROW = 64               # 单行高度（卡片式）
 TABS: List[Tuple[str, str]] = [("todo", "待办"), ("maybe", "待定"),
                                ("today", "今日"), ("done", "完成")]
 
@@ -447,15 +447,17 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         for idx, (key, label) in enumerate(TABS):
             x1 = PAD + idx * seg
             active = key == state["tab"]
-            _rounded(cv, x1 + 2, 134, x1 + seg - 6, 166, 12,
-                     fill=(ACTIVE if active else FIELD), outline="",
-                     tags=("body", f"tab{idx}"))
             n = counts.get(key)
             text = f"{label} {n}" if n else label
             cv.create_text(x1 + seg / 2 - 1, 150, text=text,
                            fill=TEXT if active else SUB,
-                           font=("Microsoft YaHei UI", 8, "bold" if active else "normal"),
+                           font=("Microsoft YaHei UI", 9, "bold" if active else "normal"),
                            tags=("body", f"tab{idx}"))
+            if active:
+                # 选中态：下方短横线（分段控件风格）
+                cx = x1 + seg / 2 - 1
+                cv.create_line(cx - 10, 168, cx + 10, 168, fill=ACCENT, width=2,
+                               capstyle="round", tags=("body", f"tab{idx}"))
             cv.tag_bind(f"tab{idx}", "<Button-1>", lambda _e, k=key: switch_tab(k))
 
         rows_room = max(1, (h - TOP - FOOT) // ROW)
@@ -486,46 +488,67 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 tag = f"item{idx}"
                 i = state["offset"] + idx
                 if item.status == "done":
-                    dot_fill = "#6f6a64"
+                    bar = "#6f6a64"
                 elif item.status == "unconfirmed":
-                    dot_fill = SUB
+                    bar = "#ffd93d"
                 else:
-                    dot_fill = ACCENTS[i % len(ACCENTS)]
-                # 圆点与 ⋯ 各自独立成标签，避免点圆点时把详情窗一起打开
-                cv.create_oval(PAD, y - 4, PAD + 8, y + 4, fill=dot_fill,
-                               outline="", tags=("body", f"dot{idx}"))
+                    bar = ACCENTS[i % len(ACCENTS)]
+                # 卡片：圆角底 + 1px 描边，勾选框 / 色条 / 标题 / 说明 / ⋯
+                _rounded(cv, PAD, y - 26, W - PAD, y + 26, 14,
+                         fill=FIELD, outline=BORDER, width=1, tags="body")
+                # 勾选框（点击切换完成）
+                if item.status == "done":
+                    _rounded(cv, PAD + 12, y - 9, PAD + 30, y + 9, 5,
+                             fill=ACCENT, outline="", tags=("body", f"dot{idx}"))
+                    cv.create_text(PAD + 21, y, text="✓", fill="#0b1a22",
+                                   font=("Microsoft YaHei UI", 9, "bold"),
+                                   tags=("body", f"dot{idx}"))
+                else:
+                    _rounded(cv, PAD + 12, y - 9, PAD + 30, y + 9, 5,
+                             fill="", outline="#6d6c74", width=1,
+                             tags=("body", f"dot{idx}"))
+                # 左侧竖色条
+                cv.create_line(PAD + 38, y - 13, PAD + 38, y + 11, fill=bar,
+                               width=3, capstyle="round", tags="body")
                 due = due_parse(item.text)
                 chip = due_label(due)
-                # 有到期标签时右侧要留位置，没有则多显示几个字
-                limit = 16 if chip else 24
+                limit = 20
                 body = item.text if len(item.text) <= limit else item.text[:limit] + "…"
-                if item.status == "unconfirmed":
-                    body = "? " + body        # 待定：点一下确认
-                elif item.status == "done":
-                    body = "✓ " + body
-                cv.create_text(PAD + 18, y, text=body, anchor="w",
+                cv.create_text(PAD + 48, y - 9, text=body, anchor="w",
                                fill=(SUB if item.status != "pending" else TEXT),
-                               font=("Microsoft YaHei UI", 9), tags=("body", tag))
+                               font=("Microsoft YaHei UI", 9, "bold"), tags=("body", tag))
+                # 第二行：状态 / 到期说明
+                meta_bits = []
+                if item.status == "unconfirmed":
+                    meta_bits.append("待确认")
+                elif item.status == "done":
+                    meta_bits.append("已完成")
+                else:
+                    meta_bits.append("规则判定")
                 if chip:
-                    # 过期红 / 今天黄 / 24 小时内橙 / 其余灰——不把「明天」误标成红
-                    now_ts = time.time()
-                    if due and due < now_ts:
-                        color = "#ff6b6b"
-                    elif chip.startswith("今天"):
-                        color = "#ffd93d"
-                    elif due and due - now_ts <= 86400:
-                        color = "#ff9f43"
-                    else:
-                        color = "#8f8a84"
-                    cv.create_text(W - PAD - 34, y, text=chip, anchor="e", fill=color,
-                                   font=("Microsoft YaHei UI", 8), tags=("body", tag))
-                cv.create_text(W - PAD, y, text="⋯", anchor="e", fill="#6f6a64",
+                    meta_bits.append(chip)
+                now_ts = time.time()
+                if due and due < now_ts:
+                    meta_color = "#ffd93d"
+                elif chip.startswith("今天"):
+                    meta_color = "#ffd93d"
+                elif due and due - now_ts <= 86400:
+                    meta_color = "#ff9f43"
+                else:
+                    meta_color = SUB
+                cv.create_text(PAD + 48, y + 10, text=" · ".join(meta_bits), anchor="w",
+                               fill=meta_color, font=("Microsoft YaHei UI", 7),
+                               tags=("body", tag))
+                cv.create_text(W - PAD - 14, y - 8, text="⋯", anchor="e", fill="#6f6a64",
                                font=("Microsoft YaHei UI", 9), tags=("body", f"more{idx}"))
+
                 cv.tag_bind(tag, "<Button-1>", lambda _e, it=item: show_detail(it))
                 cv.tag_bind(f"dot{idx}", "<Button-1>",
                             lambda _e, it=item: toggle_item(it))
                 cv.tag_bind(f"more{idx}", "<Button-1>",
                             lambda e, it=item: popup(e, it))
+
+
                 for t in (tag, f"dot{idx}", f"more{idx}"):
                     cv.tag_bind(t, "<Button-3>", lambda e, it=item: popup(e, it))
                 y += ROW
