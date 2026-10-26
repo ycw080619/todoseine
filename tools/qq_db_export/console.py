@@ -19,6 +19,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 HERE = Path(__file__).resolve().parent
+REPO = HERE.parent.parent
 SRC = HERE.parents[1] / "src"           # 仓库源码（src 布局，免 pip install 直接跑）
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -242,6 +243,49 @@ def _write_section(section: str, cfg: dict) -> None:
 
 def _write_cfg(cfg: dict) -> None:
     _write_section("ai", cfg)
+
+
+def _autostart_on() -> bool:
+    """看板启动项是否存在，作为「开机自启」的开关状态。"""
+    import os
+    from pathlib import Path
+
+    startup = Path(os.environ.get("APPDATA", "")) / (
+        "Microsoft/Windows/Start Menu/Programs/Startup")
+    return (startup / "Chat2Todo 看板.lnk").exists()
+
+
+def _set_autostart(on: bool) -> tuple:
+    """创建 / 删除两个启动项快捷方式。返回 (成功, 提示)。"""
+    import os
+    import subprocess
+    from pathlib import Path
+
+    startup = Path(os.environ.get("APPDATA", "")) / (
+        "Microsoft/Windows/Start Menu/Programs/Startup")
+    dash = startup / "Chat2Todo 看板.lnk"
+    snap = startup / "Chat2Todo 截图热键.lnk"
+    if not on:
+        for p_ in (dash, snap):
+            try:
+                p_.unlink(missing_ok=True)
+            except OSError as exc:
+                return False, f"删除启动项失败：{exc}"
+        return True, "已关闭开机自启"
+
+    dash_bat = REPO / "tools" / "qq_db_export" / "dash_autostart.bat"
+    snap_bat = REPO / "tools" / "snap_todo" / "snap_autostart.bat"
+    ps = (
+        "$w=New-Object -ComObject WScript.Shell;"
+        f"$a=$w.CreateShortcut('{dash}');$a.TargetPath='{dash_bat}';$a.WindowStyle=7;$a.Save();"
+        f"$b=$w.CreateShortcut('{snap}');$b.TargetPath='{snap_bat}';$b.WindowStyle=7;$b.Save()"
+    )
+    r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                       capture_output=True, text=True,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if r.returncode != 0:
+        return False, f"创建启动项失败：{(r.stderr or '').strip()[:120]}"
+    return True, "已开启开机自启（看板 + 截图热键）"
 
 
 def _read_ui(key: str, default: str = "") -> str:
@@ -709,6 +753,32 @@ class Console(tk.Tk):
         mk.bind("<Button-1>", flip)
         draw_switch()
 
+        r = self._card_row(p, page, "🚀", "开机自启",
+                           "登录 Windows 时自动拉起看板与截图热键")
+        auto_on = {"on": _autostart_on()}
+        ask = tk.Canvas(r, width=46, height=24, bg=p["card"], highlightthickness=0,
+                        cursor="hand2")
+        ask.pack(side="right")
+
+        def draw_auto() -> None:
+            ask.delete("all")
+            on = auto_on["on"]
+            track = p["accent"] if on else ("#c7ccd6" if self.theme == "light" else "#3a4553")
+            ask.create_oval(2, 4, 22, 24, fill=track, outline="")
+            ask.create_oval(24, 4, 44, 24, fill=track, outline="")
+            ask.create_rectangle(12, 4, 34, 24, fill=track, outline="")
+            x = 32 if on else 12
+            ask.create_oval(x - 9, 3, x + 9, 21, fill="#ffffff", outline="")
+
+        def flip_auto(_e=None) -> None:
+            auto_on["on"] = not auto_on["on"]
+            draw_auto()
+            ok, msg = _set_autostart(auto_on["on"])
+            self.write(msg + "\n")
+
+        ask.bind("<Button-1>", flip_auto)
+        draw_auto()
+
         r = self._card_row(p, page, "🎨", "外观",
                            "强调色、面板底色、不透明度；改完看板会自己刷新，无需重启")
         box = tk.Frame(r, bg=p["card"])
@@ -732,6 +802,21 @@ class Console(tk.Tk):
         _swatch_row(box, "面板",
                     ("#212024", "#17181c", "#2b2a33", "#4a3f5c", "#f8f8fb"),
                     lambda c: _save_ui_key("panel", c, self, "面板底色"))
+
+        geo_row = tk.Frame(box, bg=p["card"])
+        geo_row.pack(side="top", anchor="e", pady=2)
+        tk.Label(geo_row, text="宽度", bg=p["card"], fg=p["muted"],
+                 font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(0, 4))
+        self.width_entry = tk.Entry(geo_row, width=5, bg=p["field"], fg=p["text"], bd=0,
+                                    relief="flat", justify="center", font=("Consolas", 9))
+        self.width_entry.insert(0, str(_read_ui("width", "360")))
+        self.width_entry.pack(side="left", padx=(0, 10))
+        tk.Label(geo_row, text="圆角", bg=p["card"], fg=p["muted"],
+                 font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(0, 4))
+        self.radius_entry = tk.Entry(geo_row, width=5, bg=p["field"], fg=p["text"], bd=0,
+                                     relief="flat", justify="center", font=("Consolas", 9))
+        self.radius_entry.insert(0, str(_read_ui("radius", "18")))
+        self.radius_entry.pack(side="left")
 
         op_row = tk.Frame(box, bg=p["card"])
         op_row.pack(side="top", anchor="e", pady=2)
@@ -1143,8 +1228,18 @@ class Console(tk.Tk):
             op = max(0.35, min(1.0, op))
         except (AttributeError, TypeError, ValueError):
             op = None
+        ui_vals = {}
         if op is not None:
-            _write_section("ui", {"opacity": round(op, 2)})
+            ui_vals["opacity"] = round(op, 2)
+        for attr, key, lo, hi in (("width_entry", "width", 280, 560),
+                                  ("radius_entry", "radius", 0, 30)):
+            try:
+                v = int(getattr(self, attr).get().strip())
+                ui_vals[key] = max(lo, min(hi, v))
+            except (AttributeError, TypeError, ValueError):
+                pass
+        if ui_vals:
+            _write_section("ui", ui_vals)
             self.write(f"不透明度已保存为 {round(op, 2)}（看板会自动刷新）\n")
         pw = self.pw_entry.get().strip()
         if pw:

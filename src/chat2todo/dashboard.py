@@ -45,6 +45,7 @@ ACCENTS = ["#ff6b6b", "#ff9f43", "#ffd93d", "#6ee7a8",
            "#4cc9f0", "#8aa4ff", "#ff8fab"]
 
 W, H = 360, 540        # 展开态
+RADIUS = 18            # 面板圆角，可由 [ui] radius 覆盖
 W_MINI, H_MINI = 200, 108
 PAD = 16
 TOP = 156              # 列表起始 y（顶部输入卡之下）
@@ -222,6 +223,15 @@ def _apply_ui_config() -> dict:
         alpha = float(ui.get("opacity", 0.93))
     except (TypeError, ValueError):
         alpha = 0.93
+    global RADIUS, W
+    try:
+        RADIUS = max(0, min(30, int(ui.get("radius", RADIUS))))
+    except (TypeError, ValueError):
+        pass
+    try:
+        W = max(280, min(560, int(ui.get("width", W))))
+    except (TypeError, ValueError):
+        pass
     return {"alpha": max(0.35, min(1.0, alpha))}
 
 
@@ -284,7 +294,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     cv = tk.Canvas(root, width=W, height=H, bg=KEY, highlightthickness=0)
     cv.pack()
     root.after(150, lambda: _set_layer(root, False))
-    _rounded(cv, 1, 1, W - 1, H - 1, 18, fill=PANEL, outline=BORDER, width=1, tags="bg")
+    _rounded(cv, 1, 1, W - 1, H - 1, RADIUS, fill=PANEL, outline=BORDER, width=1, tags="bg")
 
     state = {
         "tab": {"pending": "todo", "unconfirmed": "maybe", "done": "done"}.get(status, "todo"),
@@ -649,7 +659,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 except Exception:  # noqa: BLE001
                     pass
                 cv.delete("bg")
-                _rounded(cv, 1, 1, W - 1, state.get("h", H) - 1, 18,
+                _rounded(cv, 1, 1, W - 1, state.get("h", H) - 1, RADIUS,
                          fill=PANEL, outline=BORDER, width=1, tags="bg")
                 cv.tag_lower("bg")
                 render()
@@ -858,7 +868,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     bar = ACCENTS[i % len(ACCENTS)]
                 # 卡片：圆角底 + 1px 描边，勾选框 / 色条 / 标题 / 说明 / ⋯
                 picked = item.todo_id in state["sel"]
-                _rounded(cv, PAD, y - 26, W - PAD, y + 26, 14,
+                _rounded(cv, PAD, y - 26, W - PAD, y + 26, min(14, RADIUS),
                          fill=(ACTIVE if picked else FIELD),
                          outline=(ACCENT if picked else BORDER), width=(2 if picked else 1),
                          tags="body")
