@@ -46,6 +46,8 @@ ACCENTS = ["#ff6b6b", "#ff9f43", "#ffd93d", "#6ee7a8",
 
 W, H = 360, 540        # 展开态
 RADIUS = 18            # 面板圆角，可由 [ui] radius 覆盖
+BORDER_ON = True       # 是否画 1px 描边（[ui] border）
+SHOW_CLOCK = True      # 标题栏是否显示时间（[ui] clock）
 W_MINI, H_MINI = 200, 108
 PAD = 16
 TOP = 156              # 列表起始 y（顶部输入卡之下）
@@ -189,6 +191,34 @@ def _ui_config() -> dict:
         return {}
 
 
+def _pos_file():
+    from pathlib import Path
+
+    return Path.home() / "Chat2Todo" / "dash_pos.json"
+
+
+def load_pos():
+    """读上次的窗口位置；没有就返回 None。"""
+    try:
+        import json
+
+        data = json.loads(_pos_file().read_text(encoding="utf-8"))
+        return int(data["x"]), int(data["y"])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def save_pos(x: int, y: int) -> None:
+    """记住窗口位置，下次启动回到这里。"""
+    try:
+        import json
+
+        _pos_file().parent.mkdir(parents=True, exist_ok=True)
+        _pos_file().write_text(json.dumps({"x": int(x), "y": int(y)}), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _config_mtime() -> float:
     """c2t.toml 的修改时间，用于热重载判断。"""
     try:
@@ -223,7 +253,7 @@ def _apply_ui_config() -> dict:
         alpha = float(ui.get("opacity", 0.93))
     except (TypeError, ValueError):
         alpha = 0.93
-    global RADIUS, W
+    global RADIUS, W, BORDER_ON, SHOW_CLOCK
     try:
         RADIUS = max(0, min(30, int(ui.get("radius", RADIUS))))
     except (TypeError, ValueError):
@@ -232,6 +262,8 @@ def _apply_ui_config() -> dict:
         W = max(280, min(560, int(ui.get("width", W))))
     except (TypeError, ValueError):
         pass
+    BORDER_ON = str(ui.get("border", "true")).lower() not in ("false", "0", "no")
+    SHOW_CLOCK = str(ui.get("clock", "true")).lower() not in ("false", "0", "no")
     return {"alpha": max(0.35, min(1.0, alpha))}
 
 
@@ -241,6 +273,9 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
     ui = _apply_ui_config()
     if alpha is None:
         alpha = ui["alpha"]
+    saved = load_pos()
+    if saved and (x, y) == (120, 120):
+        x, y = saved
     if not _single_instance():
         print("看板已在运行（Ctrl+Alt+D 可唤出）", file=sys.stderr)
         return 0
@@ -294,7 +329,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     cv = tk.Canvas(root, width=W, height=H, bg=KEY, highlightthickness=0)
     cv.pack()
     root.after(150, lambda: _set_layer(root, False))
-    _rounded(cv, 1, 1, W - 1, H - 1, RADIUS, fill=PANEL, outline=BORDER, width=1, tags="bg")
+    _rounded(cv, 1, 1, W - 1, H - 1, RADIUS, fill=PANEL,
+                 outline=BORDER if BORDER_ON else PANEL, width=1 if BORDER_ON else 0, tags="bg")
 
     state = {
         "tab": {"pending": "todo", "unconfirmed": "maybe", "done": "done"}.get(status, "todo"),
@@ -554,7 +590,15 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             drag["moved"] = True
         root.geometry(f"+{e.x_root - drag['x']}+{e.y_root - drag['y']}")
 
+    def remember_pos() -> None:
+        try:
+            gx, gy = root.winfo_x(), root.winfo_y()
+            save_pos(gx, gy)
+        except Exception:  # noqa: BLE001
+            pass
+
     def close() -> None:
+        remember_pos()
         root.destroy()
 
     def toggle_mini() -> None:
@@ -660,7 +704,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     pass
                 cv.delete("bg")
                 _rounded(cv, 1, 1, W - 1, state.get("h", H) - 1, RADIUS,
-                         fill=PANEL, outline=BORDER, width=1, tags="bg")
+                         fill=PANEL, outline=BORDER if BORDER_ON else PANEL,
+                         width=1 if BORDER_ON else 0, tags="bg")
                 cv.tag_lower("bg")
                 render()
         # 唤出状态到期 → 收起；平时贴桌面层，被点浮上来也会被压回去
