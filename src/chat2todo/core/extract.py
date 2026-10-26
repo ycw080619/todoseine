@@ -147,7 +147,7 @@ def extract_todos(messages: Iterable[Message], session: str = "") -> List[TodoIt
                 session=session,
                 sender=msg.sender_name,
                 message_ts=msg.timestamp,
-                reason="; ".join(reasons),
+                reason=("★重点 · " if getattr(msg, "star", False) else "") + "; ".join(reasons),
                 confidence=round(min(score / 7.0, 1.0), 2),
                 status="pending" if score >= TODO_THRESHOLD else "unconfirmed",
             )

@@ -122,7 +122,8 @@ def inspect(path: str) -> DBInfo:
 # --------------------------------------------------------------------------
 # 后端
 # --------------------------------------------------------------------------
-def _rows_to_messages(rows: Iterable[Dict]) -> List[Message]:
+def _rows_to_messages(rows: Iterable[Dict], star_groups: set = frozenset(),
+                      star_senders: set = frozenset()) -> List[Message]:
     """把后端吐出的行统一成 Message。字段名做宽松兼容。"""
     out: List[Message] = []
     for row in rows:
@@ -132,6 +133,8 @@ def _rows_to_messages(rows: Iterable[Dict]) -> List[Message]:
         name = row.get("sender_name") or row.get("name") or str(sender)
         if not text:
             continue
+        chat = str(row.get("chat_id") or "")
+        starred = bool((chat and chat in star_groups) or (str(sender) in star_senders))
         out.append(
             Message(
                 timestamp=int(ts),
@@ -139,6 +142,7 @@ def _rows_to_messages(rows: Iterable[Dict]) -> List[Message]:
                 sender_name=str(name),
                 content=str(text),
                 type=int(row.get("type", 0)),
+                star=starred,
             )
         )
     return out
@@ -351,6 +355,36 @@ def get_backend(cfg: Dict) -> object:
     )
 
 
+def _id_set(value: object) -> set:
+    """配置里的群号/QQ 号：支持列表，也支持逗号分隔字符串。"""
+    if isinstance(value, str):
+        items = value.replace("，", ",").split(",")
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        items = []
+    return {str(x).strip() for x in items if str(x).strip()}
+
+
+def _apply_filters(rows: Iterable[Dict], cfg: Dict):
+    """按 [filter] 做两件事：免打扰的群整条丢弃；特别关心的群/人打上 star。"""
+    conf = cfg.get("filter", {}) if isinstance(cfg, dict) else {}
+    ignore = _id_set(conf.get("ignore_groups", []))
+    star_groups = _id_set(conf.get("star_groups", []))
+    star_senders = _id_set(conf.get("star_senders", []))
+    if not (ignore or star_groups or star_senders):
+        return list(rows), star_groups, star_senders
+
+    kept: List[Dict] = []
+    for row in rows:
+        chat = str(row.get("chat_id") or "")
+        sender = str(row.get("sender") or "")
+        if chat and chat in ignore:
+            continue
+        kept.append(row)
+    return kept, star_groups, star_senders
+
+
 def load_messages(cfg: Dict, limit: int = 0, days: int = 0) -> List[Message]:
     import time
 
@@ -362,4 +396,5 @@ def load_messages(cfg: Dict, limit: int = 0, days: int = 0) -> List[Message]:
     since = int(time.time()) - days * 86400 if days > 0 else 0
     backend = get_backend(cfg)
     rows = backend.fetch(info, limit=limit, since=since)  # type: ignore[attr-defined]
-    return _rows_to_messages(rows)
+    rows, star_groups, star_senders = _apply_filters(rows, cfg)
+    return _rows_to_messages(rows, star_groups=star_groups, star_senders=star_senders)

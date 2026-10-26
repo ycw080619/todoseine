@@ -252,6 +252,30 @@ def _read_snap_refine() -> str:
         return "True"
 
 
+def _read_filter(key: str) -> str:
+    """读 [filter] 段的列表并拼成逗号串（控制台输入框用）。"""
+    try:
+        from chat2todo.config import load
+
+        cfg = load().get("filter") or {}
+        val = cfg.get(key) or []
+        if isinstance(val, str):
+            return val
+        return ",".join(str(v) for v in val)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _split_ids(text: str) -> list:
+    """逗号（中英文）/空格/分号都能当分隔符。"""
+    out = []
+    for part in str(text).replace("，", ",").replace(";", ",").replace(" ", ",").split(","):
+        part = part.strip()
+        if part and part not in out:
+            out.append(part)
+    return out
+
+
 def _read_hotkey(section: str = "dash", key: str = "hotkey",
                  default: str = "ctrl+alt+d") -> str:
     """读某个段里的快捷键配置（[dash] hotkey 或 [snap] hotkey）。"""
@@ -559,6 +583,24 @@ class Console(tk.Tk):
                                  highlightcolor=p["accent"], font=("Microsoft YaHei UI", 9))
         self.pw_entry.pack(side="left", ipady=4)
 
+        r = self._card_row(p, page, "🚫", "免打扰群（不统计）",
+                           "填群号，多个用逗号分隔；这些群的消息完全不参与抽取")
+        self.ignore_entry = tk.Entry(r, width=30, bg=p["field"], fg=p["field_text"],
+                                     insertbackground=p["field_text"], bd=0, relief="flat",
+                                     highlightthickness=1, highlightbackground=p["border"],
+                                     highlightcolor=p["accent"], font=("Microsoft YaHei UI", 9))
+        self.ignore_entry.insert(0, _read_filter("ignore_groups"))
+        self.ignore_entry.pack(side="left", ipady=4)
+
+        r = self._card_row(p, page, "★", "特别关心（标重点）",
+                           "群号或 QQ 号，多个用逗号分隔；这些来源的待办标记为★重点")
+        self.star_entry = tk.Entry(r, width=30, bg=p["field"], fg=p["field_text"],
+                                   insertbackground=p["field_text"], bd=0, relief="flat",
+                                   highlightthickness=1, highlightbackground=p["border"],
+                                   highlightcolor=p["accent"], font=("Microsoft YaHei UI", 9))
+        self.star_entry.insert(0, _read_filter("star_groups"))
+        self.star_entry.pack(side="left", ipady=4)
+
         r = self._card_row(p, page, "⏱", "定时同步", "由 Windows 计划任务每小时触发")
         tk.Button(r, text="打开计划任务", command=lambda: subprocess.Popen(
             ["control", "schedtasks"]), bg=p["btn"], fg=p["btn_text"], bd=0,
@@ -794,6 +836,10 @@ class Console(tk.Tk):
                 self.write("口令已加密保存（DPAPI，仅本机当前用户可解）\n")
             except Exception as exc:  # noqa: BLE001
                 self.write(f"口令保存失败：{exc}\n")
+        _write_section("filter", {
+            "ignore_groups": _split_ids(self.ignore_entry.get()),
+            "star_groups": _split_ids(self.star_entry.get()),
+        })
         self.write("设置已保存（重启同步生效）\n")
         if enabled and not local:
             self.write("提示：已启用云端 AI 复核，待办文字会发送到云端 API（按量计费）\n")

@@ -66,6 +66,7 @@ class Message:
     content: str = ""
     type: MsgType = MsgType.TEXT
     msg_id: Optional[str] = None
+    star: bool = False            # 来自「特别关心」群/对象的消息，抽取时标为重点
 
     @property
     def content_hash(self) -> str:

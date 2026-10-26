@@ -37,6 +37,12 @@ DB_DEFAULTS: Dict[str, Any] = {
     "days": 0,
 }
 
+FILTER_DEFAULTS = {
+    "ignore_groups": [],      # 免打扰：这些群（群号）的消息完全不统计
+    "star_groups": [],        # 特别关心：这些群的消息标记为重点
+    "star_senders": [],       # 特别关心：这些 QQ 号发的消息标记为重点
+}
+
 AI_DEFAULTS: Dict[str, Any] = {    "enabled": False,
     "review": False,
     "merge": False,
@@ -147,6 +153,7 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
     cfg["ai"] = dict(AI_DEFAULTS)
     cfg["db"] = dict(DB_DEFAULTS)
     cfg["vector"] = dict(VECTOR_DEFAULTS)
+    cfg["filter"] = dict(FILTER_DEFAULTS)
 
     real = find_file(path)
     if real:

@@ -50,8 +50,8 @@ PAD = 16
 TOP = 156              # 列表起始 y（顶部输入卡之下）
 FOOT = 54              # 底部预留（只看页脚一行）
 ROW = 62               # 单行高度（卡片式）
-TABS: List[Tuple[str, str]] = [("todo", "全部"), ("maybe", "待定"),
-                               ("today", "今日"), ("done", "完成")]
+TABS: List[Tuple[str, str]] = [("todo", "全部"), ("star", "重点"),
+                               ("today", "今日"), ("maybe", "待定"), ("done", "完成")]
 
 
 def _single_instance(name: str = "Chat2TodoDashboard") -> bool:
@@ -527,6 +527,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
             now = datetime.now()
             items = [i for i in todo_items if _is_today_due(i, now)]
+        elif state["tab"] == "star":
+            items = [i for i in todo_items if "★重点" in (i.reason or "")]
         elif state["tab"] == "maybe":
             items = [i for i in todo_items if i.status == "unconfirmed"]
         elif state["tab"] == "done":
@@ -570,6 +572,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         counts = {
             "todo": len(todo_items),
             "maybe": unconfirmed,
+            "star": sum(1 for i in todo_items if "★重点" in (i.reason or "")),
             "today": sum(1 for i in todo_items if _is_today_due(i)),
             "done": None,
         }
@@ -605,9 +608,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             cv.create_text(PAD, y, text=f"读取失败：{err}", anchor="w", fill="#ff8fab",
                            width=W - 2 * PAD, tags="body")
         elif not items:
-            empty = {"todo": "暂无待办", "maybe": "没有待确认的条目",
+            empty = {"todo": "暂无待办", "star": "还没有重点条目",
+                     "maybe": "没有待确认的条目",
                      "today": "今天没有到期的待办", "done": "还没有完成的记录"}[state["tab"]]
             hint = {"todo": "在下方添加，或等同步把聊天里的活儿捞进来",
+                    "star": "在控制台把某人/某个群设为「特别关心」即可",
                     "maybe": "规则拿不准的条目会先放这里，点一下确认",
                     "today": "今天没有截止项，轻松一点",
                     "done": "完成一条就会出现在这里"}[state["tab"]]
@@ -648,6 +653,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 chip = due_label(due)
                 limit = 20
                 body = item.text if len(item.text) <= limit else item.text[:limit] + "…"
+                if "★重点" in (item.reason or ""):
+                    body = "★ " + body
                 cv.create_text(PAD + 48, y - 9, text=body, anchor="w",
                                fill=(SUB if item.status != "pending" else TEXT),
                                font=("Microsoft YaHei UI", 9, "bold"), tags=("body", tag))
