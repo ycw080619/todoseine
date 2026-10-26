@@ -710,7 +710,7 @@ class Console(tk.Tk):
         self.vision.set(_read_snap_model() or "（不使用）")
 
         r = self._card_row(p, page, "⌨", "截图热键",
-                           "先 Win+Shift+S 截图，再按这个组合唤出；点「录制」可改")
+                           "按热键后拖动框选屏幕区域；点「录制」可改键")
         self.snap_hotkey_label = tk.Label(r, text=_read_hotkey("snap", "hotkey", "ctrl+alt+s"),
                                          bg=p["card"], fg=p["text"], font=("Consolas", 9))
         self.snap_hotkey_label.pack(side="left", padx=(0, 10))
@@ -879,9 +879,9 @@ class Console(tk.Tk):
             messagebox.showerror("截图待办", f"找不到 {snap}\n请检查 tools/snap_todo 是否完整")
             return
         try:
-            subprocess.Popen([PY, str(snap)],
+            subprocess.Popen([PY, str(snap), "--capture"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_env())
-            self.write("已启动截图待办：先 Win+Shift+S 截图，再点按钮\n")
+            self.write("已启动截图待办：拖动框选屏幕区域即可识别\n")
         except Exception as exc:  # noqa: BLE001
             self.write(f"截图待办启动失败：{exc}\n")
 
@@ -903,7 +903,7 @@ class Console(tk.Tk):
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_env(),
                 creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
             self.snap_btn.config(text="停止热键")
-            self.write("截图热键已常驻：先 Win+Shift+S 截图，再按 Ctrl+Alt+S 唤出\n"
+            self.write("截图热键已常驻：按热键后直接拖动框选屏幕区域\n"
                        "（控制台关闭后热键仍有效；回控制台再点本按钮即可停止）\n")
         except Exception as exc:  # noqa: BLE001
             self.write(f"截图热键启动失败：{exc}\n")

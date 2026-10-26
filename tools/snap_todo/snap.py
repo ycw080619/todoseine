@@ -400,6 +400,111 @@ def recognize(dib: bytes, cfg: dict, engine: str) -> tuple[str, str]:
         bmp.unlink(missing_ok=True)
 
 
+def _grab_rect(x: int, y: int, w: int, h: int):
+    """抓取屏幕矩形，返回 32bpp 自顶向下 DIB（alpha 强制不透明）。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        u, g = ctypes.windll.user32, ctypes.windll.gdi32
+        hdc = u.GetDC(0)
+        mem = g.CreateCompatibleDC(hdc)
+        bmp = g.CreateCompatibleBitmap(hdc, w, h)
+        g.SelectObject(mem, bmp)
+        g.BitBlt(mem, 0, 0, w, h, hdc, x, y, 0x00CC0020)      # SRCCOPY
+        size = w * h * 4
+        buf = ctypes.create_string_buffer(size)
+
+        class BIH(ctypes.Structure):
+            _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
+                        ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
+                        ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                        ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                        ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
+                        ("biClrImportant", wintypes.DWORD)]
+
+        bi = BIH()
+        bi.biSize, bi.biWidth, bi.biHeight = 40, w, -h
+        bi.biPlanes, bi.biBitCount, bi.biCompression, bi.biSizeImage = 1, 32, 0, size
+        g.GetDIBits(mem, bmp, 0, h, buf, ctypes.byref(bi), 0)
+        g.DeleteObject(bmp)
+        g.DeleteDC(mem)
+        u.ReleaseDC(0, hdc)
+
+        data = bytearray(buf.raw)
+        for i in range(3, len(data), 4):        # 屏幕抓图 alpha 常为 0，强制不透明
+            data[i] = 255
+        header = struct.pack("<IiiHHIIiiII", 40, w, -h, 1, 32, 0, size, 0, 0, 0, 0)
+        return header + bytes(data)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def capture_region():
+    """全屏遮罩里拖框选区，返回该区域 DIB；Esc/取消返回 None。"""
+    import tkinter as tk
+
+    root = tk.Tk()
+    root.overrideredirect(True)
+    root.attributes("-topmost", True)
+    try:
+        root.attributes("-alpha", 0.30)
+        root.attributes("-transparentcolor", "")
+    except Exception:  # noqa: BLE001
+        pass
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    root.geometry(f"{sw}x{sh}+0+0")
+    cv = tk.Canvas(root, bg="#111111", highlightthickness=0, cursor="crosshair")
+    cv.pack(fill="both", expand=True)
+    cv.create_text(24, 24, text="拖动框选要识别的区域　·　Esc 取消", anchor="w",
+                   fill="#e8e8e8", font=("Microsoft YaHei UI", 10))
+    st = {"x0": 0, "y0": 0, "box": None, "pos": None}
+
+    def press(e):
+        if st["box"]:
+            cv.delete(st["box"])
+        st["x0"], st["y0"] = e.x_root, e.y_root
+        st["box"] = cv.create_rectangle(e.x, e.y, e.x, e.y, outline="#4cc2ff", width=2)
+
+    def drag(e):
+        if st["box"]:
+            cv.coords(st["box"], st["x0"], st["y0"], e.x_root, e.y_root)
+
+    def release(e):
+        x1, y1 = e.x_root, e.y_root
+        x, y = min(st["x0"], x1), min(st["y0"], y1)
+        w, h = abs(x1 - st["x0"]), abs(y1 - st["y0"])
+        root.destroy()
+        if w >= 8 and h >= 8:
+            st["pos"] = (x, y, w, h)
+
+    cv.bind("<Button-1>", press)
+    cv.bind("<B1-Motion>", drag)
+    cv.bind("<ButtonRelease-1>", release)
+    root.bind("<Escape>", lambda _e: root.destroy())
+    root.mainloop()
+    if not st["pos"]:
+        return None
+    return _grab_rect(*st["pos"])
+
+
+def capture_once(args, cfg: dict) -> int:
+    """热键触发的正流程：框选 → 识别 → 确认 → 入库。"""
+    dib = capture_region()
+    if not dib:
+        return 0
+    text, engine = recognize(dib, cfg, args.engine)
+    if not text:
+        _notify("warn", f"识别完成（{engine}），但没有认出文字。")
+        return 1
+    confirmed = confirm_dialog(text, engine)
+    if not confirmed:
+        return 0
+    total, added = ingest(confirmed, args.db, cfg)
+    _notify("info", f"已入库：新增 {added} 条待办（本次提取 {total} 条，引擎 {engine}）。")
+    return 0
+
+
 def snap_once(args, cfg: dict) -> int:
     dib = clipboard_dib()
     if not dib:
@@ -487,7 +592,7 @@ def hotkey_loop(args, cfg: dict) -> int:
     try:
         while u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
             if msg.message == 0x0312:                               # WM_HOTKEY
-                subprocess.Popen([sys.executable, str(script), "--db", args.db],
+                subprocess.Popen([sys.executable, str(script), "--capture", "--db", args.db],
                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     finally:
         u.UnregisterHotKey(None, 1)
@@ -497,6 +602,7 @@ def hotkey_loop(args, cfg: dict) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="截图待办：剪贴板图片 → 识别 → 确认 → 入库")
     ap.add_argument("--db", default="", help="目标数据库（默认 %%USERPROFILE%%\\Chat2Todo\\qq.db）")
+    ap.add_argument("--capture", action="store_true", help="框选屏幕区域识别（热键默认走这条）")
     ap.add_argument("--watch", action="store_true", help="持续监视剪贴板，而非只处理一次")
     ap.add_argument("--hotkey", action="store_true", help="常驻并注册全局热键（默认 Ctrl+Alt+S，可在设置里改）")
     ap.add_argument("--interval", type=float, default=2.0, help="--watch 的轮询间隔（秒）")
@@ -511,6 +617,8 @@ def main() -> int:
     try:
         if args.hotkey:
             return hotkey_loop(args, cfg)
+        if args.capture:
+            return capture_once(args, cfg)
         return watch_loop(args, cfg) if args.watch else snap_once(args, cfg)
     except Exception as exc:  # noqa: BLE001
         _notify("error", f"截图待办失败：{exc}")
