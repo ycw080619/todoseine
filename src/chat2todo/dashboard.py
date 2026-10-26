@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from typing import List, Tuple
 
@@ -51,6 +52,38 @@ FOOT = 104              # 底部预留（输入框 + 页脚）
 ROW = 64               # 单行高度（卡片式）
 TABS: List[Tuple[str, str]] = [("todo", "待办"), ("maybe", "待定"),
                                ("today", "今日"), ("done", "完成")]
+
+
+def _single_instance(name: str = "Chat2TodoDashboard") -> bool:
+    """用命名互斥量做单实例，避免开机自启重复拉起。"""
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.CreateMutexW(None, False, name)
+        already = ctypes.windll.kernel32.GetLastError() == 183   # ERROR_ALREADY_EXISTS
+        return not already
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _start_hotkey(callback, mods: int = 0x0003 | 0x4000, vk: int = 0x44) -> None:
+    """注册全局热键 Ctrl+Alt+D（MOD_ALT|MOD_CONTROL|MOD_NOREPEAT），后台线程收消息。"""
+    def loop() -> None:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            if not user32.RegisterHotKey(None, 1, mods, vk):
+                return
+            msg = wintypes.MSG()
+            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+                if msg.message == 0x0312:      # WM_HOTKEY
+                    callback()
+        except Exception:  # noqa: BLE001
+            return
+
+    threading.Thread(target=loop, daemon=True).start()
 
 
 def load_items(db_path: str, status: str = "pending") -> List[TodoItem]:
@@ -131,6 +164,9 @@ def _rounded(canvas, x1, y1, x2, y2, r, **kw):
 def run(db_path: str, interval: int = 30, status: str = "pending",
         alpha: float = 0.93, x: int = 120, y: int = 120) -> int:
     """启动悬浮看板，阻塞直到关闭。"""
+    if not _single_instance():
+        print("看板已在运行（Ctrl+Alt+D 可唤出）", file=sys.stderr)
+        return 0
     try:
         import tkinter  # noqa: F401  仅用于提前判断是否可用
     except ImportError:  # 罕见：Python 未带 Tk
@@ -352,6 +388,16 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         _set_layer(root, state["pin"])
         render()
 
+    def reveal(seconds: int = 8) -> None:
+        """热键唤出：临时浮到最前，seconds 秒后自动沉回桌面层（钉住时不沉）。"""
+        if state.get("pin"):
+            return
+        state["reveal_until"] = time.time() + seconds
+        _set_layer(root, True)
+
+    # 全局热键只置一个标志，真正操作在 UI 线程的 tick 里做（避免跨线程动 Tk）
+    _start_hotkey(lambda: state.__setitem__("reveal", True))
+
     def switch_tab(key: str) -> None:
         if state["tab"] == key:
             return
@@ -389,8 +435,10 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         else:
             cv.itemconfig(clock, text=time.strftime("%H:%M:%S", now))
             cv.itemconfig(date_id, text=time.strftime("%Y年%m月%d日", now) + f"　星期{week}")
+        if state.pop("reveal", False):
+            reveal()
         # 贴桌面层时要定期压回去：否则被人点一下就会浮到前面挡住别的窗口
-        if not state.get("pin"):
+        if not state.get("pin") and time.time() >= state.get("reveal_until", 0):
             try:
                 focused = root.focus_get()
             except Exception:  # noqa: BLE001
@@ -597,7 +645,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         # 底部：输入框（圆角底 + 占位提示） + 页脚
         _rounded(cv, PAD, h - 74, W - PAD, h - 44, 12, fill=FIELD, outline="", tags="body")
         foot_y = h - 26
-        cv.create_text(PAD, foot_y, text=f"待办 {len(todo_items)} · 待定 {unconfirmed}",
+        cv.create_text(PAD, foot_y, text=f"待办 {len(todo_items)} · 待定 {unconfirmed} · Ctrl+Alt+D 唤出",
                        anchor="w", fill=SUB, font=("Microsoft YaHei UI", 8), tags="body")
         cv.create_text(W - PAD, foot_y, text="清除已完成", anchor="e", fill=SUB,
                        font=("Microsoft YaHei UI", 8), tags=("body", "clear"))
