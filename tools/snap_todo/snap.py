@@ -50,6 +50,19 @@ _CF_DIB = 8
 _CF_DIBV5 = 17
 
 
+def _dpi_aware() -> None:
+    """让进程感知 DPI，否则 Tk 坐标是逻辑像素、GDI 抓屏是物理像素，会截错区域。"""
+    try:
+        import ctypes
+
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)      # PER_MONITOR_AWARE
+        except Exception:  # noqa: BLE001
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _win32():
     u, k = ctypes.windll.user32, ctypes.windll.kernel32
     u.OpenClipboard.argtypes = [wintypes.HWND]
@@ -287,6 +300,20 @@ def _read_theme() -> str:
     return "light"
 
 
+def _dpi_scale() -> float:
+    """当前屏幕缩放比例（96 DPI = 1.0），用于按物理像素放大窗口。"""
+    try:
+        import ctypes
+
+        u, g = ctypes.windll.user32, ctypes.windll.gdi32
+        dc = u.GetDC(0)
+        dpi = g.GetDeviceCaps(dc, 88)          # LOGPIXELSX
+        u.ReleaseDC(0, dc)
+        return max(1.0, float(dpi) / 96.0)
+    except Exception:  # noqa: BLE001
+        return 1.0
+
+
 def confirm_dialog(text: str, engine: str = "") -> Optional[str]:
     """预填识别文字，返回用户确认后的文本；取消返回 None。"""
     import tkinter as tk
@@ -302,12 +329,15 @@ def confirm_dialog(text: str, engine: str = "") -> Optional[str]:
     result = {"text": None}
     root = tk.Tk()
     root.title("截图待办 · 确认识别结果")
-    root.geometry("600x440")
+    k = _dpi_scale()
+    wpx, hpx = int(760 * k), int(560 * k)
+    root.geometry(f"{wpx}x{hpx}+{max(0, (root.winfo_screenwidth() - wpx) // 2)}"
+                  f"+{max(0, (root.winfo_screenheight() - hpx) // 2)}")
     root.configure(bg=bg)
     tk.Label(root, text=f"识别结果（引擎：{engine or '未知'}，可直接编辑），确认后提取待办：",
-             bg=bg, fg=fg, anchor="w", font=("Microsoft YaHei UI", 9),
+             bg=bg, fg=fg, anchor="w", font=("Microsoft YaHei UI", -int(15 * k)),
              ).pack(fill="x", padx=12, pady=(10, 4))
-    box = tk.Text(root, font=("Microsoft YaHei UI", 10), wrap="word", relief="solid", bd=1,
+    box = tk.Text(root, font=("Microsoft YaHei UI", -int(16 * k)), wrap="word", relief="solid", bd=1,
                   bg=field_bg, fg=fg, insertbackground=fg)
     box.pack(fill="both", expand=True, padx=12)
     box.insert("1.0", text)
@@ -319,9 +349,9 @@ def confirm_dialog(text: str, engine: str = "") -> Optional[str]:
         root.destroy()
 
     tk.Button(bar, text="提取入库", command=ok, bg=accent, fg="white", relief="flat",
-              font=("Microsoft YaHei UI", 9), padx=16, pady=5).pack(side="right", padx=(6, 0))
+              font=("Microsoft YaHei UI", -int(15 * k)), padx=16, pady=5).pack(side="right", padx=(6, 0))
     tk.Button(bar, text="取消", command=root.destroy, bg=btn_bg, fg=btn_fg, relief="flat",
-              font=("Microsoft YaHei UI", 9), padx=16, pady=5).pack(side="right")
+              font=("Microsoft YaHei UI", -int(15 * k)), padx=16, pady=5).pack(side="right")
     root.protocol("WM_DELETE_WINDOW", root.destroy)
     root.mainloop()
     return result["text"]
@@ -383,21 +413,42 @@ def _normalize_text(text: str) -> str:
     return "\n".join(_CJK_SPACED.sub("", line).strip() for line in text.splitlines()).strip()
 
 
-def recognize(dib: bytes, cfg: dict, engine: str) -> tuple[str, str]:
-    """识别一帧 DIB，返回 (文字, 引擎名)。"""
-    model = vision_model_available(cfg) if engine in ("auto", "vision") else ""
-    if engine == "vision" and not model:
-        raise RuntimeError("配置了强制 vision 但未找到可用视觉模型（检查 [snap] vision_model）")
-    if model:
-        return _normalize_text(ocr_vision(dib_to_png(dib), cfg, model)), f"vision:{model}"
+def _windows_ocr(dib: bytes) -> str:
     fd, tmp = tempfile.mkstemp(suffix=".bmp")
     os.close(fd)
     bmp = Path(tmp)
     bmp.write_bytes(dib_to_bmp(dib))
     try:
-        return _normalize_text(ocr_windows(str(bmp))), "windows-ocr"
+        return _normalize_text(ocr_windows(str(bmp)))
     finally:
         bmp.unlink(missing_ok=True)
+
+
+def recognize(dib: bytes, cfg: dict, engine: str) -> tuple[str, str]:
+    """识别一帧 DIB，返回 (文字, 引擎名)。
+
+    默认 auto：**先用 Windows OCR**（快、对界面文字准），认不出足够文字时才用视觉模型；
+    视觉模型在 CPU 上很慢，不适合当默认第一选择。
+    """
+    model = vision_model_available(cfg) if engine in ("auto", "vision") else ""
+    if engine == "vision" and not model:
+        raise RuntimeError("配置了强制 vision 但未找到可用视觉模型（检查 [snap] vision_model）")
+
+    if engine == "win":
+        return _windows_ocr(dib), "windows-ocr"
+    if engine == "vision":
+        return _normalize_text(ocr_vision(dib_to_png(dib), cfg, model)), f"vision:{model}"
+
+    # auto：Windows OCR 优先
+    try:
+        text = _windows_ocr(dib)
+    except Exception:  # noqa: BLE001
+        text = ""
+    if len(text.strip()) >= 4:
+        return text, "windows-ocr"
+    if model:
+        return _normalize_text(ocr_vision(dib_to_png(dib), cfg, model)), f"vision:{model}"
+    return text, "windows-ocr"
 
 
 def _grab_rect(x: int, y: int, w: int, h: int):
@@ -609,6 +660,7 @@ def main() -> int:
     ap.add_argument("--engine", choices=["auto", "win", "vision"], default="auto",
                     help="识别引擎：auto=视觉模型可用则用，否则 Windows OCR")
     args = ap.parse_args()
+    _dpi_aware()
 
     cfg = _load_cfg()
     if not args.db:
