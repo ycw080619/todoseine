@@ -99,6 +99,7 @@ class TodoItem:
     confidence: float = 0.0
     status: str = "pending"
     todo_id: Optional[int] = None
+    done_at: str = ""          # 完成日期（YYYY-MM-DD），用于当天保留、次日归档
 
     def as_row(self) -> Tuple:
         return (

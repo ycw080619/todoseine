@@ -102,13 +102,20 @@ def load_items(db_path: str, status: str = "pending") -> List[TodoItem]:
     finally:
         store.close()
     if status == "pending":
-        items = [i for i in items if i.status in ("pending", "unconfirmed")]
+        from datetime import date
+
+        today = date.today().isoformat()
+        # 今天勾掉的条目留在列表里（划线沉底），第二天自动进回收站
+        items = [i for i in items
+                 if i.status in ("pending", "unconfirmed")
+                 or (i.status == "done" and (i.done_at or "") == today)]
     else:
         items = [i for i in items if i.status == status]
     # AI 复核判定为 noise 的条目只是被规则误抓的闲聊，不进看板
     items = [i for i in items if i.status != "noise"]
     # 看板要「最近该做的事」：先按状态（确认过的优先），再按时间倒序
-    items.sort(key=lambda i: (i.status != "pending", -int(i.message_ts or 0)))
+    items.sort(key=lambda i: (i.status == "done", i.status != "pending",
+                             -int(i.message_ts or 0)))
     return items
 
 
@@ -213,6 +220,12 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     root.configure(bg=KEY)
     root.geometry(f"{W}x{H}+{x}+{y}")
 
+    import tkinter.font as tkfont
+
+    FONT_ITEM = tkfont.Font(family="Microsoft YaHei UI", size=9, weight="bold")
+    FONT_ITEM_DONE = tkfont.Font(family="Microsoft YaHei UI", size=9,
+                                 weight="bold", overstrike=1)
+
     cv = tk.Canvas(root, width=W, height=H, bg=KEY, highlightthickness=0)
     cv.pack()
     root.after(150, lambda: _set_layer(root, False))
@@ -228,6 +241,31 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         "counts": (0, 0),
         "pin": False,          # False=贴桌面层，True=置顶
     }
+
+    def housekeeping() -> None:
+        """把「不是今天完成的」条目移进回收站，并按保留天数清空回收站。"""
+        try:
+            from pathlib import Path
+
+            from .config import load as _load_cfg
+
+            days = 30
+            try:
+                cfg_path = Path.home() / "Chat2Todo" / "c2t.toml"
+                cfg_data = _load_cfg(str(cfg_path)) if cfg_path.exists() else _load_cfg()
+                days = int((cfg_data.get("ui") or {}).get("trash_days", 30))
+            except Exception:  # noqa: BLE001
+                pass
+            st = Store(db_path)
+            try:
+                st.archive_completed()
+                st.purge_trash(days)
+            finally:
+                st.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    root.after(400, housekeeping)
 
     # ---- 内联输入框（放在 Canvas 之上，可真正接收键盘）----
     PLACEHOLDER = "添加待办"
@@ -463,6 +501,14 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         else:
             cv.itemconfig(clock, text=time.strftime("%H:%M:%S", now))
             cv.itemconfig(date_id, text=time.strftime("%Y年%m月%d日", now) + f"　星期{week}")
+        today = time.strftime("%Y-%m-%d")
+        if state.get("day") and state["day"] != today:
+            state["day"] = today
+            housekeeping()          # 第二天上班：把昨天完成的条目归档
+            render()
+        elif not state.get("day"):
+            state["day"] = today
+
         if state.pop("reveal", False):
             reveal()
         # 唤出状态到期 → 收起；平时贴桌面层，被点浮上来也会被压回去
@@ -569,8 +615,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                        font=("Microsoft YaHei UI", 12), tags="body")
 
         # 筛选标签：圆角胶囊 + 数量（DeskBox 的 All / Today / ... 风格）
+        open_count = sum(1 for i in todo_items if i.status != "done")
         counts = {
-            "todo": len(todo_items),
+            "todo": open_count,
             "maybe": unconfirmed,
             "star": sum(1 for i in todo_items if "★重点" in (i.reason or "")),
             "today": sum(1 for i in todo_items if _is_today_due(i)),
@@ -657,7 +704,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     body = "★ " + body
                 cv.create_text(PAD + 48, y - 9, text=body, anchor="w",
                                fill=(SUB if item.status != "pending" else TEXT),
-                               font=("Microsoft YaHei UI", 9, "bold"), tags=("body", tag))
+                               font=(FONT_ITEM_DONE if item.status == "done" else FONT_ITEM),
+                               tags=("body", tag))
                 # 第二行：状态 / 到期说明
                 meta_bits = []
                 if item.status == "unconfirmed":

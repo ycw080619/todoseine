@@ -52,8 +52,22 @@ class TestDashboardData(unittest.TestCase):
             self.assertTrue(store.set_status(items[0].todo_id, "done"))
         finally:
             store.close()
-        self.assertEqual(len(load_items(self.db, "pending")), 2)
+        # 当天勾掉的条目仍留在待办列表里（划线沉底），不会立刻消失
+        pending = load_items(self.db, "pending")
+        self.assertEqual(len(pending), 3)
+        self.assertEqual(pending[-1].status, "done")      # 沉到最底
         self.assertEqual(len(load_items(self.db, "done")), 1)
+
+        # 第二天开机归档：进回收站，不再出现在待办里
+        store = Store(self.db)
+        try:
+            store.conn.execute("UPDATE todos SET done_at='2000-01-01' WHERE status='done'")
+            store.conn.commit()
+            self.assertEqual(store.archive_completed(), 1)
+            self.assertEqual(store.count_trash(), 1)
+        finally:
+            store.close()
+        self.assertEqual(len(load_items(self.db, "pending")), 2)
 
     def test_add_todo_from_dashboard(self) -> None:
         """看板「＋ 添加」走的就是这个入口，必须能落库并出现在待办里。"""

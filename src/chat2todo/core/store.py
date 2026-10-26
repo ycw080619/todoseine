@@ -40,6 +40,20 @@ CREATE TABLE IF NOT EXISTS todos (
     UNIQUE (text, ts, sender)
 );
 CREATE INDEX IF NOT EXISTS idx_todos_status ON todos (status);
+
+CREATE TABLE IF NOT EXISTS trash (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    text       TEXT NOT NULL,
+    session    TEXT NOT NULL DEFAULT '',
+    sender     TEXT NOT NULL DEFAULT '',
+    ts         INTEGER NOT NULL,
+    reason     TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL DEFAULT 0,
+    status     TEXT NOT NULL DEFAULT 'done',
+    created_at TEXT NOT NULL DEFAULT '',
+    done_at    TEXT NOT NULL DEFAULT '',
+    deleted_at TEXT NOT NULL
+);
 """
 
 
@@ -63,6 +77,12 @@ class Store:
             )
             # 老库里已有的条目视为"已复核过"，否则升级后第一次会把历史全量重跑
             self.conn.execute("UPDATE todos SET reviewed = 1")
+            self.conn.commit()
+        if "done_at" not in cols:
+            # 完成时间：用于「当天保留、第二天自动归档」的判定
+            self.conn.execute(
+                "ALTER TABLE todos ADD COLUMN done_at TEXT NOT NULL DEFAULT ''"
+            )
             self.conn.commit()
 
     # --- 全文索引（P2） -------------------------------------------
@@ -179,6 +199,7 @@ class Store:
                 todo_id=r["id"], text=r["text"], session=r["session"], sender=r["sender"],
                 message_ts=r["ts"], reason=r["reason"], confidence=r["confidence"],
                 status=r["status"],
+                done_at=(r["done_at"] if "done_at" in r.keys() else "") or "",
             )
             for r in rows
         ]
@@ -193,9 +214,16 @@ class Store:
             for r in rows
         ]
 
+    @staticmethod
+    def _today() -> str:
+        from datetime import date
+
+        return date.today().isoformat()
+
     def set_status(self, todo_id: int, status: str = "done") -> bool:
         cur = self.conn.execute(
-            "UPDATE todos SET status=? WHERE id=?", (status, todo_id)
+            "UPDATE todos SET status=?, done_at=? WHERE id=?",
+            (status, self._today() if status == "done" else "", todo_id),
         )
         self.conn.commit()
         return cur.rowcount > 0
@@ -247,6 +275,86 @@ class Store:
             (int(ts), int(n)),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # --- 完成归档 / 回收站 ---------------------------------------
+    def archive_completed(self, keep_date: Optional[str] = None) -> int:
+        """把「不是今天完成的」done 条目移进回收站，返回条数。
+
+        当天勾掉的条目留在列表里（划线沉底），第二天自动进回收站。
+        """
+        keep = keep_date or self._today()
+        rows = self.conn.execute(
+            "SELECT * FROM todos WHERE status='done' AND (done_at='' OR done_at < ?)",
+            (keep,),
+        ).fetchall()
+        for r in rows:
+            self.conn.execute(
+                "INSERT INTO trash (text, session, sender, ts, reason, confidence, "
+                "status, created_at, done_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (r["text"], r["session"], r["sender"], r["ts"], r["reason"],
+                 r["confidence"], r["status"], r["created_at"],
+                 r["done_at"] if "done_at" in r.keys() else "", self._today()),
+            )
+            self.conn.execute("DELETE FROM todos WHERE id=?", (r["id"],))
+        self.conn.commit()
+        return len(rows)
+
+    def trash_item(self, todo_id: int) -> bool:
+        """手动把一条待办丢进回收站。"""
+        r = self.conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
+        if not r:
+            return False
+        self.conn.execute(
+            "INSERT INTO trash (text, session, sender, ts, reason, confidence, "
+            "status, created_at, done_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (r["text"], r["session"], r["sender"], r["ts"], r["reason"],
+             r["confidence"], r["status"], r["created_at"],
+             r["done_at"] if "done_at" in r.keys() else "", self._today()),
+        )
+        self.conn.execute("DELETE FROM todos WHERE id=?", (todo_id,))
+        self.conn.commit()
+        return True
+
+    def list_trash(self, limit: int = 200) -> List[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM trash ORDER BY deleted_at DESC, id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_trash(self) -> int:
+        return int(self.conn.execute("SELECT COUNT(*) FROM trash").fetchone()[0])
+
+    def restore(self, trash_id: int) -> bool:
+        """从回收站还原成待办（状态回到 pending）。"""
+        r = self.conn.execute("SELECT * FROM trash WHERE id=?", (trash_id,)).fetchone()
+        if not r:
+            return False
+        self.conn.execute(
+            "INSERT OR IGNORE INTO todos (text, session, sender, ts, reason, "
+            "confidence, status, created_at, done_at, reviewed) "
+            "VALUES (?,?,?,?,?,?,'pending',?,'',1)",
+            (r["text"], r["session"], r["sender"], r["ts"], r["reason"],
+             r["confidence"], r["created_at"]),
+        )
+        self.conn.execute("DELETE FROM trash WHERE id=?", (trash_id,))
+        self.conn.commit()
+        return True
+
+    def purge_trash(self, days: int = 30) -> int:
+        """清掉回收站里超过 days 天的记录；days<=0 表示永久保留。"""
+        if days is None or int(days) <= 0:
+            return 0
+        from datetime import date, timedelta
+
+        cutoff = (date.today() - timedelta(days=int(days))).isoformat()
+        cur = self.conn.execute("DELETE FROM trash WHERE deleted_at < ?", (cutoff,))
+        self.conn.commit()
+        return cur.rowcount or 0
+
+    def clear_trash(self) -> int:
+        cur = self.conn.execute("DELETE FROM trash")
+        self.conn.commit()
+        return cur.rowcount or 0
 
     def stats(self, since_ts: Optional[int] = None) -> dict:
         """统计。since_ts 给定时只统计该时间点之后的数据（c2t stats --since 7d）。"""

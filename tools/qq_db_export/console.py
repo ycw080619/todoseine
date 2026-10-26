@@ -476,6 +476,7 @@ class Console(tk.Tk):
         ("general", "🏠", "常规"),
         ("ai", "✨", "AI 服务"),
         ("snap", "📷", "截图识别"),
+        ("trash", "🗑", "最近删除"),
         ("about", "ⓘ", "关于"),
     ]
 
@@ -540,6 +541,7 @@ class Console(tk.Tk):
         self._build_page_general()
         self._build_page_ai()
         self._build_page_snap()
+        self._build_page_trash()
         self._build_page_about()
 
         self._show_page(getattr(self, "_current_page", "console"))
@@ -917,6 +919,123 @@ class Console(tk.Tk):
                   cursor="hand2", font=("Microsoft YaHei UI", 8)).pack(side="left")
 
     # ---------- 页：关于 ----------
+    def _build_page_trash(self) -> None:
+        page = self._new_page()
+        self._pages["trash"] = page
+        p = self._pal()
+        tk.Label(page, text="勾掉的待办第二天会进这里，可随时还原", bg=p["bg"],
+                 fg=p["muted"], anchor="w",
+                 font=("Microsoft YaHei UI", 8)).pack(fill="x", padx=28, pady=(0, 6))
+
+        card = tk.Frame(page, bg=p["card"], highlightbackground=p["border"],
+                        highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=28, pady=(8, 16))
+        self.trash_box = tk.Listbox(card, bg=p["card"], fg=p["text"], bd=0,
+                                    highlightthickness=0, activestyle="none",
+                                    font=("Microsoft YaHei UI", 9))
+        self.trash_box.pack(fill="both", expand=True, padx=12, pady=(10, 6))
+
+        bar = tk.Frame(card, bg=p["card"])
+        bar.pack(fill="x", padx=12, pady=(0, 12))
+        tk.Button(bar, text="还原选中", command=self.on_restore_trash, bg=p["btn"],
+                  fg=p["btn_text"], bd=0, padx=12, pady=5, cursor="hand2",
+                  font=("Microsoft YaHei UI", 8)).pack(side="left")
+        tk.Button(bar, text="清空回收站", command=self.on_clear_trash, bg=p["btn"],
+                  fg=p["btn_text"], bd=0, padx=12, pady=5, cursor="hand2",
+                  font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(8, 0))
+        tk.Button(bar, text="保存", command=self.on_save_trash_days, bg=p["btn"],
+                  fg=p["btn_text"], bd=0, padx=10, pady=5, cursor="hand2",
+                  font=("Microsoft YaHei UI", 8)).pack(side="right")
+        self.trash_days = tk.Entry(bar, width=5, bg=p["field"], fg=p["text"], bd=0,
+                                   highlightthickness=0,
+                                   font=("Consolas", 9), justify="center")
+        self.trash_days.pack(side="right", padx=(0, 8))
+        self.trash_days.insert(0, str(self._read_trash_days()))
+        tk.Label(bar, text="保留天数（0=永久）", bg=p["card"], fg=p["muted"],
+                 font=("Microsoft YaHei UI", 8)).pack(side="right", padx=(0, 6))
+
+        self._refresh_trash()
+
+    def _read_trash_days(self) -> int:
+        try:
+            from chat2todo.config import load
+
+            return int((load(str(CONFIG)).get("ui") or {}).get("trash_days", 30))
+        except Exception:  # noqa: BLE001
+            return 30
+
+    def _refresh_trash(self) -> None:
+        """把回收站内容读进列表（行格式：日期 · 内容）。"""
+        box = getattr(self, "trash_box", None)
+        if box is None:
+            return
+        box.delete(0, "end")
+        self._trash_rows = []
+        try:
+            from chat2todo.core.store import Store
+
+            st = Store(str(DB))
+            try:
+                rows = st.list_trash()
+            finally:
+                st.close()
+        except Exception as exc:  # noqa: BLE001
+            self.write(f"读取回收站失败：{exc}\n")
+            return
+        self._trash_rows = rows
+        for r in rows:
+            text = (r.get("text") or "").replace("\n", " ")
+            if len(text) > 40:
+                text = text[:40] + "…"
+            box.insert("end", f"{r.get('deleted_at', '')}  {text}")
+
+    def on_restore_trash(self) -> None:
+        sel = self.trash_box.curselection() if hasattr(self, "trash_box") else ()
+        if not sel:
+            messagebox.showinfo("最近删除", "先在列表里选一条")
+            return
+        row = self._trash_rows[sel[0]]
+        try:
+            from chat2todo.core.store import Store
+
+            st = Store(str(DB))
+            try:
+                st.restore(int(row["id"]))
+            finally:
+                st.close()
+        except Exception as exc:  # noqa: BLE001
+            self.write(f"还原失败：{exc}\n")
+            return
+        self.write(f"已还原：{row.get('text', '')[:20]}\n")
+        self._refresh_trash()
+
+    def on_clear_trash(self) -> None:
+        if not messagebox.askyesno("清空回收站", "确定永久删除回收站里的全部记录？"):
+            return
+        try:
+            from chat2todo.core.store import Store
+
+            st = Store(str(DB))
+            try:
+                n = st.clear_trash()
+            finally:
+                st.close()
+        except Exception as exc:  # noqa: BLE001
+            self.write(f"清空失败：{exc}\n")
+            return
+        self.write(f"已清空回收站（{n} 条）\n")
+        self._refresh_trash()
+
+    def on_save_trash_days(self) -> None:
+        raw = self.trash_days.get().strip()
+        try:
+            days = max(0, int(raw))
+        except ValueError:
+            messagebox.showerror("最近删除", "保留天数要填数字（0 表示永久保留）")
+            return
+        _write_section("ui", {"trash_days": days})
+        self.write(f"回收站保留天数已设为 {days} 天（0=永久）\n")
+
     def _build_page_about(self) -> None:
         p = self._pal()
         page = self._new_page()
