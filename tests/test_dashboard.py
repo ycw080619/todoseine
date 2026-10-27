@@ -11,7 +11,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from chat2todo.adapters import get_adapter
 from chat2todo.core import Store, dedupe, extract_todos
-from chat2todo.dashboard import _clamp_to_rects, _ease_out_cubic, load_items
+from chat2todo.dashboard import (_clamp_to_rects, _ease_out_cubic,
+                                 _snap_to_edges, load_items)
 
 SAMPLE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -141,6 +142,44 @@ class TestEasing(unittest.TestCase):
         self.assertGreater(_ease_out_cubic(0.5), 0.5)   # 起步快、收尾慢
         self.assertEqual(_ease_out_cubic(2), 1)          # 越界钳位
         self.assertEqual(_ease_out_cubic(-1), 0)
+
+
+class TestSnapToEdges(unittest.TestCase):
+    """边缘吸附：松手时距工作区边缘 <=spacing 就贴上去（纯函数）。"""
+
+    RECTS = [(0, 0, 1920, 1040), (1920, 0, 3840, 1080)]   # 主屏 + 右副屏
+
+    def test_snaps_to_left_edge(self) -> None:
+        self.assertEqual(_snap_to_edges(5, 300, 360, 540, self.RECTS),
+                         (0, 300))
+
+    def test_snaps_to_right_edge(self) -> None:
+        # 窗口右缘 1555+360=1915，距主屏右缘 5px → 吸到 1920-360
+        self.assertEqual(_snap_to_edges(1555, 300, 360, 540, self.RECTS),
+                         (1560, 300))
+
+    def test_snaps_to_top_and_bottom(self) -> None:
+        self.assertEqual(_snap_to_edges(400, 4, 360, 540, self.RECTS),
+                         (400, 0))
+        # 下缘 495+540=1035，距工作区底 5px → 吸到 1040-540
+        self.assertEqual(_snap_to_edges(400, 495, 360, 540, self.RECTS),
+                         (400, 500))
+
+    def test_beyond_threshold_stays(self) -> None:
+        self.assertEqual(_snap_to_edges(20, 300, 360, 540, self.RECTS),
+                         (20, 300))
+
+    def test_second_monitor_edges(self) -> None:
+        # 中心点在副屏：吸副屏左缘（1920）而不是主屏右缘
+        self.assertEqual(_snap_to_edges(1925, 300, 360, 540, self.RECTS),
+                         (1920, 300))
+
+    def test_spacing_zero_disables(self) -> None:
+        self.assertEqual(_snap_to_edges(5, 5, 360, 540, self.RECTS, 0),
+                         (5, 5))
+
+    def test_empty_rects_returns_as_is(self) -> None:
+        self.assertEqual(_snap_to_edges(5, 5, 360, 540, []), (5, 5))
 
 
 if __name__ == "__main__":

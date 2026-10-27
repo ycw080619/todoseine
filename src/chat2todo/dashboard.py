@@ -52,6 +52,10 @@ BORDER_W = 1           # 面板描边宽度（[ui] border_width，0-4）
 SHOW_CLOCK = True      # 标题栏是否显示时间（[ui] clock）
 ANIM_ON = True         # 唤出淡入 / 尺寸缓动动画（[ui] anim）
 BLUR_ON = False        # Win10+ 毛玻璃（[ui] blur，实验性，与透明色键可能冲突）
+SNAP_ON = True         # 拖动松手时吸附工作区边缘（[ui] snap）
+SNAP_PX = 8            # 吸附阈值：距边缘多少像素内吸上去（DeskBox 默认 5，范围 0-32）
+RESIZE_MARGIN = 6      # 左右边缘多宽的区域算「拖边框改宽度」
+W_MIN, W_MAX = 280, 560   # 看板宽度可调范围（与 [ui] width 的钳位一致）
 W_MINI, H_MINI = 200, 108
 PAD = 16
 TOP = 156              # 列表起始 y（顶部输入卡之下）
@@ -246,6 +250,43 @@ def _clamp_to_rects(x: int, y: int, w: int, h: int, rects,
     return nx, ny
 
 
+def _snap_to_edges(x: int, y: int, w: int, h: int, rects,
+                   spacing: int = SNAP_PX) -> Tuple[int, int]:
+    """拖动松手时，把贴近工作区边缘的窗口吸上去（对齐 DeskBox 的边缘吸附）。
+
+    只吸窗口中心点所在的显示器；中心不在任何工作区时取最近的那个。
+    spacing <= 0 或没有工作区信息时原样返回。
+    """
+    if spacing <= 0 or not rects:
+        return x, y
+    cx, cy = x + w // 2, y + h // 2
+    target = None
+    for rc in rects:
+        left, top, right, bottom = rc
+        if left <= cx < right and top <= cy < bottom:
+            target = rc
+            break
+    if target is None:
+        def _dist2(rc) -> int:
+            left, top, right, bottom = rc
+            dx = max(left - cx, 0, cx - right)
+            dy = max(top - cy, 0, cy - bottom)
+            return dx * dx + dy * dy
+
+        target = min(rects, key=_dist2)
+    left, top, right, bottom = target
+    nx, ny = x, y
+    if abs(x - left) <= spacing:
+        nx = left
+    elif abs((x + w) - right) <= spacing:
+        nx = right - w
+    if abs(y - top) <= spacing:
+        ny = top
+    elif abs((y + h) - bottom) <= spacing:
+        ny = bottom - h
+    return nx, ny
+
+
 def _apply_blur(root, enable: bool) -> bool:
     """Win10+ 毛玻璃（SetWindowCompositionAttribute / ACCENT_ENABLE_BLURBEHIND）。
 
@@ -322,23 +363,40 @@ def _pos_file():
 
 
 def load_pos():
-    """读上次的窗口位置；没有就返回 None。"""
+    """读上次的窗口状态（位置 / 宽度 / 锁定开关）；没有就返回 None。"""
     try:
         import json
 
         data = json.loads(_pos_file().read_text(encoding="utf-8"))
-        return int(data["x"]), int(data["y"])
+        out = {"x": int(data["x"]), "y": int(data["y"]),
+               "lock_pos": bool(data.get("lock_pos")),
+               "lock_size": bool(data.get("lock_size"))}
+        if data.get("w"):
+            out["w"] = max(W_MIN, min(W_MAX, int(data["w"])))
+        return out
     except Exception:  # noqa: BLE001
         return None
 
 
-def save_pos(x: int, y: int) -> None:
-    """记住窗口位置，下次启动回到这里。"""
+def save_pos(x: int, y: int, w=None, lock_pos=None, lock_size=None) -> None:
+    """记住窗口状态，下次启动回到这里。没传的键保留文件里的旧值。"""
     try:
         import json
 
-        _pos_file().parent.mkdir(parents=True, exist_ok=True)
-        _pos_file().write_text(json.dumps({"x": int(x), "y": int(y)}), encoding="utf-8")
+        f = _pos_file()
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            data = {}
+        data["x"], data["y"] = int(x), int(y)
+        if w is not None:
+            data["w"] = int(w)
+        if lock_pos is not None:
+            data["lock_pos"] = bool(lock_pos)
+        if lock_size is not None:
+            data["lock_size"] = bool(lock_size)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(data), encoding="utf-8")
     except Exception:  # noqa: BLE001
         pass
 
@@ -359,7 +417,7 @@ def _apply_ui_config() -> dict:
     import re as _re
 
     global ACCENT, PANEL, BORDER, TEXT, SUB, LINE, FIELD, ACTIVE
-    global RADIUS, W, BORDER_ON, SHOW_CLOCK, BORDER_W, ANIM_ON, BLUR_ON
+    global RADIUS, W, BORDER_ON, SHOW_CLOCK, BORDER_W, ANIM_ON, BLUR_ON, SNAP_ON
 
     ui = _ui_config()
     theme = str(ui.get("theme") or "dark").lower()
@@ -392,7 +450,7 @@ def _apply_ui_config() -> dict:
     except (TypeError, ValueError):
         pass
     try:
-        W = max(280, min(560, int(ui.get("width", W))))
+        W = max(W_MIN, min(W_MAX, int(ui.get("width", W))))
     except (TypeError, ValueError):
         pass
     try:
@@ -403,18 +461,24 @@ def _apply_ui_config() -> dict:
     SHOW_CLOCK = str(ui.get("clock", "true")).lower() not in ("false", "0", "no")
     ANIM_ON = str(ui.get("anim", "true")).lower() not in ("false", "0", "no")
     BLUR_ON = str(ui.get("blur", "false")).lower() in ("true", "1", "yes")
+    SNAP_ON = str(ui.get("snap", "true")).lower() not in ("false", "0", "no")
     return {"alpha": max(0.35, min(1.0, alpha))}
 
 
 def run(db_path: str, interval: int = 30, status: str = "pending",
         alpha: float = None, x: int = 120, y: int = 120) -> int:
     """启动悬浮看板，阻塞直到关闭。"""
+    global W
+
     ui = _apply_ui_config()
     if alpha is None:
         alpha = ui["alpha"]
     saved = load_pos()
-    if saved and (x, y) == (120, 120):
-        x, y = saved
+    if saved:
+        if (x, y) == (120, 120):
+            x, y = saved["x"], saved["y"]
+        if saved.get("w"):
+            W = saved["w"]          # 用户上次拖出来的宽度优先于配置默认值
     # 副屏拔掉/换位置后坐标可能落在虚空里，启动时钳回可见工作区
     x, y = _clamp_to_rects(x, y, W, H, _monitor_work_areas())
     if not _single_instance():
@@ -435,6 +499,9 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
         return 1
     if built is None:
         return 1
+    if saved:
+        built[2]["lock_pos"] = bool(saved.get("lock_pos"))
+        built[2]["lock_size"] = bool(saved.get("lock_size"))
     root = built[0]
     root.mainloop()
     return 0
@@ -484,6 +551,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         "undo": None,          # (todo_id, 原状态)
         "counts": (0, 0),
         "pin": False,          # False=贴桌面层，True=置顶
+        "lock_pos": False,     # 锁定位置：拖动无效（右键菜单开关）
+        "lock_size": False,    # 锁定尺寸：拖边缘改宽度无效
         "cfg_mtime": None,     # 配置修改时间，用于外观热重载
         "batch": False,        # 批量模式
         "sel": set(),          # 批量模式下选中的 todo_id
@@ -721,22 +790,102 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         menu_ref["item"] = item
         menu.tk_popup(e.x_root, e.y_root)
 
-    # ---- 窗口拖动 / 收起 ----
-    drag = {"x": 0, "y": 0, "moved": False}
+    def popup_win(e) -> None:
+        """背景右键：窗口级开关（对齐 DeskBox 悬停按钮里的位置/尺寸锁定）。"""
+        if any(t.startswith(("item", "dot", "more"))
+               for t in cv.gettags("current")):
+            return                      # 条目上的右键走 popup
+        menu.delete(0, "end")
+        lp = tk.BooleanVar(value=bool(state.get("lock_pos")))
+        ls = tk.BooleanVar(value=bool(state.get("lock_size")))
+
+        def _flip(key: str, var) -> None:
+            state[key] = bool(var.get())
+            gx, gy = _geom_pos()
+            save_pos(gx, gy, lock_pos=state["lock_pos"],
+                     lock_size=state["lock_size"])
+
+        menu.add_checkbutton(label="锁定位置", variable=lp,
+                             command=lambda: _flip("lock_pos", lp))
+        menu.add_checkbutton(label="锁定尺寸", variable=ls,
+                             command=lambda: _flip("lock_size", ls))
+        menu.tk_popup(e.x_root, e.y_root)
+
+    # ---- 窗口拖动 / 拖边缘改宽 / 收起 ----
+    drag = {"x": 0, "y": 0, "moved": False, "mode": "move",
+            "sx": 0, "sw": 0, "wx": 0}
+
+    def _geom_pos() -> Tuple[int, int]:
+        """从 geometry() 解析窗口位置（未映射时 winfo_x/y 会返回 0）。"""
+        import re as _re
+
+        m = _re.search(r"([+-]\d+)([+-]\d+)$", root.geometry())
+        return (int(m.group(1)), int(m.group(2))) if m else (120, 120)
+
+    def _apply_width(nw: int, nx: int = None) -> None:
+        """拖动边缘时的逐帧宽度反馈：只重画背景，条目重排等松手后的 render。"""
+        global W
+
+        nw = max(W_MIN, min(W_MAX, int(nw)))
+        if nw == state.get("w", W):
+            return
+        W = nw
+        state["w"] = nw
+        h = state.get("h", H)
+        if nx is None:
+            _set_size(nw, h)                       # 拖右缘：位置不动
+        else:                                      # 拖左缘：右边界保持不动
+            _gx, gy = _geom_pos()
+            root.geometry(f"{nw}x{h}+{nx}+{gy}")
+            cv.config(width=nw, height=h)
+            _draw_bg(cv, nw, h)
 
     def on_press(e) -> None:
         drag["x"], drag["y"], drag["moved"] = e.x, e.y, False
+        w_now = state.get("w", W)
+        if (not state["mini"] and not state.get("lock_size")
+                and (e.x <= RESIZE_MARGIN or e.x >= w_now - RESIZE_MARGIN)):
+            # 左右边缘 6px 内按下 = 拖边框改宽度（对齐 DeskBox 的尺寸调整）
+            drag["mode"] = "resize-l" if e.x <= RESIZE_MARGIN else "resize-r"
+            drag["sx"], drag["sw"] = e.x_root, w_now
+            drag["wx"] = _geom_pos()[0]
+        elif state.get("lock_pos"):
+            drag["mode"] = "none"                  # 位置已锁定，拖动无效
+        else:
+            drag["mode"] = "move"
         cv.focus_set()
 
     def on_move(e) -> None:
         if abs(e.x - drag["x"]) + abs(e.y - drag["y"]) > 4:
             drag["moved"] = True
-        root.geometry(f"+{e.x_root - drag['x']}+{e.y_root - drag['y']}")
+        mode = drag.get("mode", "move")
+        if mode == "none":
+            return
+        if mode == "move":
+            root.geometry(f"+{e.x_root - drag['x']}+{e.y_root - drag['y']}")
+        elif mode == "resize-r":
+            _apply_width(drag["sw"] + (e.x_root - drag["sx"]))
+        else:  # resize-l：宽度反向变化，左边界跟着指针走
+            nw = max(W_MIN, min(W_MAX, drag["sw"] - (e.x_root - drag["sx"])))
+            _apply_width(nw, nx=drag["wx"] + (drag["sw"] - nw))
+
+    def on_hover(e) -> None:
+        """指针贴近左右边缘时换成水平拖宽光标。"""
+        if state["mini"] or state.get("lock_size"):
+            cv.config(cursor="")
+            return
+        w_now = state.get("w", W)
+        edge = e.x <= RESIZE_MARGIN or e.x >= w_now - RESIZE_MARGIN
+        try:
+            cv.config(cursor="sb_h_double_arrow" if edge else "")
+        except Exception:  # noqa: BLE001
+            pass
 
     def remember_pos() -> None:
         try:
-            gx, gy = root.winfo_x(), root.winfo_y()
-            save_pos(gx, gy)
+            gx, gy = _geom_pos()
+            save_pos(gx, gy, w=W, lock_pos=state.get("lock_pos"),
+                     lock_size=state.get("lock_size"))
         except Exception:  # noqa: BLE001
             pass
 
@@ -862,6 +1011,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                              font=("Microsoft YaHei UI", 9), tags="clock")
 
     def tick() -> None:
+        global W
+
         now = time.localtime()
         week = "日一二三四五六"[now.tm_wday]
         try:
@@ -891,6 +1042,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             state["cfg_mtime"] = mtime
             if not first:
                 ui = _apply_ui_config()
+                W = state.get("w", W)    # 热重载不覆盖用户拖出来的宽度
                 try:
                     root.attributes("-alpha", ui["alpha"])
                 except Exception:  # noqa: BLE001
@@ -1218,14 +1370,33 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     cv.bind("<B1-Motion>", on_move)
 
     def on_release(_e) -> None:
-        """迷你模式下轻点任意处展开（拖动不算）。"""
+        mode = drag.get("mode", "move")
+        if mode in ("resize-l", "resize-r"):
+            gx, gy = _geom_pos()
+            save_pos(gx, gy, w=W)        # 宽度一并记住
+            render()                     # 用新宽度重排条目
+            return
+        # 迷你模式下轻点任意处展开（拖动不算）
         if state["mini"] and not drag["moved"]:
             current = cv.find_withtag("current")
             if "close" in cv.gettags(current):
                 return
             toggle_mini()
+            return
+        if mode == "move" and drag["moved"]:
+            gx, gy = _geom_pos()
+            if SNAP_ON:                  # 松手时贴边（对齐 DeskBox 边缘吸附）
+                nx, ny = _snap_to_edges(gx, gy, state.get("w", W),
+                                        state.get("h", H),
+                                        _monitor_work_areas(), SNAP_PX)
+                if (nx, ny) != (gx, gy):
+                    root.geometry(f"+{nx}+{ny}")
+                    gx, gy = nx, ny
+            save_pos(gx, gy)
 
     cv.bind("<ButtonRelease-1>", on_release)
+    cv.bind("<Motion>", on_hover)
+    cv.bind("<Button-3>", popup_win)
 
     def on_wheel(e) -> str:
         if state["mini"]:
