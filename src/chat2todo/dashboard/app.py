@@ -277,6 +277,7 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
             _today = date.today().isoformat()
             if saved.get("last_shown_date") != _today:
                 built[2]["daily_mode"] = True
+                save_pos(x, y, last_shown_date=_today)   # 记录今天已展示，避免下次启动又弹
         except Exception:
             pass
     root = built[0]
