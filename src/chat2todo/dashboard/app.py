@@ -324,6 +324,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         "hover_open": False,   # 由悬停展开的：指针离开 0.8s 自动收回
         "search": False,       # 搜索模式：顶部输入卡变成搜索框
         "query": "",           # 当前搜索词（大小写不敏感子串过滤）
+        "top_n": 5,            # 每日上限：只显示置信度最高的 5 条；None=全量
+        "top_n_full": False,   # 是否已展开全部（点「展开更多」后）
     }
 
     def housekeeping() -> None:
@@ -427,6 +429,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         state["sel"] = set()
         if state["batch"]:
             search_close()               # 批量操作条要占输入卡，先退出搜索
+        render()
+
+    def toggle_top_n() -> None:
+        """展开/收起每日上限：点了「展开更多」就 show all 高置信度条目，再点「收起」回到 top 5。"""
+        state["top_n_full"] = not state["top_n_full"]
         render()
 
     def search_open() -> None:
@@ -1225,6 +1232,15 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         if query:
             items = filter_items(items, query)
 
+        # 每日上限：默认只显示置信度最高的 top 5，减少噪音
+        _total_items = len(items)
+        _n = state.get("top_n")
+        if _n and not state.get("top_n_full") and _total_items > _n:
+            items = sorted(items, key=lambda i: (-i.confidence, i.status != "pending"))[:_n]
+            state["_top_n_hidden"] = _total_items - _n    # 隐藏了多少条（给按钮提示用）
+        else:
+            state["_top_n_hidden"] = 0
+
         h = TOP + max(1, min(len(items) or 1, 8)) * ROW + FOOT
         h = max(360, min(h, 660))
         _resize(h, W)
@@ -1534,6 +1550,29 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         cv.create_text(W - PAD - bw / 2, foot_y, text=btn_text, anchor="center", fill=SUB,
                        font=("Microsoft YaHei UI", 8), tags=("body", "clear"))
         cv.tag_bind("clear", "<Button-1>", lambda _e: clear_all())
+
+        # 每日上限：展开 / 收起按钮
+        _hidden = state.get("_top_n_hidden", 0)
+        if _hidden > 0:
+            bw2 = 84
+            _x2 = W - PAD - bw - bw2 - 8
+            _x2r = W - PAD - bw - 8
+            _rounded(cv, _x2, foot_y - 11, _x2r, foot_y + 11, 11,
+                     fill=FIELD, outline=ACCENT, width=1, tags=("body", "togglen"))
+            cv.create_text((_x2 + _x2r) / 2, foot_y,
+                           text=f"展开 {_hidden} 条全量",
+                           anchor="center", fill=ACCENT,
+                           font=("Microsoft YaHei UI", 8), tags=("body", "togglen"))
+            cv.tag_bind("togglen", "<Button-1>", lambda _e: toggle_top_n())
+        elif state.get("top_n_full") and state.get("top_n"):
+            bw2 = 56
+            _x2 = W - PAD - bw - bw2 - 8
+            _x2r = W - PAD - bw - 8
+            _rounded(cv, _x2, foot_y - 11, _x2r, foot_y + 11, 11,
+                     fill=FIELD, outline=BORDER, width=1, tags=("body", "togglen"))
+            cv.create_text((_x2 + _x2r) / 2, foot_y, text="收起", anchor="center", fill=SUB,
+                           font=("Microsoft YaHei UI", 8), tags=("body", "togglen"))
+            cv.tag_bind("togglen", "<Button-1>", lambda _e: toggle_top_n())
 
         # 输入框压在顶部卡片上：搜索模式放搜索框，批量模式两个都藏起来
         if state["batch"]:
