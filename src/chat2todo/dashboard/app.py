@@ -833,17 +833,41 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         root.destroy()
 
     def toggle_mini() -> None:
-        # 两个模式各记各的位置（DeskBox 的 CompactPlacement）：切走前存当前的，
-        # 切过去之后回那个模式自己上次的位置
+        # 两个模式各记各的位置（DeskBox 的 CompactPlacement）
         state["pos_mini" if state["mini"] else "pos_full"] = _geom_pos()
+        # 先捕获当前位置（动画起点），再切模式（render 会启动尺寸动画）
+        sx, sy = _geom_pos()
         state["mini"] = not state["mini"]
         state["offset"] = 0
-        render()
+        render()                       # _resize 会自动做尺寸帧动画
         dest = state.get("pos_mini" if state["mini"] else "pos_full")
-        if dest:
-            nx, ny = _clamp_to_rects(dest[0], dest[1], state.get("w", W),
-                                     state.get("h", H), _monitor_work_areas())
+        if not dest:
+            return
+        nx, ny = _clamp_to_rects(dest[0], dest[1],
+                                 state.get("w", W), state.get("h", H),
+                                 _monitor_work_areas())
+        # 位置动画：和 _resize 的 14 帧同步 ease_out_cubic
+        if not ANIM_ON or (abs(nx - sx) + abs(ny - sy)) < 8:
             root.geometry(f"+{nx}+{ny}")
+            return
+        state["slide_gen"] = state.get("slide_gen", 0) + 1
+        gen = state["slide_gen"]
+        frames = 14
+
+        def _step(i: int) -> None:
+            if state.get("slide_gen") != gen:
+                return
+            t = _ease_out_cubic(i / frames)
+            try:
+                root.geometry(
+                    f"+{round(sx + (nx - sx) * t)}"
+                    f"+{round(sy + (ny - sy) * t)}")
+            except Exception:  # noqa: BLE001
+                return
+            if i < frames:
+                root.after(16, lambda: _step(i + 1))
+
+        _step(1)
 
     def toggle_pin() -> None:
         state["pin"] = not bool(state.get("pin"))
@@ -1099,7 +1123,6 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             return
         state["busy"] = True
         try:
-            cv.delete("body")
             try:
                 import os as _os
 
@@ -1120,6 +1143,18 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     state["cached_items"] = todo_items
                     state["db_mtime"] = mtime
 
+            # render debounce：tab/query/条目全没变就整跳过（不 cv.delete 不重画）
+            signatures = tuple(
+                (i.todo_id, i.status, (i.text or "")[:40], bool(i.done_at))
+                for i in todo_items)
+            debounce = (state["mini"], state["tab"], state.get("query", ""),
+                        state.get("batch", False), state.get("pin", False),
+                        state.get("search", False), mtime, signatures)
+            if debounce == state.get("render_hash"):
+                return                       # 什么都没变，省一次全量重画
+            state["render_hash"] = debounce
+
+            cv.delete("body")
             unconfirmed = sum(1 for i in todo_items if i.status == "unconfirmed")
 
             if state["mini"]:

@@ -1,7 +1,8 @@
 ## [Unreleased] - 2026-10-27
 
+- mini ↔ 展开切换位置动画：原来瞬间切位置，现在启动 14 帧 ease_out_cubic 帧循环（与 _resize 的尺寸动画并行），约 220ms 整体过渡——同时动画位置和尺寸，视觉上更连贯
+- render debounce：loop 里每次调 render() 都算一次 debounce hash（mini/tab/query/batch/pin/search + db mtime + 条目 signature 列表），和上次一样就整跳过，不 cv.delete("body") 不重画；库里没新待办时 CPU 几乎零占用
 - 看板搜索结果命中关键词用强调色高亮（正文按「前缀 · 命中段 · 后缀」拆分画三段，中间 hit 用 ACCENT 色），视觉上一眼看到搜到啥
-- 看板 loop 增量刷新：render() 里先查 qq.db 的 mtime，没变就复用缓存的 items（省一次 sqlite3 连接），变了才 load_items；时钟/计数/到期 chip 每次都正常重画不受影响
 - 启动链路绝对路径加固：四个 .bat（后台同步 / dash_autostart / console / launch）全从 `py -3` 换成绝对 `C:\Program Files\Python312\python.exe` / `pythonw.exe`，各自加 `cd /d` 切仓库根目录；Windows 计划任务和开机自启不再依赖 py launcher 环境
 - 「免打扰 / 特别关心」卡片新增按群名搜索添加：底部右侧下拉列出还不在名单里的已知群（群名（号码），可敲字过滤），选中即加入名单；已在名单里的不再出现在下拉中，群名后台补抓完成后下拉同步刷新
 - 控制台「常规」页新增每周摘要卡：近 7 天新增 / 完成待办数（完成含当天勾掉的与回收站里已归档的）、最活跃群（`chat_names` 有群名显示群名，查不到用号码）；数据来自新增的 `Store.weekly_stats` 纯查询方法
