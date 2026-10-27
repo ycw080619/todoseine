@@ -1161,6 +1161,22 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 _render_mini(len(todo_items), unconfirmed)
                 return
             _render_full(todo_items, unconfirmed, err)
+            # 每行 hover 高亮：<Enter> 改 fill 为稍亮色、<Leave> 恢复；
+            # 因为 cv.delete("body") 会清掉旧绑定，所以每次 render 后重绑
+            HOVER_FILL = "#3a363d"      # Hover 时的微亮色（比 FIELD #2c2b31 亮一点）
+            for item in state.get("visible", []):
+                tag = f"row-{item.todo_id}"
+                picked = item.todo_id in state["sel"]
+                base_fill = ACTIVE if picked else FIELD
+
+                def _on_enter(_e, t=tag):
+                    cv.itemconfig(t, fill=HOVER_FILL)
+
+                def _on_leave(_e, t=tag, f=base_fill):
+                    cv.itemconfig(t, fill=f)
+
+                cv.tag_bind(tag, "<Enter>", _on_enter)
+                cv.tag_bind(tag, "<Leave>", _on_leave)
         finally:
             state["busy"] = False
 
@@ -1348,10 +1364,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     bar = ACCENTS[i % len(ACCENTS)]
                 # 卡片：圆角底 + 1px 描边，勾选框 / 色条 / 标题 / 说明 / ⋯
                 picked = item.todo_id in state["sel"]
+                row_tag = f"row-{item.todo_id}"
                 _rounded(cv, PAD, y - 26, W - PAD, y + 26, min(14, RADIUS),
                          fill=(ACTIVE if picked else FIELD),
                          outline=(ACCENT if picked else BORDER), width=(2 if picked else 1),
-                         tags="body")
+                         tags=("body", row_tag))
                 # 勾选框（点击切换完成）
                 if item.status == "done":
                     _rounded(cv, PAD + 12, y - 9, PAD + 30, y + 9, 5,
@@ -1574,7 +1591,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
     tick()
     render()
-    refresh_ms = max(5, int(interval)) * 1000
+    # 固定 5 秒轮询：render debounce 兜底——tab/query/条目全没变就整跳过，
+    # mtime 没变时 CPU 几乎零开销；同步完新待办最多 5s 就能看到
+    refresh_ms = 5000
 
     def show_remind_toast(pairs) -> None:
         """右下角弹一张到期提醒小卡片：点击唤出看板，8 秒自动消失。"""

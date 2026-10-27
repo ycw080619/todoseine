@@ -1,5 +1,7 @@
 ## [Unreleased] - 2026-10-27
 
+- 条目行 hover 高亮：鼠标移到任意待办行时背景矩形从 `#2c2b31` 微亮到 `#3a363d`，移走恢复；每行背景用 `row-{todo_id}` 稳定 tag，render 后重绑 `<Enter>/<Leave>`（cv.delete("body") 会清旧绑定）
+- loop 轮询 30s → 5s：`refresh_ms` 固定 5000ms，render debounce 兜底——条目/筛选条件/库 mtime 全没变就整跳过，mtime 没变时 CPU 几乎零占用；同步完新待办最多 5s 就能看到
 - mini ↔ 展开切换位置动画：原来瞬间切位置，现在启动 14 帧 ease_out_cubic 帧循环（与 _resize 的尺寸动画并行），约 220ms 整体过渡——同时动画位置和尺寸，视觉上更连贯
 - render debounce：loop 里每次调 render() 都算一次 debounce hash（mini/tab/query/batch/pin/search + db mtime + 条目 signature 列表），和上次一样就整跳过，不 cv.delete("body") 不重画；库里没新待办时 CPU 几乎零占用
 - 看板搜索结果命中关键词用强调色高亮（正文按「前缀 · 命中段 · 后缀」拆分画三段，中间 hit 用 ACCENT 色），视觉上一眼看到搜到啥
