@@ -1,8 +1,9 @@
 """Chat2Todo 控制台：一个窗口管所有事（tkinter，标准库实现）。
 
 功能：
+- 导入文件（txt / JSON 导出 → 入库 → AI 复核，零配置）
 - 立即同步（内置引擎只读 QQ 库 → 入库 → AI 复核，不再需要 Docker），日志实时滚动
-- 打开看板 / 导入 txt / 目录监视开关
+- 打开看板 / 截图待办 / 目录监视开关
 - 设置：Ollama 地址与模型、口令（DPAPI 加密保存）
 
 设计原则：所有重活都交给子进程，界面永远不阻塞；出错只提示，不崩溃。
@@ -830,16 +831,16 @@ class Console(tk.Tk):
         page = self._new_page()
         self._pages["console"] = page
 
-        r = self._card_row(p, page, "⟳", "立即同步",
-                           "从 QQ 数据库只读抓取 → 规则抽取 → 本地 AI 复核")
-        self.sync_btn = self._pill(p, r, "立即同步", self.on_sync, primary=True)
+        r = self._card_row(p, page, "▦", "导入文件",
+                           "选一份导出的 txt / JSON → 规则抽取 → 本地 AI 复核")
+        self.import_btn = self._pill(p, r, "导入文件", self.on_import, primary=True)
 
-        r = self._card_row(p, page, "▦", "快捷操作", "看板、导入与截图待办")
+        r = self._card_row(p, page, "⟳", "快捷操作", "看板与截图待办")
         self._pill(p, r, "打开看板", self.on_dashboard)
-        self._pill(p, r, "导入文件", self.on_import)
         self._pill(p, r, "截图待办", self.on_snap)
 
-        r = self._card_row(p, page, "⚙", "更多", "截图热键、目录监视与定时同步")
+        r = self._card_row(p, page, "⚙", "更多", "立即同步、截图热键、目录监视与定时同步")
+        self.sync_btn = self._pill(p, r, "立即同步", self.on_sync)
         self.snap_btn = self._pill(p, r, "截图热键", self.on_snap_hotkey)
         self.watch_btn = self._pill(p, r, "开始监视", self.on_watch)
         self._pill(p, r, "定时同步", self.on_schedule)
@@ -1514,7 +1515,7 @@ class Console(tk.Tk):
     def refresh_stats(self) -> None:
         s = _stat()
         if not s:
-            self.stats.config(text="还没有数据，点「立即同步」")
+            self.stats.config(text="还没有数据，点「导入文件」或「立即同步」")
         else:
             self.stats.config(
                 text=f"消息 {s['messages']} · 待办 {s['todos']} · 待处理 {s['pending']} · 待定 {s['unconfirmed']}"
@@ -1797,7 +1798,7 @@ def main(argv=None) -> int:
     except tk.TclError as exc:
         print(f"无法创建窗口：{exc}", file=sys.stderr)
         return 1
-    app.write("欢迎使用 Chat2Todo 控制台。\n点「立即同步」从 QQ 数据库抓取并清洗待办。\n")
+    app.write("欢迎使用 Chat2Todo 控制台。\n点「导入文件」选一份导出的聊天记录开始，或用「立即同步」直读 QQ 数据库。\n")
     if page:
         try:
             app._show_page(page)
