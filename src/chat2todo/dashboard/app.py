@@ -642,7 +642,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         """右键「判定理由」：弹窗展示规则分解 + 校准命中。"""
         st = _store()
         try:
-            report = st.explain_todo(item.id)
+            report = st.explain_todo(item.todo_id)
         finally:
             st.close()
 
@@ -653,7 +653,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         win.geometry(f"440x380+{root.winfo_x() + 40}+{root.winfo_y() + 60}")
 
         # 顶部标题
-        tk.Label(win, text=f"#{item.id}  {item.text}", bg=PANEL, fg=TEXT,
+        tk.Label(win, text=f"#{item.todo_id}  {item.text}", bg=PANEL, fg=TEXT,
                  anchor="w", justify="left", wraplength=410,
                  font=("Microsoft YaHei UI", 10, "bold")).pack(
             fill="x", padx=12, pady=(10, 4))
