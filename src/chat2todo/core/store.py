@@ -545,3 +545,33 @@ class Store:
 
     def _count(self, table: str) -> int:
         return self.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+    def weekly_stats(self, now: Optional[datetime] = None) -> dict:
+        """近 7 天摘要（控制台「每周摘要」卡用，纯查询不写库）。
+
+        - new：近 7 天新增待办数（按源头消息时间 ts；手动添加的 ts=添加时刻）
+        - done：近 7 天完成数（todos 里当天完成的 + 回收站里已归档的，按 done_at 日期比）
+        - top_chat：(显示名, 消息条数)，近 7 天最活跃的群；chat_names 有名用名，否则号码
+        """
+        from datetime import timedelta
+
+        now = now or datetime.now()
+        since_ts = int((now - timedelta(days=7)).timestamp())
+        since_day = (now - timedelta(days=7)).date().isoformat()
+        new = self.conn.execute(
+            "SELECT COUNT(*) FROM todos WHERE ts >= ?", (since_ts,)).fetchone()[0]
+        done = self.conn.execute(
+            "SELECT COUNT(*) FROM todos WHERE status='done' AND done_at >= ?",
+            (since_day,)).fetchone()[0]
+        done += self.conn.execute(
+            "SELECT COUNT(*) FROM trash WHERE done_at >= ? AND done_at != ''",
+            (since_day,)).fetchone()[0]
+        row = self.conn.execute(
+            "SELECT chat_id, COUNT(*) AS n FROM messages "
+            "WHERE ts >= ? AND chat_id != '' GROUP BY chat_id ORDER BY n DESC LIMIT 1",
+            (since_ts,)).fetchone()
+        top_chat = None
+        if row:
+            name = self.chat_name_map().get(row["chat_id"])
+            top_chat = (name or row["chat_id"], row["n"])
+        return {"new": new, "done": done, "top_chat": top_chat}

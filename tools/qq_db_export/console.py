@@ -934,6 +934,19 @@ class Console(tk.Tk):
                       fg=p["btn_text"], bd=0, padx=14, pady=4, cursor="hand2",
                       font=("Microsoft YaHei UI", 9)).pack(side="left")
 
+        weekly = self._weekly_stats()
+        r = self._card_row(p, page, "📊", "每周摘要",
+                           "近 7 天的待办进出与最活跃群（群名来自同步时的群名映射）")
+        if weekly:
+            bits = [f"新增 {weekly['new']} 条", f"完成 {weekly['done']} 条"]
+            if weekly.get("top_chat"):
+                bits.append(f"最活跃：{weekly['top_chat'][0]}（{weekly['top_chat'][1]} 条消息）")
+            tk.Label(r, text=" · ".join(bits), bg=p["card"], fg=p["text"],
+                     font=("Microsoft YaHei UI", 9, "bold")).pack(side="left")
+        else:
+            tk.Label(r, text="还没有数据", bg=p["card"], fg=p["muted"],
+                     font=("Microsoft YaHei UI", 9)).pack(side="left")
+
         has_key = (ROOT / "dbkey.dat").exists()
         r = self._card_row(
             p, page, "🔑", "解密口令",
@@ -1507,6 +1520,19 @@ class Console(tk.Tk):
                 store.close()
         except Exception:  # noqa: BLE001
             return 0
+
+    def _weekly_stats(self) -> dict:
+        """近 7 天摘要；库读不到时返回空。"""
+        try:
+            from chat2todo.core import Store
+
+            store = Store(str(DB))
+            try:
+                return store.weekly_stats()
+            finally:
+                store.close()
+        except Exception:  # noqa: BLE001
+            return {}
 
     def on_purge_unmarked(self) -> None:
         n = self._unmarked_count()

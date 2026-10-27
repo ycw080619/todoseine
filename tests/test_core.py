@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -328,6 +329,82 @@ class TestChatPurge(unittest.TestCase):
                 self.assertEqual(store.chat_counts("222")["messages"], 1)
                 self.assertEqual(store.search("周报"), [])
                 self.assertEqual(store.purge_unmarked()["messages"], 0)
+            finally:
+                store.close()
+
+
+class TestWeeklyStats(unittest.TestCase):
+    """每周摘要：近 7 天新增 / 完成 / 最活跃群（群名优先，查不到用号码）。"""
+
+    NOW = datetime(2026, 10, 27, 12, 0, 0)
+    TS_NOW = int(NOW.timestamp())
+
+    def _store(self, tmp: str) -> Store:
+        return Store(os.path.join(tmp, "chat.db"))
+
+    def test_counts_and_top_chat_named(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            try:
+                store.add_messages([
+                    Message(timestamp=self.TS_NOW - 1000, sender_id="1",
+                            sender_name="A", content="消息1", chat_id="111"),
+                    Message(timestamp=self.TS_NOW - 2000, sender_id="2",
+                            sender_name="B", content="消息2", chat_id="111"),
+                    Message(timestamp=self.TS_NOW - 3000, sender_id="3",
+                            sender_name="C", content="消息3", chat_id="222"),
+                    # 8 天前的老消息不计入
+                    Message(timestamp=self.TS_NOW - 8 * 86400, sender_id="1",
+                            sender_name="A", content="老消息", chat_id="333"),
+                ], session="qq")
+                store.set_chat_names({"111": "产品交流群"})
+                # 近 7 天新增 2 条待办（ts 落在窗口内），1 条老的
+                store.conn.executemany(
+                    "INSERT INTO todos (text, session, sender, ts, status) "
+                    "VALUES (?, '', '', ?, 'pending')",
+                    [("新待办1", self.TS_NOW - 100), ("新待办2", self.TS_NOW - 200),
+                     ("老待办", self.TS_NOW - 8 * 86400)])
+                # 完成：一条今天勾掉的 + 一条已归档进回收站的 + 一条 8 天前完成的
+                store.conn.execute(
+                    "INSERT INTO todos (text, session, sender, ts, status, done_at) "
+                    "VALUES ('今天完成', '', '', ?, 'done', '2026-10-27')",
+                    (self.TS_NOW - 100,))
+                store.conn.execute(
+                    "INSERT INTO trash (text, session, sender, ts, status, done_at, "
+                    "deleted_at) VALUES ('归档的', '', '', ?, 'done', '2026-10-25', "
+                    "'2026-10-26')", (self.TS_NOW - 500,))
+                store.conn.execute(
+                    "INSERT INTO todos (text, session, sender, ts, status, done_at) "
+                    "VALUES ('上周完成', '', '', ?, 'done', '2026-10-18')",
+                    (self.TS_NOW - 9 * 86400,))
+                store.conn.commit()
+
+                s = store.weekly_stats(self.NOW)
+                self.assertEqual(s["new"], 3)          # 含今天完成的那条（按 ts 算新增）
+                self.assertEqual(s["done"], 2)         # 今天完成 + 回收站里归档的
+                self.assertEqual(s["top_chat"], ("产品交流群", 2))
+            finally:
+                store.close()
+
+    def test_empty_db(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            try:
+                s = store.weekly_stats(self.NOW)
+                self.assertEqual(s, {"new": 0, "done": 0, "top_chat": None})
+            finally:
+                store.close()
+
+    def test_top_chat_falls_back_to_number(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            try:
+                store.add_messages([
+                    Message(timestamp=self.TS_NOW - 1000, sender_id="1",
+                            sender_name="A", content="消息1", chat_id="999"),
+                ], session="qq")
+                s = store.weekly_stats(self.NOW)
+                self.assertEqual(s["top_chat"], ("999", 1))
             finally:
                 store.close()
 
