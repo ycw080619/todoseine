@@ -1595,6 +1595,8 @@ class Console(tk.Tk):
                 self.syncing = False
                 self.sync_btn.config(state="normal", text="立即同步")
                 self.after(0, self.refresh_stats)
+                self.after(0, lambda: self.write(
+                    "✅ 同步完成，看板 5 秒内自动刷新新待办\n"))
 
         self.write("\n========== 开始同步 ==========\n")
         threading.Thread(target=worker, daemon=True).start()
