@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+*.spec               # PyInstaller 构建产物（机器特定，不入库）
 .venv/
 venv/
 
