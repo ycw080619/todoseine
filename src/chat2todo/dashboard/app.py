@@ -107,17 +107,20 @@ def load_pos():
         a = data.get("anchor")
         if a:
             out["anchor"] = (str(a[0]), int(a[1]), int(a[2]))
+        if data.get("last_shown_date"):
+            out["last_shown_date"] = str(data["last_shown_date"])
         return out
     except Exception:  # noqa: BLE001
         return None
 
 
 def save_pos(x: int, y: int, w=None, lock_pos=None, lock_size=None,
-             mini: bool = False, anchor=None) -> None:
+             mini: bool = False, anchor=None, last_shown_date=None) -> None:
     """记住窗口状态，下次启动回到这里。没传的键保留文件里的旧值。
 
     mini=True 时 (x, y) 写进迷你胶囊自己的坐标（mx/my），不碰展开态的。
     anchor 是 (角落, 边距x, 边距y)，换分辨率后按它还原相对位置。
+    last_shown_date 是"每日早报已展示过的日期"（YYYY-MM-DD），独立于坐标存。
     """
     try:
         import json
@@ -139,6 +142,8 @@ def save_pos(x: int, y: int, w=None, lock_pos=None, lock_size=None,
             data["lock_size"] = bool(lock_size)
         if anchor is not None:
             data["anchor"] = [anchor[0], int(anchor[1]), int(anchor[2])]
+        if last_shown_date is not None:
+            data["last_shown_date"] = str(last_shown_date)
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(data), encoding="utf-8")
     except Exception:  # noqa: BLE001
@@ -265,6 +270,15 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
         built[2]["lock_size"] = bool(saved.get("lock_size"))
         if saved.get("mx") is not None:
             built[2]["pos_mini"] = (saved["mx"], saved["my"])
+        # 每日早报：今天还没展示过 → 自动切 daily_mode
+        try:
+            from datetime import date
+
+            _today = date.today().isoformat()
+            if saved.get("last_shown_date") != _today:
+                built[2]["daily_mode"] = True
+        except Exception:
+            pass
     root = built[0]
     root.mainloop()
     return 0
@@ -326,6 +340,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         "query": "",           # 当前搜索词（大小写不敏感子串过滤）
         "top_n": 5,            # 每日上限：只显示置信度最高的 5 条；None=全量
         "top_n_full": False,   # 是否已展开全部（点「展开更多」后）
+        "daily_mode": False,   # 每日早报模式：卡片式摘要 vs 列表
     }
 
     def housekeeping() -> None:
@@ -435,6 +450,22 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         """展开/收起每日上限：点了「展开更多」就 show all 高置信度条目，再点「收起」回到 top 5。"""
         state["top_n_full"] = not state["top_n_full"]
         render()
+
+    def toggle_daily() -> None:
+        """切每日早报 / 列表视图。切到 daily_mode 写 last_shown_date，表示今天已展示过。"""
+        state["daily_mode"] = not state["daily_mode"]
+        if state["daily_mode"]:
+            _write_last_shown_today()
+        render()
+
+    def _write_last_shown_today() -> None:
+        """把今天的日期写进 dash_pos.json（表示每日早报已展示过）。"""
+        try:
+            from datetime import date
+
+            save_pos(0, 0, last_shown_date=date.today().isoformat())
+        except Exception:  # noqa: BLE001
+            pass
 
     def search_open() -> None:
         """Ctrl+F：顶部输入卡切换成搜索框（收起态先展开）。"""
@@ -1154,7 +1185,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             signatures = tuple(
                 (i.todo_id, i.status, (i.text or "")[:40], bool(i.done_at))
                 for i in todo_items)
-            debounce = (state["mini"], state["tab"], state.get("query", ""),
+            debounce = (state["mini"], state["daily_mode"], state["tab"], state.get("query", ""),
                         state.get("batch", False), state.get("pin", False),
                         state.get("search", False), mtime, signatures)
             if debounce == state.get("render_hash"):
@@ -1166,6 +1197,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
             if state["mini"]:
                 _render_mini(len(todo_items), unconfirmed)
+                return
+            if state["daily_mode"]:
+                _render_daily(todo_items, unconfirmed)
                 return
             _render_full(todo_items, unconfirmed, err)
             # 每行 hover 高亮：<Enter> 改 fill 为稍亮色、<Leave> 恢复；
@@ -1207,6 +1241,122 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             entry.place_forget()
         if sentry.winfo_ismapped():
             sentry.place_forget()
+
+    def _render_daily(todo_items: List[TodoItem], unconfirmed: int) -> None:
+        """每日早报模式：卡片式摘要，只显示最有把握的 5 条。"""
+        from datetime import datetime
+
+        # 取置信度最高的 5 条 pending/unconfirmed，已完成的今天的也留
+        pending = [i for i in todo_items if i.status != "done"]
+        done_today = [i for i in todo_items
+                      if i.status == "done" and (i.done_at or "") == datetime.now().date().isoformat()]
+        pending.sort(key=lambda i: -i.confidence)
+        cards = pending[:5] + done_today[:2]
+        cards.sort(key=lambda i: (-int(i.message_ts or 0),))
+
+        if not cards:
+            # 今天没待办 → 空状态 + 切换按钮
+            h = 360
+            _resize(h, W)
+            cv.itemconfig(clock, text="", state="hidden")
+            cv.itemconfig(date_id, text="", state="hidden")
+            tick = time.localtime()
+            cv.create_text(W / 2, 70,
+                           text=time.strftime("%m月%d日", tick)
+                           + f" 周{'日一二三四五六'[tick.tm_wday]}",
+                           anchor="center", fill=SUB,
+                           font=("Microsoft YaHei UI", 9), tags="body")
+            cv.create_text(W / 2, 120, text="🎉 今天没有待办", anchor="center",
+                           fill=TEXT, font=("Microsoft YaHei UI", 12, "bold"), tags="body")
+            cv.create_text(W / 2, 150, text="享受轻松的一天吧", anchor="center",
+                           fill=SUB, font=("Microsoft YaHei UI", 9), tags="body")
+            cv.create_text(W / 2, 200, text="全部展开", anchor="center",
+                           fill=ACCENT, font=("Microsoft YaHei UI", 10),
+                           tags=("body", "expand"))
+            cv.tag_bind("expand", "<Button-1>", lambda _e: toggle_daily())
+            cv.create_text(W - 12, 14, text="✕", anchor="e", fill=SUB,
+                           font=("Microsoft YaHei UI", 11), tags=("body", "close"))
+            return
+
+        # 自适应高度：标题 80 + 卡片数 * 70 + 底部按钮 60
+        h = 80 + len(cards) * 70 + 60
+        h = max(360, min(h, 700))
+        _resize(h, W)
+        cv.itemconfig(clock, text="", state="hidden")
+        cv.itemconfig(date_id, text="", state="hidden")
+
+        # 标题：日期 + "今天要做的"
+        tick = time.localtime()
+        _rounded(cv, PAD, 14, W - PAD, 54, 12, fill=ACCENT, outline="", tags="body")
+        cv.create_text(PAD + 10, 34,
+                       text=time.strftime("%m月%d日", tick)
+                       + f" 周{'日一二三四五六'[tick.tm_wday]}",
+                       anchor="w", fill="#0b1a22",
+                       font=("Microsoft YaHei UI", 10, "bold"), tags="body")
+        cv.create_text(W - PAD - 10, 34,
+                       text=f"今天 {len(cards)} 件事", anchor="e",
+                       fill="#0b1a22", font=("Microsoft YaHei UI", 10, "bold"), tags="body")
+        cv.create_text(W - 12, 14, text="✕", anchor="e", fill=SUB,
+                       font=("Microsoft YaHei UI", 11), tags=("body", "close"))
+
+        # 卡片循环
+        from ..core.deadline import label as due_label, parse as due_parse
+
+        state["visible"] = []
+        for idx, item in enumerate(cards):
+            y = 70 + idx * 70
+            row_tag = f"daily-{item.todo_id}"
+            color = ACCENTS[idx % len(ACCENTS)]
+            if item.status == "done":
+                bar = "#6f6a64"
+            elif item.status == "unconfirmed":
+                bar = "#ffd93d"
+            else:
+                bar = color
+            # 卡片底
+            _rounded(cv, PAD, y, W - PAD, y + 60, 12,
+                     fill=FIELD, outline=BORDER, width=1,
+                     tags=("body", row_tag))
+            # 序号圆点
+            cv.create_oval(PAD + 10, y + 8, PAD + 28, y + 26, fill=bar,
+                           outline="", tags="body")
+            cv.create_text(PAD + 19, y + 17, text=str(idx + 1),
+                           fill="#0b1a22", font=("Microsoft YaHei UI", 8, "bold"),
+                           tags="body")
+            # 正文（截断到 22 字）
+            text = item.text or ""
+            if len(text) > 22:
+                text = text[:22] + "…"
+            base_c = SUB if item.status != "pending" else TEXT
+            font = FONT_ITEM_DONE if item.status == "done" else FONT_ITEM
+            cv.create_text(PAD + 36, y + 17, text=text, anchor="w",
+                           fill=base_c, font=font, width=W - PAD * 2 - 40,
+                           tags=("body", row_tag))
+            # 截止时间 chip
+            due = due_parse(item.text)
+            chip = due_label(due)
+            chip_color = SUB
+            now_ts = time.time()
+            if due and due < now_ts:
+                chip_color = "#ffd93d"
+            elif chip.startswith("今天"):
+                chip_color = "#ffd93d"
+            cv.create_text(PAD + 36, y + 42,
+                           text=(f"🎯 {chip}" if chip else "")
+                                + (f" · {item.confidence:.1f}" if item.confidence else ""),
+                           anchor="w", fill=chip_color,
+                           font=("Microsoft YaHei UI", 7), tags="body")
+            state["visible"].append(item)
+            # 点击切换完成
+            cv.tag_bind(row_tag, "<Button-1>", lambda _e, it=item: toggle_item(it))
+
+        # 底部：全部展开按钮
+        _rounded(cv, W / 2 - 60, h - 42, W / 2 + 60, h - 22, 10,
+                 fill=FIELD, outline=BORDER, width=1, tags=("body", "expand"))
+        cv.create_text(W / 2, h - 32, text="全部展开列表", anchor="center",
+                       fill=ACCENT, font=("Microsoft YaHei UI", 9),
+                       tags=("body", "expand"))
+        cv.tag_bind("expand", "<Button-1>", lambda _e: toggle_daily())
 
     def _render_full(todo_items: List[TodoItem], unconfirmed: int, err: str) -> None:
         # 先定数据，再定窗口高度（条目少就矮一点，不浪费屏幕）
