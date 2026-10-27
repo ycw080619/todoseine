@@ -524,6 +524,32 @@ class Store:
         except Exception:  # noqa: BLE001
             return {"total": 0, "unique_keys": 0}
 
+    def calibration_insights(self) -> dict:
+        """比 calibration_stats() 更详细的可观测数据：
+
+        返回：
+            stats:          calibration_stats() 原始计数
+            active_groups:  有 >= 3 样本、已产生权重的 (chat_id, sender) 组数
+            top_tags:       权重绝对值最大的 5 个 reason_tag，[(tag, adj), ...]
+        """
+        from collections import defaultdict
+
+        stats = self.calibration_stats()
+        weights_map = self.load_feedback_weights()
+        # 所有权重拉平到 [(tag, adj)]，跨组取绝对值最大的
+        tag_adj: dict[str, float] = defaultdict(float)
+        for group_tags in weights_map.values():
+            for tag, adj in group_tags.items():
+                # 同 tag 在不同组可能都有，取绝对值最大的那次
+                if abs(adj) > abs(tag_adj[tag]):
+                    tag_adj[tag] = adj
+        top_tags = sorted(tag_adj.items(), key=lambda kv: -abs(kv[1]))[:5]
+        return {
+            "stats": stats,
+            "active_groups": len(weights_map),
+            "top_tags": top_tags,
+        }
+
     def export_calibration(self, path: str) -> int:
         """导出校准档案到 JSON。格式是这个项目专属的（有 schema 版本），别人读不懂。
 

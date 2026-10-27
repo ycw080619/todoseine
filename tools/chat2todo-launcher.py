@@ -32,12 +32,28 @@ _KNOWN_SUBCOMMANDS = {
     "import", "todos", "done", "search", "show", "export", "export-md",
     "stats", "doctor", "adapters", "dash",
     "db", "db-key", "db-import", "db-backfill",
-    "purge-chat", "purge-unmarked", "watch",
+    "purge-chat", "purge-unmarked",
+    "export-calibration", "import-calibration",
+    "watch",
 }
+
+
+_USAGE = """Chat2Todo 用法:
+  chat2todo.exe                    启动控制台 GUI
+  chat2todo.exe <subcommand>       运行 CLI 子命令（import / db-import / todos / stats / ...）
+  chat2todo.exe -h | --help        显示本帮助
+
+子命令完整列表见: chat2todo.exe doctor
+""".strip()
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+
+    # 规则 -1：--help / -h 早返回（避免 windowed exe 没 console 时弹 GUI）
+    if args and args[0] in ("--help", "-h", "-?", "/?", "help"):
+        print(_USAGE)
+        return 0
 
     # 规则 0：剥 leading Python 全局 flag（console.py 第 1585 行用了 `-u -m chat2todo`）
     while args:

@@ -623,6 +623,33 @@ def cmd_purge_unmarked(args) -> int:
     return 0
 
 
+def cmd_export_calibration(args) -> int:
+    """导出校准档案到 JSON（项目专属 schema c2t-calibration-v1）。"""
+    store = Store(_db(args))
+    try:
+        n = store.export_calibration(args.path)
+    finally:
+        store.close()
+    print(f"已导出 {n} 条校准反馈到 {args.path}")
+    return 0
+
+
+def cmd_import_calibration(args) -> int:
+    """从 JSON 导入校准档案（schema 不匹配会拒绝）。"""
+    store = Store(_db(args))
+    try:
+        result = store.import_calibration(args.path)
+    except ValueError as exc:
+        print(f"跳过：{exc}")
+        return 1
+    finally:
+        store.close()
+    st = result["total"]
+    print(f"已新增 {result['inserted']} 条校准反馈"
+          f"（共 {st.get('total', 0)} 条，已存在或 schema 不匹配的已跳过）")
+    return 0
+
+
 def _pipeline(path: str, cfg: dict, encoding: str = "") -> tuple:
     """把一份导出文件跑完 读→去重→抽取→AI 清洗，返回 (messages, todos)。"""
     src = path
@@ -803,6 +830,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="只预览，不删除")
     p.add_argument("--db", default="")
     p.set_defaults(func=cmd_purge_unmarked)
+
+    p = sub.add_parser("export-calibration", help="导出校准档案到 JSON（项目专属 schema）")
+    p.add_argument("path", help="目标 JSON 文件路径")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_export_calibration)
+
+    p = sub.add_parser("import-calibration", help="从 JSON 导入校准档案")
+    p.add_argument("path", help="JSON 档案路径")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_import_calibration)
 
     p = sub.add_parser("watch", help="监视文件夹，自动导入新导出的聊天记录")
     p.add_argument("--dir", default="", help="默认监视桌面")

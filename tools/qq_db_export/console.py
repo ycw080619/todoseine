@@ -1056,6 +1056,39 @@ class Console(tk.Tk):
             tk.Label(r, text="还没有数据", bg=p["card"], fg=p["muted"],
                      font=("Microsoft YaHei UI", 9)).pack(side="left")
 
+        cal = self._calibration_stats()
+        r = self._card_row(p, page, "🎯", "校准反馈",
+                           "标记待办为「非待办」或「完成」都自动写入，够 3 条样本后自动生效")
+        st = cal.get("stats", {})
+        total = st.get("total", 0)
+        if total == 0:
+            tk.Label(r, text="还没攒下校准。在看板或控制台把几条误抽的点掉就开始了",
+                     bg=p["card"], fg=p["muted"],
+                     font=("Microsoft YaHei UI", 9)).pack(side="left")
+        else:
+            bits = [f"累计 {total} 条",
+                    f"确认 {st.get('confirmed', 0)}",
+                    f"拒绝 {st.get('rejected', 0)}"]
+            bits.append(f"{st.get('unique_keys', 0)} 个来源")
+            if cal.get("active_groups", 0) > 0:
+                bits.append(f"其中 {cal['active_groups']} 组已够样本生效")
+            tk.Label(r, text=" · ".join(bits), bg=p["card"], fg=p["text"],
+                     font=("Microsoft YaHei UI", 9, "bold")).pack(side="left")
+            if cal.get("top_tags"):
+                # 最大纠偏：列前 2 个 |adj| 最大的 reason_tag
+                top = cal["top_tags"][:2]
+                tag_str = " / ".join(
+                    f"{t.split('·')[-1] if '·' in t else t}({('+' if a > 0 else '')}{a})"
+                    for t, a in top)
+                tk.Label(r, text=f"   最大纠偏: {tag_str}", bg=p["card"], fg=p["accent"],
+                         font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(6, 0))
+        tk.Button(r, text="导出", command=self.on_export_calibration,
+                  bg=p["btn"], fg=p["btn_text"], bd=0, padx=10, pady=3, cursor="hand2",
+                  font=("Microsoft YaHei UI", 8)).pack(side="right", padx=(6, 0))
+        tk.Button(r, text="导入", command=self.on_import_calibration,
+                  bg=p["btn"], fg=p["btn_text"], bd=0, padx=10, pady=3, cursor="hand2",
+                  font=("Microsoft YaHei UI", 8)).pack(side="right")
+
         has_key = (ROOT / "dbkey.dat").exists()
         r = self._card_row(
             p, page, "🔑", "解密口令",
@@ -1664,6 +1697,66 @@ class Console(tk.Tk):
                 store.close()
         except Exception:  # noqa: BLE001
             return {}
+
+    def _calibration_stats(self) -> dict:
+        """校准反馈可观测数据；库读不到时返回空。"""
+        try:
+            from chat2todo.core import Store
+
+            store = Store(str(DB))
+            try:
+                return store.calibration_insights()
+            finally:
+                store.close()
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def on_export_calibration(self) -> None:
+        """把当前校准档案导成 JSON（项目专属 schema，可跨设备/跨版本迁移）。"""
+        from chat2todo.core import Store
+        from datetime import datetime
+
+        path = filedialog.asksaveasfilename(
+            title="导出校准档案",
+            defaultextension=".json",
+            filetypes=[("校准档案", "*.json"), ("所有文件", "*.*")],
+            initialfile=f"c2t-calibration-{datetime.now().strftime('%Y%m%d')}.json",
+        )
+        if not path:
+            return
+        try:
+            store = Store(str(DB))
+            try:
+                n = store.export_calibration(path)
+            finally:
+                store.close()
+            messagebox.showinfo("导出成功", f"{n} 条校准反馈已导出到：\n{path}")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("导出失败", str(exc))
+
+    def on_import_calibration(self) -> None:
+        """从 JSON 导入校准档案（schema 版本不匹配会拒绝）。"""
+        from chat2todo.core import Store
+
+        path = filedialog.askopenfilename(
+            title="导入校准档案",
+            filetypes=[("校准档案", "*.json"), ("所有文件", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            store = Store(str(DB))
+            try:
+                result = store.import_calibration(path)
+            finally:
+                store.close()
+            msg = (f"导入完成：新增 {result['inserted']} 条"
+                   f"（schema 版本不匹配或已存在的已跳过）")
+            messagebox.showinfo("导入成功", msg)
+        except ValueError as exc:
+            messagebox.showwarning("跳过导入", str(exc))
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("导入失败", str(exc))
 
     def on_purge_unmarked(self) -> None:
         n = self._unmarked_count()
