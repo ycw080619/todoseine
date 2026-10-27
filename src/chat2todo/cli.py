@@ -267,7 +267,6 @@ def cmd_explain(args) -> int:
     if not report:
         print(f"没有编号为 {args.todo_id} 的待办。")
         return 1
-
     t = report["todo"]
     star = " ★重点" if report["star"] else ""
     print(f"╔═══════════════════════════════════════════════════")
@@ -318,6 +317,52 @@ def cmd_explain(args) -> int:
             mark = ">" if row["id"] == report["original_msg"]["id"] else " "
             print(f"  {mark}#{row['id']:<5} {_fmt_ts(row['ts'])} {row['sender_name']}: {row['content'][:60]}")
     return 0
+
+
+def cmd_plugins(args) -> int:
+    """扫描 tools/*/plugin.manifest.json，校验后打表。"""
+    from pathlib import Path
+    from .plugin_manifest import validate_manifest, ManifestError
+
+    # 开发态：src/chat2todo → repo；frozen：--add-data 把 tools/ 塞进了
+    #   sys._MEIPASS 临时解包目录（onefile 模式下），去那里找
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            tools_dir = Path(meipass) / "tools"
+        else:
+            tools_dir = Path(sys.executable).resolve().parent / "tools"
+    else:
+        src = Path(__file__).resolve().parent
+        tools_dir = src.parent.parent / "tools"
+
+    manifests = sorted(tools_dir.glob("*/plugin.manifest.json"))
+    if not manifests:
+        print("（未发现任何插件 manifest，把 plugin.manifest.json 放进 tools/<plugin_id>/）")
+        return 0
+
+    rows = []
+    errors = []
+    for path in manifests:
+        rel_parent = path.parent.name
+        try:
+            m = validate_manifest(str(path))
+            rows.append((m.id, m.name, m.version, m.permission_level,
+                         ", ".join(m.capabilities) or "-", rel_parent))
+        except ManifestError as exc:
+            errors.append((rel_parent, str(exc)))
+
+    if rows:
+        print(f"{'ID':<16} {'名称':<14} {'版本':<8} {'权限':<6} {'能力':<24} 位置")
+        print("─" * 72)
+        for rid, name, ver, perm, caps, loc in rows:
+            print(f"{rid:<16} {name:<14} {ver:<8} {perm:<6} {caps:<24} {loc}/")
+    if errors:
+        print()
+        print("⚠ 有 manifest 校验失败：")
+        for loc, msg in errors:
+            print(f"  tools/{loc}: {msg}")
+    return 0 if not errors else 1
 
 
 def cmd_export(args) -> int:
@@ -915,6 +960,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", default="")
     p.add_argument("--encoding", default="")
     p.set_defaults(func=cmd_watch)
+
+    p = sub.add_parser("plugins", help="扫描 tools/* 下的插件 manifest 打表")
+    p.set_defaults(func=cmd_plugins)
 
     # 兼容旧命令名
     p = sub.add_parser("export-md", help="导出 Markdown（等同于 export --format md）")

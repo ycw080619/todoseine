@@ -29,8 +29,11 @@ try {
 
     # 1. Dependencies
     Write-Host "[1/4] pip install -e . + pyinstaller"
-    Exec-Checked "pip upgrade" { python -m pip install --upgrade pip 2>$null | Out-Null }
-    Exec-Checked "pip install" { python -m pip install -e $repo pyinstaller 2>$null | Out-Null }
+    # pip 往 stderr 写 warning（如 "script not on PATH"），2>$null 吞不掉
+    # 因为 PowerShell 把 stderr 当作 NativeCommandError 收集，
+    # 用 *>&1 把 stderr 合并进 stdout 再 Out-Null
+    Exec-Checked "pip upgrade" { python -m pip install --upgrade pip *>&1 | Out-Null }
+    Exec-Checked "pip install" { python -m pip install -e $repo pyinstaller *>&1 | Out-Null }
 
     # 2. Clean
     Write-Host "[2/4] clean build/ dist/"
@@ -39,20 +42,28 @@ try {
 
     # 3. Build (all paths absolute, cwd-independent)
     Write-Host "[3/4] PyInstaller onefile windowed..."
-    python -m PyInstaller --noconfirm --onefile --windowed `
-        --name chat2todo `
-        --collect-all chat2todo `
-        --paths $consoleDir `
-        --hidden-import console `
-        --hidden-import sqlite3 `
-        --hidden-import tkinter `
-        --hidden-import tkinter.ttk `
-        --hidden-import tkinter.filedialog `
-        --hidden-import tkinter.messagebox `
-        --hidden-import tkinter.scrolledtext `
-        --hidden-import win32api `
-        --hidden-import win32crypt `
-        $launcher 2>&1 | Select-Object -Last 5
+    $toolsDir = Join-Path $repo "tools"
+    $addDataVal = Join-Path $toolsDir ""
+    $addDataVal = "$toolsDir;tools"
+    $pyArgs = @(
+        "-m", "PyInstaller",
+        "--noconfirm", "--onefile", "--windowed",
+        "--name", "chat2todo",
+        "--collect-all", "chat2todo",
+        "--paths", $consoleDir,
+        "--hidden-import", "console",
+        "--hidden-import", "sqlite3",
+        "--hidden-import", "tkinter",
+        "--hidden-import", "tkinter.ttk",
+        "--hidden-import", "tkinter.filedialog",
+        "--hidden-import", "tkinter.messagebox",
+        "--hidden-import", "tkinter.scrolledtext",
+        "--hidden-import", "win32api",
+        "--hidden-import", "win32crypt",
+        "--add-data", $addDataVal,
+        $launcher
+    )
+    & python $pyArgs 2>&1 | Select-Object -Last 5
 
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (exit $LASTEXITCODE)" }
 

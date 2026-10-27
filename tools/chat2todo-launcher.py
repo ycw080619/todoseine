@@ -34,7 +34,7 @@ _KNOWN_SUBCOMMANDS = {
     "db", "db-key", "db-import", "db-backfill",
     "purge-chat", "purge-unmarked",
     "export-calibration", "import-calibration",
-    "watch",
+    "watch", "plugins",
 }
 
 

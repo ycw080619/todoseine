@@ -28,9 +28,10 @@
   - Manifest dataclass：schema / id / name / version / permission_level / entry / capabilities / triggers
   - `validate_manifest(path_or_dict)` 严格校验：schema 不匹配拒、id 非 snake_case 拒、permission_level 非 file/db/uia 拒、必填缺失拒
   - **刻意不做文件系统检查**（manifest 可跨机器分发），只校验数据正确性
-- `tools/qq_db_export/plugin.manifest.json` + `tools/snap_todo/plugin.manifest.json`：两个现有插件的真实 manifest 实例，fields 如实填
-- `tests/test_plugin_manifest.py`：8 用例（good dict + good file + bad schema + bad perm + bad id case + missing id + default perm=file + optional defaults）
-- pytest 174 passed
+- `tools/qq_db_export/plugin.manifest.json` + `tools/snap_todo/plugin.manifest.json`：两个现有插件的真实 manifest 实例
+- **CLI 新增 `c2t plugins`**：扫描 tools/*/plugin.manifest.json，校验后打表（id / 名称 / 版本 / 权限 / 能力 / 位置），让 manifest 从"死文件"变成可演示能力
+- build.ps1 加 `--add-data <repo>/tools;tools` 把 tools 目录一起打进 exe（manifest 跟着走）；cmd_plugins 区分开发态（`src/chat2todo → tools`）和 frozen 态（`sys._MEIPASS/tools`）
+- tests/test_plugin_manifest.py 8 用例；pytest 174 passed
 
 - 新增 PyInstaller onefile windowed 打包：`tools/chat2todo-launcher.py` 单一入口同时路由控制台 GUI / CLI 子命令 / `-m chat2todo` 子进程调用 / 独立 `.py` 脚本（frozen 跳过、开发态 exec），**console.py 源码零改动**
 - 新增 `tools/build.ps1`：Set-Location + Join-Path 绝对路径拼接（cwd 无关），try/finally 恢复调用者 cwd；pip 分拆显式检查 `$LASTEXITCODE`，解决 `$ErrorActionPreference=Stop` 把 stderr 日志（pip warning / PyInstaller INFO）误判为 NativeCommandError 的问题；实测一键产出 17.87 MB onefile windowed exe
