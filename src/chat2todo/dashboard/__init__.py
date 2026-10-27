@@ -6,6 +6,7 @@
 - 滚轮翻页列表，Ctrl+滚轮调透明度
 - 迷你模式：收起成小时钟胶囊，点一下展开
 - 置顶开关、撤销上一步（Ctrl+Z）、右键菜单（完成 / 非待办 / 恢复 / 看原文）
+- 到期提醒：快到期 / 刚过期的条目在右下角弹卡片，点击唤出看板（[dash] remind 可关）
 
 设计约束（与方案第五章一致）：
 - 只读数据库；勾选/清空时才写回状态，不改原文；
@@ -26,7 +27,7 @@ from .app import (ACCENT, ACCENTS, ACTIVE, ANIM_ON, BLUR_ON, BORDER, BORDER_ON,
                   TABS, TEXT, TOP, W, W_MAX, W_MIN, W_MINI, _apply_ui_config,
                   _build, _config_mtime, _draw_bg, _pos_file, _rounded,
                   _ui_config, load_pos, run, save_pos)
-from .data import _is_today_due, load_items
+from .data import _is_today_due, due_remindable, load_items
 from .files import (_FILE_EXTS, _documents_dir, _extract_filenames,
                     _find_downloaded_file, _fmt_ts)
 from .geom import (SNAP_PX, _anchor_of, _apply_anchor, _clamp_to_rects,

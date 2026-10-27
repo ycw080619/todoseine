@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
@@ -13,7 +14,9 @@ from chat2todo.adapters import get_adapter
 from chat2todo.core import Store, dedupe, extract_todos
 from chat2todo.dashboard import (_anchor_of, _apply_anchor, _clamp_to_rects,
                                  _ease_out_cubic, _extract_filenames,
-                                 _slide_offset, _snap_to_edges, load_items)
+                                 _slide_offset, _snap_to_edges, due_remindable,
+                                 load_items)
+from chat2todo.models import TodoItem
 
 SAMPLE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -259,6 +262,33 @@ class TestExtractFilenames(unittest.TestCase):
         self.assertEqual(
             _extract_filenames(["收 数据.csv", "再发一次 数据.csv 和 图.png"]),
             ["数据.csv", "图.png"])
+
+
+class TestDueRemindable(unittest.TestCase):
+    """到期提醒的挑选逻辑：快到期 / 刚过期的未完成条目，按到期升序。"""
+
+    NOW = datetime(2026, 10, 27, 12, 0, 0)
+
+    def _item(self, text, status="pending", tid=1):
+        return TodoItem(text=text, session="s", sender="u",
+                        message_ts=0, status=status, todo_id=tid)
+
+    def test_picks_due_soon_and_overdue_sorted(self) -> None:
+        items = [self._item("今天20点前交报告", tid=1),      # 8 小时后到期
+                 self._item("10月26日交报告", tid=2),        # 已过期约 12 小时
+                 self._item("没有期限的待办", tid=3)]
+        pairs = due_remindable(items, self.NOW, within=9 * 3600)
+        self.assertEqual([p[0].todo_id for p in pairs], [2, 1])   # 过期的排最前
+
+    def test_skips_done_and_far_future(self) -> None:
+        items = [self._item("今天12点半前交报告", status="done", tid=1),
+                 self._item("下个月5号再说", tid=2)]
+        self.assertEqual(due_remindable(items, self.NOW), [])
+
+    def test_within_window(self) -> None:
+        items = [self._item("今天14点前交报告", tid=1)]     # 2 小时后
+        self.assertEqual(due_remindable(items, self.NOW, within=3600), [])
+        self.assertEqual(len(due_remindable(items, self.NOW, within=3 * 3600)), 1)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ from typing import List, Tuple
 from ..core import Store
 from ..core.hotkey import parse_hotkey
 from ..models import TodoItem
-from .data import _is_today_due, load_items
+from .data import _is_today_due, due_remindable, load_items
 from .files import _extract_filenames, _find_downloaded_file, _fmt_ts
 from .geom import (SNAP_PX, _anchor_of, _apply_anchor, _clamp_to_rects,
                    _ease_out_cubic, _monitor_work_areas, _slide_offset,
@@ -75,7 +75,7 @@ def _ui_config() -> dict:
     try:
         from pathlib import Path
 
-        from .config import load
+        from ..config import load
 
         cfg_path = Path.home() / "Chat2Todo" / "c2t.toml"
         if not cfg_path.exists():
@@ -329,7 +329,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         try:
             from pathlib import Path
 
-            from .config import load as _load_cfg
+            from ..config import load as _load_cfg
 
             days = 30
             try:
@@ -900,10 +900,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
     # 全局热键只置一个标志，真正操作在 UI 线程的 tick 里做（避免跨线程动 Tk）
     hotkey_spec = "ctrl+alt+d"
+    cfg_data = {}
     try:
         from pathlib import Path
 
-        from .config import load as _load_cfg
+        from ..config import load as _load_cfg
 
         # 注意：config.load 的默认查找路径不含 ~/Chat2Todo/c2t.toml，必须显式传
         cfg_path = Path.home() / "Chat2Todo" / "c2t.toml"
@@ -914,6 +915,15 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     parsed = parse_hotkey(hotkey_spec)
     if parsed:
         _start_hotkey(lambda: state.__setitem__("reveal", True), parsed[0], parsed[1])
+
+    # 到期提醒：[dash] remind=false 关闭；remind_within=提前多少分钟提醒（默认 60）
+    _dash_cfg = cfg_data.get("dash") or {}
+    state["remind"] = str(_dash_cfg.get("remind", "true")).lower() not in ("false", "0", "no")
+    try:
+        state["remind_within"] = max(5, int(_dash_cfg.get("remind_within", 60)))
+    except (TypeError, ValueError):
+        state["remind_within"] = 60
+    state["reminded"] = set()          # 本次运行已提醒过的 todo_id，不重复打扰
 
     def switch_tab(key: str) -> None:
         if state["tab"] == key:
@@ -1206,7 +1216,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             cv.create_text(W / 2, y + 54, text=hint, anchor="center", fill=SUB,
                            width=W - 2 * PAD, font=("Microsoft YaHei UI", 8), tags="body")
         else:
-            from .core.deadline import label as due_label, parse as due_parse
+            from ..core.deadline import label as due_label, parse as due_parse
 
             for idx, item in enumerate(visible):
                 tag = f"item{idx}"
@@ -1415,7 +1425,84 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     render()
     refresh_ms = max(5, int(interval)) * 1000
 
+    def show_remind_toast(pairs) -> None:
+        """右下角弹一张到期提醒小卡片：点击唤出看板，8 秒自动消失。"""
+        try:
+            from ..core.deadline import label as _due_label
+
+            toast = tk.Toplevel(root)
+            toast.overrideredirect(True)
+            toast.attributes("-topmost", True)
+            try:
+                toast.attributes("-alpha", 0.96)
+            except tk.TclError:
+                pass
+            body = tk.Frame(toast, bg=PANEL, highlightbackground=BORDER,
+                            highlightthickness=1)
+            body.pack(fill="both", expand=True)
+            tk.Label(body, text="⏰ 到期提醒", bg=PANEL, fg=ACCENT, anchor="w",
+                     font=("Microsoft YaHei UI", 9, "bold")).pack(
+                fill="x", padx=12, pady=(8, 2))
+            for item, due in pairs[:3]:
+                txt = item.text if len(item.text) <= 22 else item.text[:22] + "…"
+                tk.Label(body, text=f"{_due_label(due)}　{txt}", bg=PANEL, fg=TEXT,
+                         anchor="w", font=("Microsoft YaHei UI", 8)).pack(
+                    fill="x", padx=12)
+            if len(pairs) > 3:
+                tk.Label(body, text=f"还有 {len(pairs) - 3} 条…", bg=PANEL, fg=SUB,
+                         anchor="w", font=("Microsoft YaHei UI", 8)).pack(
+                    fill="x", padx=12)
+            tk.Label(body, text="点击查看看板", bg=PANEL, fg=SUB, anchor="w",
+                     font=("Microsoft YaHei UI", 7)).pack(fill="x", padx=12,
+                                                          pady=(2, 8))
+            toast.update_idletasks()
+            tw, th = toast.winfo_reqwidth(), toast.winfo_reqheight()
+            rects = _monitor_work_areas()
+            if rects:
+                _l, _t, r, b = rects[0]
+            else:
+                r, b = root.winfo_screenwidth(), root.winfo_screenheight()
+            toast.geometry(f"+{r - tw - 16}+{b - th - 16}")
+
+            def _dismiss(_evt=None) -> None:
+                try:
+                    toast.destroy()
+                except Exception:  # noqa: BLE001
+                    pass
+                reveal()
+
+            for w_ in [toast, body] + list(body.winfo_children()):
+                w_.bind("<Button-1>", _dismiss)
+
+            def _auto_close() -> None:
+                try:
+                    if toast.winfo_exists():
+                        toast.destroy()
+                except Exception:  # noqa: BLE001
+                    pass
+
+            toast.after(8000, _auto_close)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def check_reminders() -> None:
+        """每轮刷新顺手查一次：有快到期且本次运行还没提醒过的条目就弹卡片。"""
+        if not state.get("remind"):
+            return
+        try:
+            pairs = [(i, d) for i, d in due_remindable(
+                load_items(db_path, "pending"),
+                within=int(state.get("remind_within", 60)) * 60)
+                if i.todo_id not in state["reminded"]]
+            if not pairs:
+                return
+            state["reminded"].update(i.todo_id for i, _ in pairs)
+            show_remind_toast(pairs)
+        except Exception:  # noqa: BLE001
+            pass
+
     def loop() -> None:
+        check_reminders()
         render()
         root.after(refresh_ms, loop)
 

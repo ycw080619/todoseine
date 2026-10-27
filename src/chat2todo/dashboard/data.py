@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Tuple
 
 from ..core import Store
 from ..models import TodoItem
+
 
 def load_items(db_path: str, status: str = "pending") -> List[TodoItem]:
     """给界面用的纯函数：读一批待办，方便无 GUI 环境下测试。
@@ -39,10 +40,33 @@ def load_items(db_path: str, status: str = "pending") -> List[TodoItem]:
 
 def _is_today_due(item: TodoItem, now=None) -> bool:
     """今日标签：截止时间落在今天或已经过期（只看还没做完的）。"""
-    from .core.deadline import label, parse
+    from ..core.deadline import label, parse
 
     due = parse(item.text, now)
     if not due:
         return False
     text = label(due, now)
     return text == "已过期" or text.startswith("今天")
+
+
+def due_remindable(items, now=None, within: int = 3600) -> List[Tuple[TodoItem, int]]:
+    """挑出「within 秒内到期或刚过期」的未完成条目，返回 [(item, due_ts)] 按到期升序。
+
+    到期提醒专用：已完成的、解析不出截止时间的都不打扰；
+    过期太久的 deadline.parse 自己会滤掉（一天前的旧消息不翻账）。
+    """
+    from datetime import datetime
+
+    from ..core.deadline import parse
+
+    now = now or datetime.now()
+    now_ts = now.timestamp()
+    out: List[Tuple[TodoItem, int]] = []
+    for item in items:
+        if item.status == "done":
+            continue
+        due = parse(item.text, now)
+        if due and due - now_ts <= within:
+            out.append((item, due))
+    out.sort(key=lambda pair: pair[1])
+    return out
