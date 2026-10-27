@@ -502,17 +502,15 @@ class Console(tk.Tk):
                      justify="left", wraplength=520,
                      font=("Microsoft YaHei UI", 8)).pack(anchor="w", pady=(1, 0))
 
-        names = names or {}
-
-        def _label(item: str) -> str:
-            gname = names.get(item, "")
-            return f"{gname}（{item}）" if gname else item
-
-        state = {"items": []}
+        state = {"items": [], "names": dict(names or {})}
         for v in values:
             v = str(v).strip()
             if v and v not in state["items"]:
                 state["items"].append(v)
+
+        def _label(item: str) -> str:
+            gname = state["names"].get(item, "")
+            return f"{gname}（{item}）" if gname else item
 
         chips = tk.Frame(inner, bg=p["card"])
         chips.pack(fill="x", pady=(8, 0))
@@ -580,6 +578,7 @@ class Console(tk.Tk):
         tk.Label(bar, text=placeholder, bg=p["card"], fg=p["muted"],
                  font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(10, 0))
         redraw()
+        state["redraw"] = redraw
         return state
 
     # ---------- 单窗口：侧栏 + 分页 ----------
@@ -954,11 +953,44 @@ class Console(tk.Tk):
             "群号或 QQ 号；这些来源产生的待办会标记为 ★重点，看板里有独立标签页",
             _read_filter("star_groups"), "群号或 QQ 号", names=chat_names)
 
+        if not chat_names:
+            # 库里还没有群名映射：后台去 QQ 库抓一次，抓完把两张卡片上的号码换成群名
+            threading.Thread(target=self._refresh_chat_names, daemon=True).start()
+
         r = self._card_row(p, page, "⏱", "定时同步", "由 Windows 计划任务每小时触发")
         tk.Button(r, text="打开计划任务", command=lambda: subprocess.Popen(
             ["control", "schedtasks"]), bg=p["btn"], fg=p["btn_text"], bd=0,
             padx=12, pady=4, cursor="hand2",
             font=("Microsoft YaHei UI", 8)).pack(side="left")
+
+    def _refresh_chat_names(self) -> None:
+        """后台补抓群名：写库后回到主线程刷新两张过滤卡片的显示。"""
+        try:
+            from chat2todo.config import load
+            from chat2todo.core import Store
+            from chat2todo.sources.db import fetch_group_names
+
+            names = fetch_group_names(load(str(CONFIG)))
+            if not names:
+                return
+            store = Store(str(DB))
+            try:
+                store.set_chat_names(names)
+            finally:
+                store.close()
+            fresh = _read_chat_names()
+            if not fresh:
+                return
+
+            def apply() -> None:
+                for st in (self.ignore_state, self.star_state):
+                    st["names"].update(fresh)
+                    st["redraw"]()
+                self.write(f"已刷新群名 {len(fresh)} 条，列表里的群号已换成群名\n")
+
+            self.after(0, apply)
+        except Exception:  # noqa: BLE001 - 群名只是展示，失败静默
+            return
 
     # ---------- 页：AI ----------
     def _build_page_ai(self) -> None:
