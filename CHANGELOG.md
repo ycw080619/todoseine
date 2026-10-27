@@ -6,6 +6,11 @@
 - `load_feedback_weights()` 聚合出 `{(chat_id, sender_name): {reason_tag: adjustment}}`，adjustment ∈ [-0.5, 0.5]，样本数 < 3 过滤；**同标签在不同群权重独立**
 - `extract.score_message(msg, weights_map=None)` 接权重——同群同 sender 上被 reject 过的 reason_tag 降分，被 confirm 过的升分；**db-import 入口自动 load_feedback_weights() 灌进 extract_todos()**，不需要用户手动干预
 - 校准档案导出/导入：`schema: c2t-calibration-v1` 格式（项目专属），自带 chat_names；同 todo_id + action 重复导入自动跳过；schema 版本不匹配拒绝
+- **校准闭环可观测性补齐**（此前 Store 有 5 个 feedback 方法但 console.py / cli.py 零引用）：
+  - `Store.calibration_insights()` 新增：聚合 `calibration_stats + load_feedback_weights`，额外返回 active_groups（够 3 样本的来源组数）+ top_tags（|adj| 最大的 5 个 reason_tag）
+  - 控制台「常规」页每周摘要后新增 🎯 校准反馈卡：累计/确认/拒绝/来源数/已生效组数 + 最大纠偏标签；导出/导入按钮（走 filedialog，schema 不匹配弹 warning）
+  - CLI 新增 `c2t export-calibration <path>` / `c2t import-calibration <path>`
+  - launcher.py `--help/-h` 早返回，windowed exe 不再弹 GUI
 - **适配器基类 `SourceAdapter` 加 `permission_level` 字段**：`'file'`（纯文本导出）/ `'db'`（读本机聊天数据库）/ `'uia'`（UI 自动化）；给未来插件生态和 UIA 适配器预留权限分级接口
 
 ### 部署与分发：一键 exe 打包 + bat 自解析路径

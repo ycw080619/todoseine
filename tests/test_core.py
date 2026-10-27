@@ -534,6 +534,35 @@ class TestCalibration(unittest.TestCase):
             finally:
                 store.close()
 
+    def test_calibration_insights(self):
+        """calibration_insights 返回的 active_groups / top_tags 能反映权重。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "chat.db"))
+            try:
+                # 先没数据
+                ins = store.calibration_insights()
+                self.assertEqual(ins["stats"]["total"], 0)
+                self.assertEqual(ins["active_groups"], 0)
+                self.assertEqual(ins["top_tags"], [])
+
+                # 同一 (chat_id, sender) 累计 >=3 条 rejected → 权重生效
+                for i in range(3):
+                    tid = self._seed_msg_and_todo_at(
+                        store, chat_id="g2", sender="李四",
+                        content=f"记得复习章节{i}", reason="行动词:记得",
+                        ts_offset=-60 - i)
+                    store.mark_reviewed(tid, "noise")
+
+                ins = store.calibration_insights()
+                self.assertEqual(ins["stats"]["total"], 3)
+                self.assertEqual(ins["active_groups"], 1)
+                # top_tags 至少有一条，adj < 0（因为全 rejected，rate=0）
+                self.assertTrue(len(ins["top_tags"]) >= 1)
+                _, adj = ins["top_tags"][0]
+                self.assertLess(adj, 0)
+            finally:
+                store.close()
+
     def _seed_msg_and_todo_at(self, store: Store, chat_id: str, sender: str,
                               content: str, reason: str, ts_offset: int = 0) -> int:
         """_seed_msg_and_todo 的变体：允许指定时间戳偏移，避免 UNIQUE 冲突。"""
