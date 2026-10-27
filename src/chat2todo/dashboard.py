@@ -54,6 +54,7 @@ ANIM_ON = True         # 唤出淡入 / 尺寸缓动动画（[ui] anim）
 BLUR_ON = False        # Win10+ 毛玻璃（[ui] blur，实验性，与透明色键可能冲突）
 SNAP_ON = True         # 拖动松手时吸附工作区边缘（[ui] snap）
 SNAP_PX = 8            # 吸附阈值：距边缘多少像素内吸上去（DeskBox 默认 5，范围 0-32）
+HOVER_ON = False       # 迷你胶囊悬停展开 / 离开自动收回（[ui] hover_expand，默认关）
 RESIZE_MARGIN = 6      # 左右边缘多宽的区域算「拖边框改宽度」
 W_MIN, W_MAX = 280, 560   # 看板宽度可调范围（与 [ui] width 的钳位一致）
 W_MINI, H_MINI = 200, 108
@@ -287,6 +288,50 @@ def _snap_to_edges(x: int, y: int, w: int, h: int, rects,
     return nx, ny
 
 
+def _anchor_of(x: int, y: int, w: int, h: int, rect) -> Tuple[str, int, int]:
+    """窗口在 rect 里的四角锚点 + 距锚点的边距（DeskBox 的 PositionAnchor 思路）。
+
+    返回 ("lt"/"rt"/"lb"/"rb", mx, my)：中心偏哪半就锚哪条边，
+    边距是窗口到锚边的距离。分辨率不变时 _apply_anchor 能原样还原。
+    """
+    left, top, right, bottom = rect
+    cx, cy = x + w // 2, y + h // 2
+    corner = ("r" if cx >= (left + right) / 2 else "l") + \
+             ("b" if cy >= (top + bottom) / 2 else "t")
+    mx = x - left if corner[0] == "l" else right - (x + w)
+    my = y - top if corner[1] == "t" else bottom - (y + h)
+    return corner, mx, my
+
+
+def _apply_anchor(anchor, w: int, h: int, rect) -> Tuple[int, int]:
+    """按锚点 + 边距在当前工作区重算位置；换分辨率/换屏后仍贴住原来的角落。"""
+    corner, mx, my = anchor
+    left, top, right, bottom = rect
+    x = left + mx if corner[0] == "l" else right - mx - w
+    y = top + my if corner[1] == "t" else bottom - my - h
+    return x, y
+
+
+def _slide_offset(x: int, y: int, w: int, h: int, rects,
+                  dist: int = 24) -> Tuple[int, int]:
+    """唤出滑入动画的起点：朝中心点所在工作区最近的边缘方向偏移 dist 像素。"""
+    if not rects:
+        return x, y
+    cx, cy = x + w // 2, y + h // 2
+    for left, top, right, bottom in rects:
+        if left <= cx < right and top <= cy < bottom:
+            d = {"l": cx - left, "r": right - cx, "t": cy - top, "b": bottom - cy}
+            side = min(d, key=d.get)
+            if side == "l":
+                return x - dist, y
+            if side == "r":
+                return x + dist, y
+            if side == "t":
+                return x, y - dist
+            return x, y + dist
+    return x, y
+
+
 def _apply_blur(root, enable: bool) -> bool:
     """Win10+ 毛玻璃（SetWindowCompositionAttribute / ACCENT_ENABLE_BLURBEHIND）。
 
@@ -373,13 +418,23 @@ def load_pos():
                "lock_size": bool(data.get("lock_size"))}
         if data.get("w"):
             out["w"] = max(W_MIN, min(W_MAX, int(data["w"])))
+        if data.get("mx") is not None:
+            out["mx"], out["my"] = int(data["mx"]), int(data["my"])
+        a = data.get("anchor")
+        if a:
+            out["anchor"] = (str(a[0]), int(a[1]), int(a[2]))
         return out
     except Exception:  # noqa: BLE001
         return None
 
 
-def save_pos(x: int, y: int, w=None, lock_pos=None, lock_size=None) -> None:
-    """记住窗口状态，下次启动回到这里。没传的键保留文件里的旧值。"""
+def save_pos(x: int, y: int, w=None, lock_pos=None, lock_size=None,
+             mini: bool = False, anchor=None) -> None:
+    """记住窗口状态，下次启动回到这里。没传的键保留文件里的旧值。
+
+    mini=True 时 (x, y) 写进迷你胶囊自己的坐标（mx/my），不碰展开态的。
+    anchor 是 (角落, 边距x, 边距y)，换分辨率后按它还原相对位置。
+    """
     try:
         import json
 
@@ -388,13 +443,18 @@ def save_pos(x: int, y: int, w=None, lock_pos=None, lock_size=None) -> None:
             data = json.loads(f.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
             data = {}
-        data["x"], data["y"] = int(x), int(y)
+        if mini:
+            data["mx"], data["my"] = int(x), int(y)
+        else:
+            data["x"], data["y"] = int(x), int(y)
         if w is not None:
             data["w"] = int(w)
         if lock_pos is not None:
             data["lock_pos"] = bool(lock_pos)
         if lock_size is not None:
             data["lock_size"] = bool(lock_size)
+        if anchor is not None:
+            data["anchor"] = [anchor[0], int(anchor[1]), int(anchor[2])]
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(data), encoding="utf-8")
     except Exception:  # noqa: BLE001
@@ -418,6 +478,7 @@ def _apply_ui_config() -> dict:
 
     global ACCENT, PANEL, BORDER, TEXT, SUB, LINE, FIELD, ACTIVE
     global RADIUS, W, BORDER_ON, SHOW_CLOCK, BORDER_W, ANIM_ON, BLUR_ON, SNAP_ON
+    global HOVER_ON
 
     ui = _ui_config()
     theme = str(ui.get("theme") or "dark").lower()
@@ -462,6 +523,7 @@ def _apply_ui_config() -> dict:
     ANIM_ON = str(ui.get("anim", "true")).lower() not in ("false", "0", "no")
     BLUR_ON = str(ui.get("blur", "false")).lower() in ("true", "1", "yes")
     SNAP_ON = str(ui.get("snap", "true")).lower() not in ("false", "0", "no")
+    HOVER_ON = str(ui.get("hover_expand", "false")).lower() in ("true", "1", "yes")
     return {"alpha": max(0.35, min(1.0, alpha))}
 
 
@@ -475,10 +537,25 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
         alpha = ui["alpha"]
     saved = load_pos()
     if saved:
-        if (x, y) == (120, 120):
-            x, y = saved["x"], saved["y"]
         if saved.get("w"):
             W = saved["w"]          # 用户上次拖出来的宽度优先于配置默认值
+        if (x, y) == (120, 120):
+            x, y = saved["x"], saved["y"]
+            anchor = saved.get("anchor")
+            rects = _monitor_work_areas()
+            if anchor and rects:
+                # 按锚点在今天的显示器拓扑里重算位置；拓扑没变时算出来还是原坐标
+                cx, cy = x + W // 2, y + H // 2
+                target = None
+                for rc in rects:
+                    if rc[0] <= cx < rc[2] and rc[1] <= cy < rc[3]:
+                        target = rc
+                        break
+                if target is None:
+                    target = min(rects, key=lambda rc: (
+                        max(rc[0] - cx, 0, cx - rc[2]) ** 2
+                        + max(rc[1] - cy, 0, cy - rc[3]) ** 2))
+                x, y = _apply_anchor(anchor, W, H, target)
     # 副屏拔掉/换位置后坐标可能落在虚空里，启动时钳回可见工作区
     x, y = _clamp_to_rects(x, y, W, H, _monitor_work_areas())
     if not _single_instance():
@@ -502,6 +579,8 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
     if saved:
         built[2]["lock_pos"] = bool(saved.get("lock_pos"))
         built[2]["lock_size"] = bool(saved.get("lock_size"))
+        if saved.get("mx") is not None:
+            built[2]["pos_mini"] = (saved["mx"], saved["my"])
     root = built[0]
     root.mainloop()
     return 0
@@ -556,6 +635,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         "cfg_mtime": None,     # 配置修改时间，用于外观热重载
         "batch": False,        # 批量模式
         "sel": set(),          # 批量模式下选中的 todo_id
+        "pos_full": None,      # 展开态记住的位置（迷你胶囊有自己独立的位置）
+        "pos_mini": None,
+        "hover_open": False,   # 由悬停展开的：指针离开 0.8s 自动收回
     }
 
     def housekeeping() -> None:
@@ -801,9 +883,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
         def _flip(key: str, var) -> None:
             state[key] = bool(var.get())
-            gx, gy = _geom_pos()
-            save_pos(gx, gy, lock_pos=state["lock_pos"],
-                     lock_size=state["lock_size"])
+            _persist()
 
         menu.add_checkbutton(label="锁定位置", variable=lp,
                              command=lambda: _flip("lock_pos", lp))
@@ -841,6 +921,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             _draw_bg(cv, nw, h)
 
     def on_press(e) -> None:
+        _touch_raise()                 # 交互时临时抬到前面（DeskBox 的交互抬层级）
+        if state.get("hover_open"):
+            state["hover_open"] = False   # 上手操作了，就不再自动收回
         drag["x"], drag["y"], drag["moved"] = e.x, e.y, False
         w_now = state.get("w", W)
         if (not state["mini"] and not state.get("lock_size")
@@ -882,10 +965,58 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             pass
 
     def remember_pos() -> None:
+        _persist()
+
+    def on_enter(_e) -> None:
+        """悬停展开（[ui] hover_expand）：指针在迷你胶囊上停 0.4s 自动展开。"""
+        state["leave_gen"] = state.get("leave_gen", 0) + 1   # 取消待收回
+        if not HOVER_ON or not state["mini"]:
+            return
+        state["hover_gen"] = state.get("hover_gen", 0) + 1
+        gen = state["hover_gen"]
+
+        def _open() -> None:
+            if state.get("hover_gen") == gen and state["mini"]:
+                state["hover_open"] = True
+                toggle_mini()
+
+        root.after(400, _open)         # 防误触延迟（对齐 DeskBox Balanced 思路）
+
+    def on_leave(_e) -> None:
+        """悬停展开的窗口：指针离开 0.8s 自动收回迷你态。"""
+        state["hover_gen"] = state.get("hover_gen", 0) + 1   # 取消待展开
+        if not (HOVER_ON and state.get("hover_open") and not state["mini"]):
+            return
+        state["leave_gen"] = state.get("leave_gen", 0) + 1
+        gen = state["leave_gen"]
+
+        def _close() -> None:
+            if state.get("leave_gen") != gen:
+                return
+            if state["mini"] or not state.get("hover_open"):
+                return
+            if root.focus_get() is entry:   # 还在输入框里打字就不收
+                return
+            state["hover_open"] = False
+            toggle_mini()
+
+        root.after(800, _close)
+
+    def _persist() -> None:
+        """把当前窗口状态写进 dash_pos.json：按当前模式写对应坐标，顺手记四角锚点。"""
         try:
             gx, gy = _geom_pos()
+            anchor = None
+            rects = _monitor_work_areas()
+            cx, cy = gx + state.get("w", W) // 2, gy + state.get("h", H) // 2
+            for rc in rects:
+                if rc[0] <= cx < rc[2] and rc[1] <= cy < rc[3]:
+                    anchor = _anchor_of(gx, gy, state.get("w", W),
+                                        state.get("h", H), rc)
+                    break
             save_pos(gx, gy, w=W, lock_pos=state.get("lock_pos"),
-                     lock_size=state.get("lock_size"))
+                     lock_size=state.get("lock_size"),
+                     mini=bool(state["mini"]), anchor=anchor)
         except Exception:  # noqa: BLE001
             pass
 
@@ -894,9 +1025,17 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         root.destroy()
 
     def toggle_mini() -> None:
+        # 两个模式各记各的位置（DeskBox 的 CompactPlacement）：切走前存当前的，
+        # 切过去之后回那个模式自己上次的位置
+        state["pos_mini" if state["mini"] else "pos_full"] = _geom_pos()
         state["mini"] = not state["mini"]
         state["offset"] = 0
         render()
+        dest = state.get("pos_mini" if state["mini"] else "pos_full")
+        if dest:
+            nx, ny = _clamp_to_rects(dest[0], dest[1], state.get("w", W),
+                                     state.get("h", H), _monitor_work_areas())
+            root.geometry(f"+{nx}+{ny}")
 
     def toggle_pin() -> None:
         state["pin"] = not bool(state.get("pin"))
@@ -926,6 +1065,76 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
         _step(0)
 
+    def _touch_raise() -> None:
+        """交互时临时抬到前面，15 秒无操作沉回（DeskBox 的交互抬层级）。"""
+        if state.get("pin"):
+            return
+        state["fade_gen"] = state.get("fade_gen", 0) + 1   # 打断进行中的沉回淡出
+        try:
+            root.attributes("-alpha", float(state.get("alpha", 0.93)))
+        except Exception:  # noqa: BLE001
+            pass
+        state["reveal_on"] = True
+        state["reveal_until"] = time.time() + 15
+        _set_layer(root, True)
+
+    def _slide_in() -> None:
+        """唤出时从最近屏幕边缘滑入 24px（约 210ms，与淡入同步）。"""
+        if not ANIM_ON:
+            return
+        fx, fy = _geom_pos()
+        sx, sy = _slide_offset(fx, fy, state.get("w", W), state.get("h", H),
+                               _monitor_work_areas())
+        if (sx, sy) == (fx, fy):
+            return
+        state["slide_gen"] = state.get("slide_gen", 0) + 1
+        gen = state["slide_gen"]
+        frames = 13                      # ≈210ms，与 _fade_in 同步
+        root.geometry(f"+{sx}+{sy}")
+
+        def _step(i: int) -> None:
+            if state.get("slide_gen") != gen:
+                return                   # 被更新的唤出打断
+            t = _ease_out_cubic(i / frames)
+            try:
+                root.geometry(f"+{round(sx + (fx - sx) * t)}"
+                              f"+{round(sy + (fy - sy) * t)}")
+            except Exception:  # noqa: BLE001
+                return
+            if i < frames:
+                root.after(16, lambda: _step(i + 1))
+
+        _step(1)
+
+    def _sink_fade() -> None:
+        """沉回桌面层之前先淡出（约 150ms）；动画关就直接沉。"""
+        if not ANIM_ON:
+            return
+        target = float(state.get("alpha", 0.93))
+        end = max(0.35, target - 0.25)
+        state["fade_gen"] = state.get("fade_gen", 0) + 1
+        gen = state["fade_gen"]
+        frames = 9
+
+        def _step(i: int) -> None:
+            if state.get("fade_gen") != gen:
+                return                   # 被新的唤出/交互打断，由对方接管透明度
+            try:
+                root.attributes("-alpha", round(
+                    target + (end - target) * _ease_out_cubic(i / frames), 3))
+            except Exception:  # noqa: BLE001
+                return
+            if i < frames:
+                root.after(16, lambda: _step(i + 1))
+            else:
+                _set_layer(root, False)
+                try:
+                    root.attributes("-alpha", target)   # 沉到底层后恢复常态透明度
+                except Exception:  # noqa: BLE001
+                    pass
+
+        _step(0)
+
     def reveal() -> None:
         """热键唤出：每次都浮到最前；闲置 15 秒后自动沉回桌面层（钉住则常驻）。"""
         if state.get("pin"):
@@ -938,6 +1147,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         except Exception:  # noqa: BLE001
             pass
         _fade_in()
+        _slide_in()
 
     # 全局热键只置一个标志，真正操作在 UI 线程的 tick 里做（避免跨线程动 Tk）
     hotkey_spec = "ctrl+alt+d"
@@ -1055,6 +1265,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         # 唤出状态到期 → 收起；平时贴桌面层，被点浮上来也会被压回去
         if state.get("reveal_on") and time.time() >= state.get("reveal_until", 0):
             state["reveal_on"] = False
+            _sink_fade()            # 先淡出再沉回（动画关时 tick 末尾直接压层）
         # 贴桌面层时要定期压回去：否则被人点一下就会浮到前面挡住别的窗口
         if not state.get("pin") and not state.get("reveal_on"):
             try:
@@ -1372,8 +1583,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     def on_release(_e) -> None:
         mode = drag.get("mode", "move")
         if mode in ("resize-l", "resize-r"):
-            gx, gy = _geom_pos()
-            save_pos(gx, gy, w=W)        # 宽度一并记住
+            _persist()                   # 宽度一并记住
             render()                     # 用新宽度重排条目
             return
         # 迷你模式下轻点任意处展开（拖动不算）
@@ -1391,11 +1601,12 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                                         _monitor_work_areas(), SNAP_PX)
                 if (nx, ny) != (gx, gy):
                     root.geometry(f"+{nx}+{ny}")
-                    gx, gy = nx, ny
-            save_pos(gx, gy)
+            _persist()
 
     cv.bind("<ButtonRelease-1>", on_release)
     cv.bind("<Motion>", on_hover)
+    cv.bind("<Enter>", on_enter)
+    cv.bind("<Leave>", on_leave)
     cv.bind("<Button-3>", popup_win)
 
     def on_wheel(e) -> str:

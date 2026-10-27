@@ -11,7 +11,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from chat2todo.adapters import get_adapter
 from chat2todo.core import Store, dedupe, extract_todos
-from chat2todo.dashboard import (_clamp_to_rects, _ease_out_cubic,
+from chat2todo.dashboard import (_anchor_of, _apply_anchor, _clamp_to_rects,
+                                 _ease_out_cubic, _slide_offset,
                                  _snap_to_edges, load_items)
 
 SAMPLE = os.path.join(
@@ -180,6 +181,50 @@ class TestSnapToEdges(unittest.TestCase):
 
     def test_empty_rects_returns_as_is(self) -> None:
         self.assertEqual(_snap_to_edges(5, 5, 360, 540, []), (5, 5))
+
+
+class TestAnchor(unittest.TestCase):
+    """四角锚点：分辨率不变时原样还原，变了就贴住原来的角落。"""
+
+    RECT = (0, 0, 1920, 1040)
+
+    def test_roundtrip_right_bottom(self) -> None:
+        a = _anchor_of(1560, 500, 360, 540, self.RECT)
+        self.assertEqual(a, ("rb", 0, 0))
+        self.assertEqual(_apply_anchor(a, 360, 540, self.RECT), (1560, 500))
+
+    def test_roundtrip_left_top(self) -> None:
+        a = _anchor_of(20, 30, 360, 540, self.RECT)
+        self.assertEqual(a, ("lt", 20, 30))
+        self.assertEqual(_apply_anchor(a, 360, 540, self.RECT), (20, 30))
+
+    def test_follows_corner_after_resolution_change(self) -> None:
+        # 右下角贴边的窗口，换到 1600x900 的工作区后仍贴右下角
+        a = _anchor_of(1560, 500, 360, 540, self.RECT)
+        self.assertEqual(_apply_anchor(a, 360, 540, (0, 0, 1600, 900)),
+                         (1240, 360))
+
+
+class TestSlideOffset(unittest.TestCase):
+    """唤出滑入的起点：朝最近的工作区边缘偏移。"""
+
+    RECTS = [(0, 0, 1920, 1040)]
+
+    def test_slides_from_right(self) -> None:
+        # 靠右（中心距右缘 180，是最近的边）→ 从右边 24px 外滑进来
+        self.assertEqual(_slide_offset(1560, 300, 360, 540, self.RECTS),
+                         (1584, 300))
+
+    def test_slides_from_left(self) -> None:
+        self.assertEqual(_slide_offset(8, 300, 360, 540, self.RECTS),
+                         (-16, 300))
+
+    def test_slides_from_top(self) -> None:
+        self.assertEqual(_slide_offset(400, 4, 360, 540, self.RECTS),
+                         (400, -20))
+
+    def test_empty_rects_returns_as_is(self) -> None:
+        self.assertEqual(_slide_offset(5, 5, 360, 540, []), (5, 5))
 
 
 if __name__ == "__main__":

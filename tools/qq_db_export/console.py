@@ -876,6 +876,8 @@ class Console(tk.Tk):
         _ui_switch(tog_row, "毛玻璃", "blur", _read_ui_flag("blur", False))
         tk.Frame(tog_row, bg=p["card"], width=12).pack(side="left")
         _ui_switch(tog_row, "边缘吸附", "snap", _read_ui_flag("snap"))
+        tk.Frame(tog_row, bg=p["card"], width=12).pack(side="left")
+        _ui_switch(tog_row, "悬停展开", "hover_expand", _read_ui_flag("hover_expand", False))
 
 
         r = self._card_row(p, page, "⌨", "全局快捷键",
