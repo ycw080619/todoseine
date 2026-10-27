@@ -1522,7 +1522,7 @@ class Console(tk.Tk):
             )
 
     # ---------- 动作 ----------
-    def _stream(self, title: str, cmd: list[str]) -> None:
+    def _stream(self, title: str, cmd: list[str], on_done=None) -> None:
         self.write(f"\n▸ {title}\n$ {' '.join(cmd)}\n")
 
         def run() -> None:
@@ -1539,6 +1539,8 @@ class Console(tk.Tk):
                 self.write(f"  ✗ {exc}\n")
             finally:
                 self.after(0, self.refresh_stats)
+                if on_done:
+                    self.after(0, lambda: on_done())
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -1617,7 +1619,25 @@ class Console(tk.Tk):
                                           filetypes=[("文本/导出文件", "*.txt *.mht *.html *.json"), ("全部", "*.*")])
         if not path:
             return
-        self._stream("导入文件", [PY, "-m", "chat2todo", "import", path, "--db", str(DB)])
+        before_empty = not _stat()  # 导入前是否空库 → 首次导入信号
+        self._stream("导入文件", [PY, "-m", "chat2todo", "import", path, "--db", str(DB)],
+                     on_done=lambda: self._maybe_show_plugin_hint(before_empty))
+
+    def _maybe_show_plugin_hint(self, before_empty: bool) -> None:
+        """首次导入成功后弹引导卡：告诉用户有截图待办、DB 直读等进阶能力。"""
+        if not before_empty:
+            return  # 不是首次，跳过
+        s = _stat()
+        if not s or s.get("todos", 0) == 0:
+            return  # 这次导入没产出，不算成功
+        messagebox.showinfo(
+            "✅ 导入完成",
+            f"已入库 {s['messages']} 条消息，抽出 {s['todos']} 条待办。\n\n"
+            f"想更省事？试试：\n"
+            f"• 截图待办 — 点控制台「截图待办」按钮，Win+Shift+S 框一下自动识别\n"
+            f"• 定时光同步 — 进「设置」→「定时同步」，每 2 小时自动从 QQ 库抓取\n"
+            f"• DB 直读进阶 — 进「设置」填一次 QQ 口令，以后一键同步"
+        )
 
     def _unmarked_count(self) -> int:
         """未标记来源群的消息条数；读不到当 0。"""
