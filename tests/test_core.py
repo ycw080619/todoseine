@@ -563,6 +563,46 @@ class TestCalibration(unittest.TestCase):
             finally:
                 store.close()
 
+    def test_explain_todo(self):
+        """explain_todo 返回的 report 能正确分解规则 + 校准命中 + 原消息。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "chat.db"))
+            try:
+                # 空库 → None
+                self.assertIsNone(store.explain_todo(999))
+
+                # 造一条有 reason 的待办（带多 tag + 负 tag）
+                tid = self._seed_msg_and_todo_at(
+                    store, chat_id="g3", sender="王五",
+                    content="@全体成员 明天下午三点前记得交",
+                    reason="通知全体; 行动词:记得/交; 时间词:明天/三点; 指向我",
+                    ts_offset=-120)
+
+                report = store.explain_todo(tid)
+                self.assertIsNotNone(report)
+                self.assertEqual(report["sender"], "王五")
+                self.assertEqual(report["chat_id"], "g3")
+                self.assertEqual(report["threshold"], 4)
+
+                # tag 数量：reason 分号拆分 → 4 条
+                self.assertEqual(len(report["tags"]), 4)
+                # 每个 tag 都有 description（tag_meta 命中）
+                for t in report["tags"]:
+                    self.assertTrue(t["description"], t["tag"])
+                    self.assertIn("base_score", t)
+
+                # 规则总分 + 校准 Δ = final_score（因为没权重，Δ=0，final=subtotal）
+                self.assertEqual(report["subtotal"], report["final_score"])
+
+                # 原消息（chat_id 反查得到了）
+                self.assertIsNotNone(report["original_msg"])
+                self.assertEqual(report["original_msg"]["chat_id"], "g3")
+
+                # 校准权重（空的）
+                self.assertEqual(report["calib_delta"], 0.0)
+            finally:
+                store.close()
+
     def _seed_msg_and_todo_at(self, store: Store, chat_id: str, sender: str,
                               content: str, reason: str, ts_offset: int = 0) -> int:
         """_seed_msg_and_todo 的变体：允许指定时间戳偏移，避免 UNIQUE 冲突。"""

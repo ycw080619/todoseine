@@ -13,6 +13,14 @@
   - launcher.py `--help/-h` 早返回，windowed exe 不再弹 GUI
 - **适配器基类 `SourceAdapter` 加 `permission_level` 字段**：`'file'`（纯文本导出）/ `'db'`（读本机聊天数据库）/ `'uia'`（UI 自动化）；给未来插件生态和 UIA 适配器预留权限分级接口
 
+### 判定理由报告：规则分解全链路可见
+
+- `Store.explain_todo(todo_id)`：完整判定报告——规则 tag 分号拆分 + `extract.tag_meta()` 查规则描述与基础分 + 每条 tag 是否命中本组用户校准权重 + 原消息 + 前后消息上下文
+- `extract.py` 新增 `CONFIDENCE_DENOM=7.0` 归一化分母 + `_TAG_META` 查 tag → (描述, 基础分) + `tag_meta()` helper
+- CLI 新增 `c2t explain <todo_id>`：框线头部 + 原消息 + 规则分解 + 校准命中 + 上下文
+- dashboard 右键菜单「判定理由」：Toplevel 弹窗复用 explain_todo 报告，show_detail 风格
+- 实测 score_message L143 权重匹配逻辑（`if key and key in tag`）在 explain_todo 里镜像复现，确保报告与实际评分走同一套逻辑
+
 ### 部署与分发：一键 exe 打包 + bat 自解析路径
 
 - 新增 PyInstaller onefile windowed 打包：`tools/chat2todo-launcher.py` 单一入口同时路由控制台 GUI / CLI 子命令 / `-m chat2todo` 子进程调用 / 独立 `.py` 脚本（frozen 跳过、开发态 exec），**console.py 源码零改动**

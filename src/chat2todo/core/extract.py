@@ -84,6 +84,33 @@ def _noise_penalty(text: str) -> tuple:
 
 TODO_THRESHOLD = 4      # 达到即判为待办
 WEAK_THRESHOLD = 3      # 达到则标记为待确认
+CONFIDENCE_DENOM = 7.0  # 置信度 = score / 7，clamp 到 [0, 1]
+
+# reason tag → (规则描述, 基础分)，给 cmd_explain 看
+_TAG_META = {
+    "行动词":    ("命中行动词", +3),
+    "时间词":    ("命中时间词", +3),
+    "指向我":    ("@我/帮我/你来", +2),
+    "疑问":      ("语气是疑问", +1),
+    "交易/引用": ("转账/红包/回复链", +1),
+    "通知全体":  ("@全体成员", +4),
+    "通知/要求": ("通知/收取/提交类措辞", +2),
+    "疑似代码/技术闲聊": ("半角字母过半", -3),
+    "语气词":    ("哈哈/笑死/666 等玩梗", -1),
+    "重复字/玩梗": ("同字连续 ≥3", -1),
+    "过短":      ("<8 字，多半寒暄", -2),
+    "★重点":     ("特别关心来源", 0),   # 不是规则分，是展示标记
+}
+
+
+def tag_meta(tag: str) -> tuple:
+    """把 reason tag 翻译成 (描述, 基础分)。
+    tag 可能带参数（如 '行动词:记得/安排'），冒号前是 tag 名。"""
+    base = tag.split(":", 1)[0].strip()
+    meta = _TAG_META.get(base) or _TAG_META.get(tag.strip())
+    if meta:
+        return meta
+    return (tag, 0)  # 未知 tag，给 0 分
 
 
 def _hits(text: str, words: Iterable[str]) -> List[str]:

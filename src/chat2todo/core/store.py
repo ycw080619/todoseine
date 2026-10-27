@@ -550,6 +550,102 @@ class Store:
             "top_tags": top_tags,
         }
 
+    def explain_todo(self, todo_id: int) -> Optional[dict]:
+        """返回某条待办的完整判定报告（dict），CLI 与 dashboard popup 共用。
+
+        结构：
+            todo:        todos 表行（dict）
+            tags:        [{tag, description, base_score, applied, adj, adj_score}]
+            subtotal:    规则总分（不含校准）
+            calib_delta: 用户校准带来的额外分（adj*7 累加）
+            final_score: subtotal + calib_delta
+            threshold:   判为 pending 的阈值（TODO_THRESHOLD=4）
+            nearby:      原消息前后各 2 条（list[dict]）
+            weights_hit: (chat_id, sender) 这组在 weights_map 里的条目
+        """
+        import chat2todo.core.extract as _ex
+
+        row = self.conn.execute(
+            "SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
+        if not row:
+            return None
+
+        # chat_id 从 messages 反查
+        chat_id = ""
+        try:
+            mrow = self.conn.execute(
+                "SELECT chat_id FROM messages WHERE ts=? AND sender_id=? LIMIT 1",
+                (row["ts"], row["sender"])).fetchone()
+            if mrow:
+                chat_id = mrow["chat_id"] or ""
+        except Exception:  # noqa: BLE001
+            pass
+
+        sender = row["sender"] or ""
+        # 原消息内容
+        original_msg = None
+        try:
+            mrow = self.conn.execute(
+                "SELECT id, ts, sender_name, content, chat_id "
+                "FROM messages WHERE ts=? AND sender_id=? LIMIT 1",
+                (row["ts"], sender)).fetchone()
+            if mrow:
+                original_msg = dict(mrow)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 权重命中
+        weights_map = self.load_feedback_weights()
+        local_weights = weights_map.get((chat_id, sender), {})
+
+        # reason 字段分号拆分（注意 "★重点 · " 前缀单独切出来）
+        raw_reason = row["reason"] or ""
+        display_star = raw_reason.startswith("★重点")
+        clean_reason = raw_reason.replace("★重点 · ", "").replace("★重点", "").strip()
+        tag_strs = [t.strip() for t in clean_reason.split(";") if t.strip()]
+
+        subtotal = 0
+        tag_items = []
+        for tag in tag_strs:
+            desc, base = _ex.tag_meta(tag)
+            subtotal += base
+            # extract.py score_message L143: if key and key in tag
+            adj = 0.0
+            for k, v in local_weights.items():
+                if k and k in tag:
+                    adj = v
+                    break
+            tag_items.append({
+                "tag": tag,
+                "description": desc,
+                "base_score": base,
+                "adj": adj,                 # 用户校准调整 [-0.5, 0.5]
+                "adj_score": round(adj * 7.0, 2),   # 实际加到 score 上的量
+            })
+
+        calib_delta = round(sum(t["adj_score"] for t in tag_items), 2)
+        final_score = round(subtotal + calib_delta, 2)
+
+        # 附近消息（给用户看上下文）
+        nearby = self.context(original_msg["id"]) if original_msg else []
+
+        return {
+            "todo": dict(row),
+            "star": display_star,
+            "tags": tag_items,
+            "subtotal": subtotal,
+            "calib_delta": calib_delta,
+            "final_score": final_score,
+            "threshold": _ex.TODO_THRESHOLD,
+            "confidence": row["confidence"],
+            "status": row["status"],
+            "chat_id": chat_id,
+            "sender": sender,
+            "original_msg": original_msg,
+            "nearby": nearby,
+            "weights_hit": local_weights,
+        }
+
     def export_calibration(self, path: str) -> int:
         """导出校准档案到 JSON。格式是这个项目专属的（有 schema 版本），别人读不懂。
 

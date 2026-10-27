@@ -638,6 +638,67 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         tk.Button(win, text="关闭", command=win.destroy, bg="#2b2926", fg=TEXT,
                   bd=0, activebackground="#3a3733", activeforeground=TEXT).pack(pady=(0, 10))
 
+    def explain_why(item: TodoItem) -> None:
+        """右键「判定理由」：弹窗展示规则分解 + 校准命中。"""
+        st = _store()
+        try:
+            report = st.explain_todo(item.id)
+        finally:
+            st.close()
+
+        win = tk.Toplevel(root)
+        win.title("判定理由")
+        win.configure(bg=PANEL)
+        win.attributes("-topmost", True)
+        win.geometry(f"440x380+{root.winfo_x() + 40}+{root.winfo_y() + 60}")
+
+        # 顶部标题
+        tk.Label(win, text=f"#{item.id}  {item.text}", bg=PANEL, fg=TEXT,
+                 anchor="w", justify="left", wraplength=410,
+                 font=("Microsoft YaHei UI", 10, "bold")).pack(
+            fill="x", padx=12, pady=(10, 4))
+        conf = f"{report['confidence']:.2f}" if report else f"{item.confidence:.2f}"
+        status = (report or {}).get("status", item.status) if report else item.status
+        tk.Label(win,
+                 text=f"状态 {status} · 置信度 {conf}",
+                 bg=PANEL, fg=SUB, anchor="w",
+                 font=("Microsoft YaHei UI", 8)).pack(fill="x", padx=12, pady=(0, 6))
+
+        tk.Frame(win, bg=LINE, height=1).pack(fill="x", padx=12)
+
+        box = tk.Text(win, height=14, bg="#141312", fg=TEXT, bd=0, wrap="word",
+                      font=("Consolas", 9), padx=8, pady=6)
+        box.pack(fill="both", expand=True, padx=12, pady=8)
+
+        if not report:
+            box.insert("end", "这条没有判定报告（可能是手动添加或库不在）")
+        else:
+            box.insert("end", "── 规则分解 ──\n")
+            if not report["tags"]:
+                box.insert("end", "  （手动添加 / reason 为空）\n")
+            for tag in report["tags"]:
+                sign = "+" if tag["base_score"] >= 0 else ""
+                line = f"  {tag['tag']}\n     {sign}{tag['base_score']}  {tag['description']}"
+                if tag["adj"] != 0.0:
+                    a_sign = "+" if tag["adj_score"] >= 0 else ""
+                    line += f"   [校准 {a_sign}{tag['adj_score']:.1f}]"
+                box.insert("end", line + "\n")
+            box.insert("end", f"  {'─' * 30}\n")
+            s = report["subtotal"]
+            c = report["calib_delta"]
+            f = report["final_score"]
+            box.insert("end", f"  规则 {s:+.1f}  校准 {c:+.1f}  =  {f:+.1f}")
+            box.insert("end", f"   (阈值 {report['threshold']})\n\n")
+
+            if report["weights_hit"]:
+                box.insert("end", "── 本组校准权重 ──\n")
+                for k, v in report["weights_hit"].items():
+                    box.insert("end", f"  {k}: {v}\n")
+
+        box.config(state="disabled")
+        tk.Button(win, text="关闭", command=win.destroy, bg="#2b2926", fg=TEXT,
+                  bd=0, activebackground="#3a3733", activeforeground=TEXT).pack(pady=(0, 10))
+
     def edit_item(item: TodoItem) -> None:
         """点行尾「改」：弹小窗改待办文字，回车 / 保存写回数据库。"""
         win = tk.Toplevel(root)
@@ -716,6 +777,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         menu.add_separator()
         menu.add_command(label="修改内容", command=lambda: edit_item(item))
         menu.add_command(label="查看原文", command=lambda: show_detail(item))
+        menu.add_command(label="判定理由", command=lambda: explain_why(item))
         menu_ref["item"] = item
         menu.tk_popup(e.x_root, e.y_root)
 

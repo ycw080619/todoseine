@@ -29,7 +29,7 @@ if str(CONSOLE_DIR) not in sys.path:
 
 # chat2todo 已知子命令（cli.py build_parser 里注册的全部）
 _KNOWN_SUBCOMMANDS = {
-    "import", "todos", "done", "search", "show", "export", "export-md",
+    "import", "todos", "done", "search", "show", "explain", "export", "export-md",
     "stats", "doctor", "adapters", "dash",
     "db", "db-key", "db-import", "db-backfill",
     "purge-chat", "purge-unmarked",

@@ -257,6 +257,69 @@ def cmd_show(args) -> int:
     return 0
 
 
+def cmd_explain(args) -> int:
+    """打印某条待办的完整判定报告（规则 / 分数 / 用户校准命中 / 原消息上下文）。"""
+    store = Store(_db(args))
+    try:
+        report = store.explain_todo(args.todo_id)
+    finally:
+        store.close()
+    if not report:
+        print(f"没有编号为 {args.todo_id} 的待办。")
+        return 1
+
+    t = report["todo"]
+    star = " ★重点" if report["star"] else ""
+    print(f"╔═══════════════════════════════════════════════════")
+    print(f"║ 待办 #{t['id']}{star}  状态: {t['status']}  置信度: {t['confidence']:.2f}")
+    print(f"║ 发送者: {report['sender']}  会话: {t['session']}")
+    if report["chat_id"]:
+        print(f"║ 群号: {report['chat_id']}")
+    print(f"╚═══════════════════════════════════════════════════")
+    print(f"  内容: {t['text']}")
+    print()
+
+    # 原消息
+    if report["original_msg"]:
+        m = report["original_msg"]
+        print(f"── 原消息 ──")
+        print(f"  [{_fmt_ts(m['ts'])}] {m['sender_name']}: {m['content']}")
+        print()
+
+    # 规则分解
+    print(f"── 规则判定分解（总分 {report['final_score']:.1f}，阈值 {report['threshold']}）──")
+    if not report["tags"]:
+        print(f"  （这条是手动添加或 reason 字段为空）")
+    for item in report["tags"]:
+        sign = "+" if item["base_score"] >= 0 else ""
+        line = f"  {item['tag']:<22} {sign}{item['base_score']} → {item['description']}"
+        if item["adj"] != 0.0:
+            adj_sign = "+" if item["adj_score"] >= 0 else ""
+            line += f"  [校准 {adj_sign}{item['adj_score']:.1f}]"
+        print(line)
+    print(f"  {'─' * 42}")
+    subtotal_sign = "+" if report["subtotal"] >= 0 else ""
+    print(f"  规则合计 {subtotal_sign}{report['subtotal']}"
+          f"  校准 Δ{report['calib_delta']:+.1f}"
+          f"  = {report['final_score']:.1f}")
+    print()
+
+    # 校准权重
+    if report["weights_hit"]:
+        print(f"── 本组用户校准权重 ──")
+        for k, v in report["weights_hit"].items():
+            print(f"  {k}: {v}")
+        print()
+
+    # 附近消息上下文
+    if report["nearby"]:
+        print(f"── 上下文（原消息前后各 2 条）──")
+        for row in report["nearby"]:
+            mark = ">" if row["id"] == report["original_msg"]["id"] else " "
+            print(f"  {mark}#{row['id']:<5} {_fmt_ts(row['ts'])} {row['sender_name']}: {row['content'][:60]}")
+    return 0
+
+
 def cmd_export(args) -> int:
     cfg = _cfg(args)
     store = Store(cfg["db_path"])
@@ -769,6 +832,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--before", type=int, default=2)
     p.add_argument("--after", type=int, default=2)
     p.set_defaults(func=cmd_show)
+
+    p = sub.add_parser("explain", help="打印某条待办的完整判定报告")
+    p.add_argument("todo_id", type=int, help="待办编号（todos 表里的 id）")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_explain)
 
     p = sub.add_parser("export", help="导出待办（md/csv/json）")
     p.add_argument("--format", default="md", choices=["md", "csv", "json"])
