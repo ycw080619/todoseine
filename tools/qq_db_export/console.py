@@ -64,23 +64,24 @@ THEMES = {
 }
 
 
-def _read_toml_key(section_name: str, key: str) -> str:
-    """从 c2t.toml 读某段某键的字符串值；不存在返回空串。"""
+def _load_raw() -> dict:
+    """读 c2t.toml 原始内容（不合并默认值）；文件不存在或解析失败返回空。"""
     if not CONFIG.exists():
-        return ""
-    section = ""
-    for line in CONFIG.read_text(encoding="utf-8-sig").splitlines():
-        s = line.strip()
-        if not s or s.startswith("#"):
-            continue
-        if s.startswith("[") and s.endswith("]"):
-            section = s[1:-1].strip()
-            continue
-        if section == section_name and "=" in s:
-            k, v = s.split("=", 1)
-            if k.strip() == key:
-                return v.strip().strip("'\"")
-    return ""
+        return {}
+    try:
+        from chat2todo.config import _read
+
+        return _read(str(CONFIG))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _read_toml_key(section_name: str, key: str) -> str:
+    """从 c2t.toml 读某段某键的值；不存在返回空串。"""
+    val = (_load_raw().get(section_name) or {}).get(key, "")
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    return str(val)
 
 
 def _read_theme() -> str:
@@ -120,24 +121,13 @@ def _stat() -> dict:
 
 
 def _read_cfg() -> dict:
-    """极简 TOML 读取：只要 [ai] 段的几个键。"""
+    """读 [ai] 段；文件里没写的键保持设置页默认值。"""
     out = {"base_url": "http://127.0.0.1:11434/v1", "model": "qwen2.5:14b",
            "api_key": "", "enabled": False}
-    if not CONFIG.exists():
-        return out
-    section = ""
-    for line in CONFIG.read_text(encoding="utf-8-sig").splitlines():
-        s = line.strip()
-        if not s or s.startswith("#"):
-            continue
-        if s.startswith("[") and s.endswith("]"):
-            section = s[1:-1].strip()
-            continue
-        if "=" not in s:
-            continue
-        k, v = s.split("=", 1)
-        k, v = k.strip(), v.strip().strip("'\"")
-        if section == "ai" and k in out:
+    ai = _load_raw().get("ai") or {}
+    for k in out:
+        v = ai.get(k)
+        if v is not None and v != "":
             out[k] = v
     return out
 
@@ -322,7 +312,8 @@ def _read_snap_refine() -> str:
     try:
         from chat2todo.config import load
 
-        return str((load().get("snap") or {}).get("ai_refine", True))
+        return str((load(str(CONFIG) if CONFIG.exists() else None).get("snap") or {})
+                   .get("ai_refine", True))
     except Exception:  # noqa: BLE001
         return "True"
 
@@ -391,7 +382,8 @@ def _read_hotkey(section: str = "dash", key: str = "hotkey",
     try:
         from chat2todo.config import load
 
-        return (load().get(section) or {}).get(key) or default
+        cfg = load(str(CONFIG) if CONFIG.exists() else None)
+        return (cfg.get(section) or {}).get(key) or default
     except Exception:  # noqa: BLE001
         return default
 

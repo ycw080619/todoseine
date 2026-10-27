@@ -47,6 +47,18 @@ def _fmt_ts(ts: int) -> str:
         return str(ts)
 
 
+def _disp_width(text: str) -> int:
+    """显示宽度：全角字符按 2 算，否则中文群名会把表格顶歪。"""
+    import unicodedata
+
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
+
+
+def _pad(text: str, width: int) -> str:
+    """按显示宽度右补空格到 width；超长不截断，保证可读。"""
+    return text + " " * max(0, width - _disp_width(text))
+
+
 def _parse_since(text: str) -> int:
     """支持 7d / 24h / 30m；也接受纯数字（视为小时）。"""
     text = (text or "").strip().lower()
@@ -552,10 +564,10 @@ def cmd_purge_chat(args) -> int:
                 print("库里还没有消息。")
                 return 0
             names = store.chat_name_map()
-            print(f"{'chat_id':<22}{'群名':<20}{'消息':>7}{'最早':>13}{'最晚':>13}")
+            print(f"{_pad('chat_id', 22)}{_pad('群名', 20)}{'消息':>7}{'最早':>13}{'最晚':>13}")
             for r in rows:
                 name = r["chat_id"] or "(未标记)"
-                print(f"{name:<22}{names.get(r['chat_id'], ''):<20}{r['n']:>7}"
+                print(f"{_pad(name, 22)}{_pad(names.get(r['chat_id'], ''), 20)}{r['n']:>7}"
                       f"{_fmt_ts(r['first_ts']):>13}{_fmt_ts(r['last_ts']):>13}")
             return 0
         chat = (args.chat or "").strip()
