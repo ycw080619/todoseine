@@ -1,3 +1,2 @@
-﻿* text=auto eol=lf
-*.png binary
-*.db binary
+# 确保 .bat 文件始终用 CRLF 检出（cmd.exe 解析 .bat 必须 CRLF，LF 会导致文本碎片被当成命令执行）
+*.bat text eol=crlf
