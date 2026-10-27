@@ -897,9 +897,9 @@ class Console(tk.Tk):
         self.pw_entry.pack(side="left", ipady=4)
 
         self.ignore_state = self._chip_card(
-            p, page, "🚫", "免打扰群（不统计）",
-            "这些群的消息完全不参与抽取；填群号，重复添加会自动拦住",
-            _read_filter("ignore_groups"), "例如 179723007")
+            p, page, "🚫", "免打扰（不统计）",
+            "这些群号或 QQ 号（如群机器人）的消息完全不参与抽取；重复添加会自动拦住",
+            _read_filter("ignore_groups"), "群号或 QQ 号")
 
         self.star_state = self._chip_card(
             p, page, "★", "特别关心（标重点）",

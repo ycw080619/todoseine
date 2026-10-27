@@ -38,9 +38,9 @@ DB_DEFAULTS: Dict[str, Any] = {
 }
 
 FILTER_DEFAULTS = {
-    "ignore_groups": [],      # 免打扰：这些群（群号）的消息完全不统计
-    "star_groups": [],        # 特别关心：这些群的消息标记为重点
-    "star_senders": [],       # 特别关心：这些 QQ 号发的消息标记为重点
+    "ignore_groups": [],      # 免打扰：这些群号或 QQ 号（如群机器人）的消息完全不统计
+    "star_groups": [],        # 特别关心：这些群号或 QQ 号的消息标记为重点
+    "star_senders": [],       # 特别关心（旧写法）：这些 QQ 号发的消息标记为重点
 }
 
 AI_DEFAULTS: Dict[str, Any] = {    "enabled": False,

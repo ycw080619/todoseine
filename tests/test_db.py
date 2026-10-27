@@ -125,5 +125,41 @@ class TestDBPipeline(unittest.TestCase):
                 store.close()
 
 
+class TestFilters(unittest.TestCase):
+    """免打扰/特别关心：一个号码既可能命中群号，也可能命中发送者（如群机器人）。"""
+
+    ROWS = [
+        {"timestamp": 1, "sender": "111", "sender_name": "A", "content": "甲",
+         "chat_id": "9001"},
+        {"timestamp": 2, "sender": "222", "sender_name": "机器人", "content": "乙",
+         "chat_id": "9002"},
+        {"timestamp": 3, "sender": "333", "sender_name": "C", "content": "丙",
+         "chat_id": "9003"},
+    ]
+
+    def test_ignore_matches_group_or_sender(self) -> None:
+        cfg = {"filter": {"ignore_groups": ["9001", "222"]}}
+        kept, _, _ = dbmod._apply_filters(self.ROWS, cfg)
+        self.assertEqual([r["content"] for r in kept], ["丙"])
+
+    def test_keep_ignored_only_marks_without_dropping(self) -> None:
+        cfg = {"filter": {"ignore_groups": ["222"]}}
+        kept, _, _ = dbmod._apply_filters(self.ROWS, cfg, keep_ignored=True)
+        self.assertEqual(len(kept), 3)
+
+    def test_star_matches_group_or_sender(self) -> None:
+        cfg = {"filter": {"star_groups": ["9001", "222"],
+                          "star_senders": ["333"]}}
+        kept, sg, ss = dbmod._apply_filters(self.ROWS, cfg)
+        msgs = dbmod._rows_to_messages(kept, star_groups=sg, star_senders=ss)
+        self.assertEqual([m.star for m in msgs], [True, True, True])
+
+    def test_star_off_when_not_listed(self) -> None:
+        cfg = {"filter": {"star_groups": ["9001"]}}
+        kept, sg, ss = dbmod._apply_filters(self.ROWS, cfg)
+        msgs = dbmod._rows_to_messages(kept, star_groups=sg, star_senders=ss)
+        self.assertEqual([m.star for m in msgs], [True, False, False])
+
+
 if __name__ == "__main__":
     unittest.main()

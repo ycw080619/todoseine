@@ -134,7 +134,12 @@ def _rows_to_messages(rows: Iterable[Dict], star_groups: set = frozenset(),
         if not text:
             continue
         chat = str(row.get("chat_id") or "")
-        starred = bool((chat and chat in star_groups) or (str(sender) in star_senders))
+        sender_s = str(sender)
+        starred = bool(
+            (chat and chat in star_groups)
+            or (sender_s and sender_s in star_groups)
+            or (sender_s and sender_s in star_senders)
+        )
         out.append(
             Message(
                 timestamp=int(ts),
@@ -370,10 +375,12 @@ def _id_set(value: object) -> set:
 
 
 def _apply_filters(rows: Iterable[Dict], cfg: Dict, keep_ignored: bool = False):
-    """按 [filter] 做两件事：免打扰的群整条丢弃；特别关心的群/人打上 star。
+    """按 [filter] 做两件事：免打扰的来源整条丢弃；特别关心的来源打上 star。
 
-    keep_ignored=True 时只打星标、不丢免打扰群——回填历史来源群时要用，
-    因为这些群的消息早就在库里了，需要知道它们属于哪个群才能清理。
+    免打扰/特别关心都同时匹配「群号」与「发送者 QQ 号」——用户不关心这个号码
+    是群还是人（如群机器人），只要不想看就丢掉。
+    keep_ignored=True 时只打星标、不丢免打扰来源——回填历史来源群时要用，
+    因为这些消息早就在库里了，需要知道它们属于哪个群才能清理。
     """
     conf = cfg.get("filter", {}) if isinstance(cfg, dict) else {}
     ignore = _id_set(conf.get("ignore_groups", []))
@@ -386,7 +393,8 @@ def _apply_filters(rows: Iterable[Dict], cfg: Dict, keep_ignored: bool = False):
     for row in rows:
         chat = str(row.get("chat_id") or "")
         sender = str(row.get("sender") or "")
-        if chat and chat in ignore and not keep_ignored:
+        if not keep_ignored and ((chat and chat in ignore)
+                                 or (sender and sender in ignore)):
             continue
         kept.append(row)
     return kept, star_groups, star_senders
