@@ -774,6 +774,18 @@ def cmd_export_chatlab(args) -> int:
     return 0
 
 
+def cmd_serve(args) -> int:
+    """启动本地 HTTP API（仅 127.0.0.1）。"""
+    from .api import serve
+
+    try:
+        serve(_db(args), host=args.host, port=args.port, verbose=args.verbose)
+    except OSError as exc:
+        print(f"启动失败：{exc}（端口 {args.port} 可能已被占用）")
+        return 1
+    return 0
+
+
 def _pipeline(path: str, cfg: dict, encoding: str = "") -> tuple:
     """把一份导出文件跑完 读→去重→抽取→AI 清洗，返回 (messages, todos)。"""
     src = path
@@ -984,6 +996,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("plugins", help="扫描 tools/* 下的插件 manifest 打表")
     p.set_defaults(func=cmd_plugins)
+
+    p = sub.add_parser("serve", help="启动本地 HTTP API（仅 127.0.0.1）")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--db", default="")
+    p.add_argument("--verbose", action="store_true", help="打印每个请求的访问日志")
+    p.set_defaults(func=cmd_serve)
 
     # 兼容旧命令名
     p = sub.add_parser("export-md", help="导出 Markdown（等同于 export --format md）")

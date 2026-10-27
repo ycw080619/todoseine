@@ -1,5 +1,22 @@
 ## [Unreleased] - 2026-10-27
 
+### 本地 HTTP API：待办数据对外可用（B1）
+
+- 新增 `src/chat2todo/api.py`（纯标准库 `http.server`，零第三方依赖）：5 个端点
+  - `GET /health` 健康检查
+  - `GET /todos?status=&limit=` 待办列表（pending / done / noise / 空=全部）
+  - `GET /stats` 统计摘要 + 周摘要
+  - `GET /search?q=&limit=` 全文搜索消息
+  - `POST /todos/{id}/done` 标记完成（请求体可选 `{"status": "pending"|"done"|"noise"}`）
+- CLI 新增 `c2t serve [--host 127.0.0.1] [--port 8765] [--verbose]`
+- 安全边界（本地桌面工具，非公共服务）：
+  - 只绑 `127.0.0.1`，且每个请求二次校验对端地址，非本地直连返回 403
+  - 请求体上限 64 KB，只接受 JSON 对象
+  - CORS 只回本机来源（`localhost` / `127.0.0.1`），不回 `*`，避免任意网页读取本地数据
+- 每个请求各开一条 sqlite 连接，规避 `ThreadingHTTPServer` 跨线程共享连接的问题
+- `tests/test_api_server.py` 14 用例：5 个端点的正常/错误路径 + 本机判定 + CORS 白名单
+- pytest 194 passed（新增 14）；实测 `c2t serve` + curl 全端点通过
+
 ### ChatLab Format 深度对齐：双向交换
 
 - 此前只有 `read`（导入 ChatLab），没有 `write`（导出）——适配器协议是单向的
