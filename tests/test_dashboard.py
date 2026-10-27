@@ -96,6 +96,21 @@ class TestDashboardData(unittest.TestCase):
         self.assertEqual(len(texts), 4)
         self.assertEqual(len(load_items(self.db, "unconfirmed")), 1)
 
+    def test_update_text(self) -> None:
+        """看板行尾「改」走 update_text：改完能读回新内容，其它字段不动。"""
+        store = Store(self.db)
+        try:
+            store.add_todo("改之前的文字")
+            tid = [t for t in store.list_todos()
+                   if t.text == "改之前的文字"][0].todo_id
+            self.assertTrue(store.update_text(tid, "改之后的文字"))
+        finally:
+            store.close()
+        items = load_items(self.db, "pending")
+        texts = [item.text for item in items]
+        self.assertIn("改之后的文字", texts)
+        self.assertNotIn("改之前的文字", texts)
+
 
 class TestMonitorClamp(unittest.TestCase):
     """多显示器钳位：副屏拔掉后坐标不能落在虚空里（纯函数，不碰 Win32）。"""

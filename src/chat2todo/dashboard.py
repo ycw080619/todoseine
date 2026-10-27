@@ -856,6 +856,40 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         tk.Button(win, text="关闭", command=win.destroy, bg="#2b2926", fg=TEXT,
                   bd=0, activebackground="#3a3733", activeforeground=TEXT).pack(pady=(0, 10))
 
+    def edit_item(item: TodoItem) -> None:
+        """点行尾「改」：弹小窗改待办文字，回车 / 保存写回数据库。"""
+        win = tk.Toplevel(root)
+        win.title("修改待办")
+        win.configure(bg=PANEL)
+        win.attributes("-topmost", True)
+        win.resizable(False, False)
+        win.geometry(f"380x132+{root.winfo_x() + 40}+{root.winfo_y() + 60}")
+
+        tk.Label(win, text="待办内容", bg=PANEL, fg=SUB, anchor="w",
+                 font=("Microsoft YaHei UI", 8)).pack(fill="x", padx=12, pady=(10, 0))
+        var = tk.StringVar(value=item.text)
+        ent = tk.Entry(win, textvariable=var, bg=FIELD, fg=TEXT, bd=0,
+                       insertbackground=TEXT, font=("Microsoft YaHei UI", 10))
+        ent.pack(fill="x", padx=12, pady=(4, 10), ipady=5)
+        ent.focus_set()
+        ent.select_range(0, "end")
+
+        def _save() -> None:
+            text = var.get().strip()
+            if text and text != item.text:
+                st = _store()
+                try:
+                    st.update_text(item.todo_id, text)
+                finally:
+                    st.close()
+                render()
+            win.destroy()
+
+        ent.bind("<Return>", lambda _e: _save())
+        tk.Button(win, text="保存", command=_save, bg=ACCENT, fg="#0b1a22", bd=0,
+                  activebackground=ACCENT, activeforeground="#0b1a22",
+                  font=("Microsoft YaHei UI", 9)).pack(pady=(0, 10))
+
     # ---- 右键菜单 ----
     menu = tk.Menu(root, tearoff=0, bg="#2b2926", fg=TEXT, bd=0,
                    activebackground=ACTIVE, activeforeground=TEXT)
@@ -868,13 +902,14 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             menu.add_command(label="恢复为待办", command=lambda: _mark(item, "pending"))
         menu.add_command(label="标为非待办", command=lambda: _mark(item, "noise"))
         menu.add_separator()
+        menu.add_command(label="修改内容", command=lambda: edit_item(item))
         menu.add_command(label="查看原文", command=lambda: show_detail(item))
         menu_ref["item"] = item
         menu.tk_popup(e.x_root, e.y_root)
 
     def popup_win(e) -> None:
         """背景右键：窗口级开关（对齐 DeskBox 悬停按钮里的位置/尺寸锁定）。"""
-        if any(t.startswith(("item", "dot", "more"))
+        if any(t.startswith(("item", "dot", "more", "edit"))
                for t in cv.gettags("current")):
             return                      # 条目上的右键走 popup
         menu.delete(0, "end")
@@ -1520,21 +1555,28 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 cv.create_text(PAD + 48, y + 10, text=" · ".join(meta_bits), anchor="w",
                                fill=meta_color, font=("Microsoft YaHei UI", 7),
                                tags=("body", tag))
-                cv.create_text(W - PAD - 14, y - 8, text="⋯", anchor="e", fill="#6f6a64",
+                cv.create_text(W - PAD - 34, y - 8, text="⋯", anchor="e", fill="#6f6a64",
                                font=("Microsoft YaHei UI", 9), tags=("body", f"more{idx}"))
+                # 行尾最右：修改按钮（点一下弹小窗改文字）
+                cv.create_text(W - PAD - 12, y - 8, text="改", anchor="e", fill="#6f6a64",
+                               font=("Microsoft YaHei UI", 8), tags=("body", f"edit{idx}"))
 
                 if state["batch"]:
                     cv.tag_bind(tag, "<Button-1>", lambda _e, it=item: toggle_sel(it))
                     cv.tag_bind(f"dot{idx}", "<Button-1>", lambda _e, it=item: toggle_sel(it))
                 else:
-                    cv.tag_bind(tag, "<Button-1>", lambda _e, it=item: show_detail(it))
+                    # 双击定位原文出处（单击文字不再弹窗，避免误触）
+                    cv.tag_bind(tag, "<Double-Button-1>",
+                                lambda _e, it=item: show_detail(it))
                     cv.tag_bind(f"dot{idx}", "<Button-1>",
                                 lambda _e, it=item: toggle_item(it))
                 cv.tag_bind(f"more{idx}", "<Button-1>",
                             lambda e, it=item: popup(e, it))
+                cv.tag_bind(f"edit{idx}", "<Button-1>",
+                            lambda _e, it=item: edit_item(it))
 
 
-                for t in (tag, f"dot{idx}", f"more{idx}"):
+                for t in (tag, f"dot{idx}", f"more{idx}", f"edit{idx}"):
                     cv.tag_bind(t, "<Button-3>", lambda e, it=item: popup(e, it))
                 y += ROW
 

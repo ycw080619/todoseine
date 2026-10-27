@@ -321,6 +321,13 @@ class Store:
         self.conn.commit()
         return cur.rowcount > 0
 
+    def update_text(self, todo_id: int, text: str) -> bool:
+        """修改待办内容文本（看板行尾「改」按钮 / 右键菜单「修改内容」）。"""
+        cur = self.conn.execute(
+            "UPDATE todos SET text=? WHERE id=?", (text, todo_id))
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def unreviewed_todos(self, limit: int = 0) -> List[TodoItem]:
         """还没被 AI 复核过的待办（增量复核用，避免每次全量重跑）。"""
         sql = "SELECT * FROM todos WHERE reviewed = 0 ORDER BY ts DESC"
