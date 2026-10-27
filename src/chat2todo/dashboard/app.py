@@ -1101,12 +1101,24 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         try:
             cv.delete("body")
             try:
-                todo_items = load_items(db_path, "pending")
-            except Exception as exc:  # noqa: BLE001 - 界面不能因为读库失败就崩
-                todo_items = []
-                err = str(exc)
+                import os as _os
+
+                mtime = _os.stat(db_path).st_mtime
+            except Exception:  # noqa: BLE001
+                mtime = 0
+            cached = state.get("cached_items")
+            if cached is not None and mtime == state.get("db_mtime"):
+                todo_items = cached        # 库没变就复用缓存，省一次 sqlite 连接
             else:
-                err = ""
+                try:
+                    todo_items = load_items(db_path, "pending")
+                except Exception as exc:  # noqa: BLE001 - 界面不能因为读库失败就崩
+                    todo_items = []
+                    err = str(exc)
+                else:
+                    err = ""
+                    state["cached_items"] = todo_items
+                    state["db_mtime"] = mtime
 
             unconfirmed = sum(1 for i in todo_items if i.status == "unconfirmed")
 
@@ -1325,10 +1337,31 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 body = item.text if len(item.text) <= limit else item.text[:limit] + "…"
                 if "★重点" in (item.reason or ""):
                     body = "★ " + body
-                cv.create_text(PAD + 48, y - 9, text=body, anchor="w",
-                               fill=(SUB if item.status != "pending" else TEXT),
-                               font=(FONT_ITEM_DONE if item.status == "done" else FONT_ITEM),
-                               tags=("body", tag))
+                base_c = SUB if item.status != "pending" else TEXT
+                use_font = FONT_ITEM_DONE if item.status == "done" else FONT_ITEM
+                # 搜索模式下，把正文里命中关键词那段用强调色高亮
+                q = (state.get("query") or "").strip()
+                x_t, y_t = PAD + 48, y - 9
+                if q:
+                    lower = body.lower()
+                    idx = lower.find(q.lower())
+                    if idx >= 0:
+                        before = body[:idx]
+                        hit = body[idx:idx + len(q)]
+                        after = body[idx + len(q):]
+                        cur = x_t
+                        for seg, color in ((before, base_c), (hit, ACCENT), (after, base_c)):
+                            if not seg:
+                                continue
+                            cv.create_text(cur, y_t, text=seg, anchor="w", fill=color,
+                                           font=use_font, tags=("body", tag))
+                            cur += use_font.measure(seg)
+                    else:
+                        cv.create_text(x_t, y_t, text=body, anchor="w", fill=base_c,
+                                       font=use_font, tags=("body", tag))
+                else:
+                    cv.create_text(x_t, y_t, text=body, anchor="w", fill=base_c,
+                                   font=use_font, tags=("body", tag))
                 # 第二行：状态 / 到期说明
                 meta_bits = []
                 if item.status == "unconfirmed":
