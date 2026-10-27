@@ -8,7 +8,10 @@
 - 校准档案导出/导入：`schema: c2t-calibration-v1` 格式（项目专属），自带 chat_names；同 todo_id + action 重复导入自动跳过；schema 版本不匹配拒绝
 - **适配器基类 `SourceAdapter` 加 `permission_level` 字段**：`'file'`（纯文本导出）/ `'db'`（读本机聊天数据库）/ `'uia'`（UI 自动化）；给未来插件生态和 UIA 适配器预留权限分级接口
 
-### 看板体验优化（视觉/性能）
+### 看板首次使用引导（用户体验 P0）
+
+- **看板空状态按场景区分文案**：第一次打开（db 不存在）→ 👋「第一次使用 Chat2Todo → Ctrl+Shift+C 打开控制台」；db 有但 todos 为 0（没跑 sync）→ 「点 ⚙ 打开控制台立即同步，5 秒自动刷新」；有 todos 但当前筛选没匹配 → 通用引导。不再一律显示「暂无待办」让用户懵
+- **控制台 PY 变量一致性确认**：`PY = sys.executable` 从 console.bat（用 pythonw.exe）启动时拿到的就是绝对路径，调子进程没问题；从命令行手动启动也没问题，跳过了不必要的一致性改动
 - loop 轮询 30s → 5s：`refresh_ms` 固定 5000ms，render debounce 兜底——条目/筛选条件/库 mtime 全没变就整跳过，mtime 没变时 CPU 几乎零占用；同步完新待办最多 5s 就能看到
 - mini ↔ 展开切换位置动画：原来瞬间切位置，现在启动 14 帧 ease_out_cubic 帧循环（与 _resize 的尺寸动画并行），约 220ms 整体过渡——同时动画位置和尺寸，视觉上更连贯
 - render debounce：loop 里每次调 render() 都算一次 debounce hash（mini/tab/query/batch/pin/search + db mtime + 条目 signature 列表），和上次一样就整跳过，不 cv.delete("body") 不重画；库里没新待办时 CPU 几乎零占用

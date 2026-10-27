@@ -1337,19 +1337,52 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             if query:
                 empty = f"没有匹配「{query}」的条目"
                 hint = "换个关键词，或按 Esc 退出搜索"
+            elif state["tab"] == "todo":
+                # todo 标签页完全空：要么第一次用、要么 sync 没跑过/没抽到
+                import os as _os
+
+                if not _os.path.exists(db_path):
+                    empty = "第一次使用 Chat2Todo"
+                    hint = "按 Ctrl+Shift+C 打开控制台\n→ 填 QQ 口令\n→ 点「立即同步」"
+                    cv.create_text(W / 2, y + 10, text="👋", anchor="center",
+                                   fill=SUB, font=("Segoe UI Emoji", 28), tags="body")
+                    cv.create_text(W / 2, y + 54, text=empty, anchor="center",
+                                   fill=TEXT, font=("Microsoft YaHei UI", 11, "bold"),
+                                   tags="body")
+                    cv.create_text(W / 2, y + 80, text=hint, anchor="center",
+                                   fill=SUB, width=W - 2 * PAD,
+                                   font=("Microsoft YaHei UI", 9), tags="body")
+                elif not todo_items:
+                    # db 有 messages 但 todos 为空（还没 sync 过）
+                    empty = "还没有待办"
+                    hint = "点右下角 ⚙ 打开控制台 → 点「立即同步」\n同步完最多 5 秒自动出现"
+                    cv.create_text(W / 2, y + 20, text=empty, anchor="center",
+                                   fill=TEXT, font=("Microsoft YaHei UI", 10), tags="body")
+                    cv.create_text(W / 2, y + 54, text=hint, anchor="center",
+                                   fill=SUB, width=W - 2 * PAD,
+                                   font=("Microsoft YaHei UI", 8), tags="body")
+                else:
+                    # 有 todos 但被批量模式/offset 过滤完了
+                    empty = "没有待办"
+                    hint = "下方加一个，或等同步捞进来"
+                    cv.create_text(W / 2, y + 30, text=empty, anchor="center",
+                                   fill=TEXT, font=("Microsoft YaHei UI", 10), tags="body")
+                    cv.create_text(W / 2, y + 54, text=hint, anchor="center",
+                                   fill=SUB, width=W - 2 * PAD,
+                                   font=("Microsoft YaHei UI", 8), tags="body")
             else:
-                empty = {"todo": "暂无待办", "star": "还没有重点条目",
+                empty = {"star": "还没有重点条目",
                          "maybe": "没有待确认的条目",
-                         "today": "今天没有到期的待办", "done": "还没有完成的记录"}[state["tab"]]
-                hint = {"todo": "在下方添加，或等同步把聊天里的活儿捞进来",
-                        "star": "在控制台把某人/某个群设为「特别关心」即可",
+                         "today": "今天没有到期的待办",
+                         "done": "还没有完成的记录"}[state["tab"]]
+                hint = {"star": "在控制台把某人/某个群设为「特别关心」即可",
                         "maybe": "规则拿不准的条目会先放这里，点一下确认",
                         "today": "今天没有截止项，轻松一点",
                         "done": "完成一条就会出现在这里"}[state["tab"]]
-            cv.create_text(W / 2, y + 30, text=empty, anchor="center", fill=TEXT,
-                           font=("Microsoft YaHei UI", 10), tags="body")
-            cv.create_text(W / 2, y + 54, text=hint, anchor="center", fill=SUB,
-                           width=W - 2 * PAD, font=("Microsoft YaHei UI", 8), tags="body")
+                cv.create_text(W / 2, y + 30, text=empty, anchor="center", fill=TEXT,
+                               font=("Microsoft YaHei UI", 10), tags="body")
+                cv.create_text(W / 2, y + 54, text=hint, anchor="center", fill=SUB,
+                               width=W - 2 * PAD, font=("Microsoft YaHei UI", 8), tags="body")
         else:
             from ..core.deadline import label as due_label, parse as due_parse
 
