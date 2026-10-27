@@ -280,6 +280,28 @@ class Store:
             self._sync_fts()
         return {"messages": removed, "todos": len(todo_ids)}
 
+    def unmarked_counts(self) -> dict:
+        """未标记来源群的消息规模（txt 导入的老数据 chat_id 为空）。"""
+        n = self.conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE chat_id = ''"
+        ).fetchone()[0]
+        return {"messages": n}
+
+    def purge_unmarked(self) -> dict:
+        """清理未标记来源群的消息。
+
+        不连带删待办：这些待办多由 txt 导入产生，删掉消息不影响已抽出的结果。
+        返回实际删除条数。
+        """
+        cur = self.conn.execute("DELETE FROM messages WHERE chat_id = ''")
+        removed = cur.rowcount
+        self.conn.commit()
+        if removed and self._fts:
+            # FTS5 不支持按普通列删除，直接重建索引（万级消息也是毫秒级）
+            self.conn.execute("DELETE FROM messages_fts")
+            self._sync_fts()
+        return {"messages": removed}
+
     def backfill_chat_ids(self, rows: Iterable[tuple]) -> int:
         """给历史消息补来源群：只更新 chat_id 为空的已有行，不新增消息。
 

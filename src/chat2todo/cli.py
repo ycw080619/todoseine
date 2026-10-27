@@ -591,6 +591,25 @@ def cmd_purge_chat(args) -> int:
     return 0
 
 
+def cmd_purge_unmarked(args) -> int:
+    """清理未标记来源群的消息（txt 导入的老数据）；--dry-run 只预览。"""
+    store = Store(_db(args))
+    try:
+        counts = store.unmarked_counts()
+        if not counts["messages"]:
+            print("库里没有未标记来源群的消息。")
+            return 0
+        if args.dry_run:
+            print(f"[预览] 未标记消息 {counts['messages']} 条；"
+                  "清理只删消息，已抽出的待办保留")
+            return 0
+        res = store.purge_unmarked()
+    finally:
+        store.close()
+    print(f"已清理未标记消息 {res['messages']} 条（待办未动）")
+    return 0
+
+
 def _pipeline(path: str, cfg: dict, encoding: str = "") -> tuple:
     """把一份导出文件跑完 读→去重→抽取→AI 清洗，返回 (messages, todos)。"""
     src = path
@@ -766,6 +785,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--keep-todos", action="store_true", help="只删消息，保留待办")
     p.add_argument("--db", default="")
     p.set_defaults(func=cmd_purge_chat)
+
+    p = sub.add_parser("purge-unmarked", help="清理未标记来源群的消息（txt 导入的老数据）")
+    p.add_argument("--dry-run", action="store_true", help="只预览，不删除")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_purge_unmarked)
 
     p = sub.add_parser("watch", help="监视文件夹，自动导入新导出的聊天记录")
     p.add_argument("--dir", default="", help="默认监视桌面")

@@ -923,6 +923,17 @@ class Console(tk.Tk):
         tk.Label(r, text="只读", bg=p["card"], fg=p["ok"],
                  font=("Microsoft YaHei UI", 8, "bold")).pack(side="left")
 
+        unmarked = self._unmarked_count()
+        r = self._card_row(p, page, "🧹", "未标记消息",
+                           "txt 导入的老消息没有来源群；清理只删消息，已抽出的待办保留")
+        tk.Label(r, text=f"{unmarked} 条", bg=p["card"],
+                 fg=p["muted"] if unmarked else p["ok"],
+                 font=("Microsoft YaHei UI", 9, "bold")).pack(side="left", padx=(0, 10))
+        if unmarked:
+            tk.Button(r, text="清理", command=self.on_purge_unmarked, bg=p["btn"],
+                      fg=p["btn_text"], bd=0, padx=14, pady=4, cursor="hand2",
+                      font=("Microsoft YaHei UI", 9)).pack(side="left")
+
         has_key = (ROOT / "dbkey.dat").exists()
         r = self._card_row(
             p, page, "🔑", "解密口令",
@@ -1483,6 +1494,31 @@ class Console(tk.Tk):
         if not path:
             return
         self._stream("导入文件", [PY, "-m", "chat2todo", "import", path, "--db", str(DB)])
+
+    def _unmarked_count(self) -> int:
+        """未标记来源群的消息条数；读不到当 0。"""
+        try:
+            from chat2todo.core import Store
+
+            store = Store(str(DB))
+            try:
+                return store.unmarked_counts()["messages"]
+            finally:
+                store.close()
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def on_purge_unmarked(self) -> None:
+        n = self._unmarked_count()
+        if not n:
+            return
+        if not messagebox.askyesno(
+                "清理未标记消息",
+                f"将删除 {n} 条没有来源群的老消息（txt 导入产生）。\n"
+                "已抽出的待办会保留。确定继续？"):
+            return
+        self._stream("清理未标记消息",
+                     [PY, "-m", "chat2todo", "purge-unmarked", "--db", str(DB)])
 
     def on_snap(self) -> None:
         """截图待办：独立小窗进程，不阻塞控制台（自带确认弹窗）。"""

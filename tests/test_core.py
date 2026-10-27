@@ -305,6 +305,32 @@ class TestChatPurge(unittest.TestCase):
             finally:
                 store.close()
 
+    def test_purge_unmarked(self):
+        """未标记消息清理：只删 chat_id 为空的消息，待办与已标记消息不动。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            try:
+                msgs = [
+                    Message(timestamp=1000, sender_id="1", sender_name="A",
+                            content="记得交周报"),
+                    Message(timestamp=2000, sender_id="2", sender_name="B",
+                            content="明天开会", chat_id="222"),
+                ]
+                store.add_messages(msgs, session="qq")
+                store.add_todos(extract_todos(msgs, session="qq"))
+                self.assertEqual(store.unmarked_counts()["messages"], 1)
+                total_todos = len(store.list_todos())
+
+                res = store.purge_unmarked()
+                self.assertEqual(res["messages"], 1)
+                self.assertEqual(store.unmarked_counts()["messages"], 0)
+                self.assertEqual(len(store.list_todos()), total_todos)
+                self.assertEqual(store.chat_counts("222")["messages"], 1)
+                self.assertEqual(store.search("周报"), [])
+                self.assertEqual(store.purge_unmarked()["messages"], 0)
+            finally:
+                store.close()
+
 
 if __name__ == "__main__":
     unittest.main()
