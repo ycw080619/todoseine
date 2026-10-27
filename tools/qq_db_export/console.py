@@ -515,12 +515,31 @@ class Console(tk.Tk):
             hint.config(text=f"已移除 {item}", fg=p["muted"])
             redraw()
 
+        combo_var = tk.StringVar()
+
+        def _combo_values() -> list:
+            """还不在名单里的已知群：群名（号码），按群名排序。"""
+            return [f"{name}（{cid}）" if name else cid
+                    for cid, name in sorted(state["names"].items(),
+                                            key=lambda kv: kv[1] or kv[0])
+                    if cid not in state["items"]]
+
+        def _sync_combo() -> None:
+            vals = _combo_values()
+            combo.config(values=vals)
+            if vals:
+                if not combo.winfo_ismapped():
+                    combo.pack(side="right", ipady=3)
+            else:
+                combo.pack_forget()
+
         def redraw() -> None:
             for w in chips.winfo_children():
                 w.destroy()
             if not state["items"]:
                 tk.Label(chips, text="（还没有条目）", bg=p["card"], fg=p["muted"],
                          font=("Microsoft YaHei UI", 8)).pack(anchor="w")
+                _sync_combo()
                 return
             row = None
             used = 0
@@ -542,6 +561,7 @@ class Console(tk.Tk):
                           activeforeground=p["err"], cursor="hand2",
                           font=("Microsoft YaHei UI", 9), padx=4).pack(side="left")
                 used += width
+            _sync_combo()
 
         bar = tk.Frame(inner, bg=p["card"])
         bar.pack(fill="x", pady=(6, 0))
@@ -569,6 +589,33 @@ class Console(tk.Tk):
                   font=("Microsoft YaHei UI", 9)).pack(side="left", padx=(8, 0))
         tk.Label(bar, text=placeholder, bg=p["card"], fg=p["muted"],
                  font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(10, 0))
+
+        # 按群名搜索添加：下拉列出还不在名单里的已知群（可敲字过滤），选中即加入
+        combo = ttk.Combobox(bar, textvariable=combo_var, width=20,
+                             font=("Microsoft YaHei UI", 9))
+
+        def _combo_type(_evt=None) -> None:
+            typed = combo_var.get().strip().lower()
+            vals = _combo_values()
+            if typed:
+                vals = [v for v in vals if typed in v.lower()]
+            combo.config(values=vals)
+
+        def _combo_pick(_evt=None) -> None:
+            sel = combo_var.get().strip()
+            if not sel:
+                return
+            if sel.endswith("）") and "（" in sel:
+                cid = sel[sel.rfind("（") + 1:-1]
+            else:
+                cid = sel                    # 没名字的条目本身就是号码
+            combo_var.set("")
+            ent.delete(0, "end")
+            ent.insert(0, cid)
+            add()                            # 走统一入口：重复会自动拦住
+
+        combo.bind("<KeyRelease>", _combo_type)
+        combo.bind("<<ComboboxSelected>>", _combo_pick)
         redraw()
         state["redraw"] = redraw
         return state
