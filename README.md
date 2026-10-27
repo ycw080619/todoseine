@@ -45,12 +45,15 @@ Chat2Todo 把这些话自动挑出来，汇成一份待办清单，放在桌面�
 
 - **零依赖核心**：纯 Python 标准库，核心包永不引入第三方依赖
 - **三条采集链路**：QQ 数据库只读直取 / 导出文件导入 / 剪贴板截图识别，汇入同一套抽取管线
-- **可解释规则**：每条待办附带判定理由与置信度；≥4 分判待办、3 分待确认
+- **可解释规则**：每条待办附带判定理由与置信度；≥4 分判待办、3 分待确认；`c2t explain <id>` 可打印完整判定链路（规则分解 + 校准命中 + 原消息）
+- **本地校准闭环**：你每次「标为非待办 / 标记完成」，都会写入本地反馈表；同一来源攒够 3 条样本后自动调权，误判越点越少。校准档案可导出/导入，换机不丢
 - **可选 AI 复核**：本地 Ollama（免费）或云端 OpenAI 兼容 API（DeepSeek / 豆包 / 通义千问 / OpenAI GPT·Codex / Claude·OpenRouter 预设一键填）；不可用时静默退回规则结果，不丢数据
 - **双引擎截图识别**：默认 Windows 自带 OCR（离线零安装），配置视觉模型后自动升级
 - **桌面看板**：玻璃质感悬浮窗，待办/待定/今日/完成四标签、底部回车快速添加、滚轮翻页、Ctrl+滚轮调透明度、可收起成小时钟胶囊、可置顶、支持撤销（Ctrl+Z）与右键菜单
 - **幂等入库**：重复导入不产生重复数据
-- **开放格式**：内部模型与 ChatLab Format 对齐，可互导
+- **开放格式**：内部模型与 ChatLab Format 对齐，可互导（`export-chatlab` 反向导出）
+- **可被别的工具调用**：`c2t serve` 起一个只听本机的 HTTP API，脚本 / 浏览器页面 / 自动化工具都能读写待办
+- **插件注册协议**：`plugin.manifest.json` 声明插件能力与权限级别（file / db / uia），`c2t plugins` 一键列出已装插件
 - **隐私守门**：口令 DPAPI 加密存放；QQ 库纯只读；默认零网络请求（除 127.0.0.1 本机 Ollama）
 
 ---
@@ -68,7 +71,12 @@ c2t db-backfill                     # 给历史消息补来源群（不跑抽取
 c2t purge-chat --list               # 看库里各来源群及条数
 c2t purge-chat --chat 123456 --dry-run   # 按群清理前先预览
 c2t todos / done / search / show    # 查看 / 完成 / 检索 / 上下文
+c2t explain 12                      # 这条待办为什么被判成待办
 c2t export --format md --out out    # 导出 md / csv / json
+c2t export-chatlab out.json         # 反向导出为 ChatLab Format（.json / .jsonl）
+c2t export-calibration my.json      # 导出校准档案（换机迁移）
+c2t plugins                         # 列出已装插件（读 plugin.manifest.json）
+c2t serve --port 8765               # 起本地 HTTP API（仅 127.0.0.1）
 c2t dash --db qq.db                 # 悬浮待办看板
 c2t doctor                          # 环境自检
 ```
@@ -80,6 +88,30 @@ snap.py                 # 处理一次剪贴板截图
 snap.py --hotkey        # 常驻：Ctrl+Alt+S 唤出
 snap.py --watch         # 监视剪贴板，截一张处理一张
 ```
+
+---
+
+## 本地 HTTP API
+
+`c2t serve` 起一个纯标准库的 HTTP 服务，**只监听 `127.0.0.1`**，给脚本或其他工具读写待办：
+
+```bash
+c2t serve --port 8765
+curl http://127.0.0.1:8765/health
+curl "http://127.0.0.1:8765/todos?status=pending&limit=10"
+curl "http://127.0.0.1:8765/search?q=周报"
+curl -X POST http://127.0.0.1:8765/todos/1/done
+```
+
+| 方法 | 端点 | 说明 |
+|------|------|------|
+| GET | `/health` | 健康检查 |
+| GET | `/todos?status=&limit=` | 待办列表（`pending` / `done` / `noise`，留空=全部） |
+| GET | `/stats` | 统计摘要 + 近 7 天摘要 |
+| GET | `/search?q=&limit=` | 全文搜索消息 |
+| POST | `/todos/{id}/done` | 标记完成；可选请求体 `{"status": "pending"}` 改回待办 |
+
+安全边界：非本机连接一律 403；请求体上限 64 KB 且只收 JSON；CORS 只回本机来源（不回 `*`），避免任意网页读走本地聊天数据。
 
 ---
 
@@ -117,8 +149,10 @@ QQ 数据库（只读）     导出文件          剪贴板截图
 - [x] v0.3 微信 txt 适配器
 - [x] v0.4 QQ NT 数据库只读通道（sqlcipher3 + DPAPI 密钥保管）、语义清洗（bge-m3）、LLM 复核/意图/改写（Ollama）
 - [x] 2026-10 控制台 GUI、悬浮看板、定时同步、截图待办插件（Windows OCR + 视觉模型双引擎）、全局热键
-- [ ] 第三方插件注册协议（manifest / 权限声明）
-- [ ] 本地 API 与 MCP 接口
+- [x] 第三方插件注册协议（manifest / 权限声明）+ `c2t plugins`
+- [x] 本地 HTTP API（`c2t serve`，仅 127.0.0.1）
+- [ ] ChatLab Format 深度对齐（已支持双向互导，持续跟进上游字段）
+- [ ] MCP 接口
 - [ ] 多操作系统适配（当前仅 Win11）
 
 ---
