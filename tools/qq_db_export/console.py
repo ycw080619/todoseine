@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -118,6 +119,60 @@ def _stat() -> dict:
             conn.close()
     except Exception:  # noqa: BLE001
         return {}
+
+
+# ---------- 数据库一键备份 / 恢复（模块级纯逻辑，可单测）----------
+BACKUP_KEEP = 5                    # 只留最近 5 份备份
+
+
+def _backups_dir() -> Path:
+    d = ROOT / "backups"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _list_backups() -> list:
+    """全部备份（新的在前）；按文件名排序即可，名字里带时间戳。"""
+    try:
+        return sorted(_backups_dir().glob("qq-*.db"),
+                      key=lambda f: f.name, reverse=True)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _prune_backups(keep: int = BACKUP_KEEP) -> list:
+    """删掉超出保留数的旧备份，返回被删的文件名。"""
+    removed = []
+    for f in _list_backups()[keep:]:
+        try:
+            f.unlink()
+            removed.append(f.name)
+        except OSError:
+            pass
+    return removed
+
+
+def backup_db(src: Path = DB) -> Path:
+    """把数据库复制成带时间戳的备份，顺手剪枝到最近 5 份。返回备份路径。"""
+    from datetime import datetime
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dst = _backups_dir() / f"qq-{stamp}.db"
+    shutil.copy2(src, dst)
+    _prune_backups()
+    return dst
+
+
+def restore_db(bak: Path, dst: Path = DB) -> Path:
+    """用备份覆盖当前数据库；覆盖前先把当前库自动备份一份（可再恢复回去）。
+
+    返回兜底备份的路径。数据库被占用时抛 PermissionError，由界面层提示。
+    """
+    bak = Path(bak)
+    dst = Path(dst)
+    safety = backup_db(dst)          # 恢复前先自保一份
+    shutil.copy2(bak, dst)
+    return safety
 
 
 def _read_cfg() -> dict:
@@ -969,6 +1024,12 @@ class Console(tk.Tk):
         r = self._card_row(p, page, "🗄", "聊天数据库", str(DB))
         tk.Label(r, text="只读", bg=p["card"], fg=p["ok"],
                  font=("Microsoft YaHei UI", 8, "bold")).pack(side="left")
+        tk.Button(r, text="恢复", command=self.on_restore_db, bg=p["btn"],
+                  fg=p["btn_text"], bd=0, padx=12, pady=4, cursor="hand2",
+                  font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(10, 0))
+        tk.Button(r, text="备份", command=self.on_backup_db, bg=p["btn"],
+                  fg=p["btn_text"], bd=0, padx=12, pady=4, cursor="hand2",
+                  font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(6, 0))
 
         unmarked = self._unmarked_count()
         r = self._card_row(p, page, "🧹", "未标记消息",
@@ -1592,6 +1653,73 @@ class Console(tk.Tk):
             return
         self._stream("清理未标记消息",
                      [PY, "-m", "chat2todo", "purge-unmarked", "--db", str(DB)])
+
+    # ---------- 数据库备份 / 恢复 ----------
+    def on_backup_db(self) -> None:
+        if not DB.exists():
+            messagebox.showinfo("备份数据库", f"还没有数据库：\n{DB}")
+            return
+        try:
+            dst = backup_db()
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("备份数据库", f"备份失败：{exc}")
+            return
+        self.write(f"已备份数据库 → backups/{dst.name}（只留最近 {BACKUP_KEEP} 份）\n")
+        messagebox.showinfo("备份数据库", f"已备份到：\n{dst}")
+
+    def on_restore_db(self) -> None:
+        backs = _list_backups()
+        if not backs:
+            messagebox.showinfo("恢复数据库", "还没有备份，先点「备份」存一份。")
+            return
+        p = self._pal()
+        win = tk.Toplevel(self)
+        win.title("恢复数据库")
+        win.configure(bg=p["bg"])
+        win.transient(self)
+        tk.Label(win, text="选择要恢复的备份（恢复前会先把当前库自动备份一份）",
+                 bg=p["bg"], fg=p["text"], anchor="w",
+                 font=("Microsoft YaHei UI", 9)).pack(fill="x", padx=14, pady=(12, 6))
+        lb = tk.Listbox(win, height=min(8, len(backs)), width=46, bd=0,
+                        bg=p["field"], fg=p["field_text"],
+                        selectbackground=p["accent"], selectforeground=p["accent_fg"],
+                        highlightthickness=1, highlightbackground=p["border"],
+                        font=("Consolas", 9))
+        for f in backs:
+            lb.insert("end", f.name)
+        lb.selection_set(0)
+        lb.pack(padx=14, fill="x")
+
+        def _do() -> None:
+            sel = lb.curselection()
+            if not sel:
+                return
+            src = backs[sel[0]]
+            if not messagebox.askyesno(
+                    "恢复数据库",
+                    f"用 {src.name} 覆盖当前数据库？\n"
+                    "（当前库会先自动备份一份；恢复后需重启看板生效）",
+                    parent=win):
+                return
+            try:
+                safety = restore_db(src)
+            except PermissionError:
+                messagebox.showerror(
+                    "恢复数据库", "恢复失败：数据库正被看板占用。\n请先关闭看板再试。",
+                    parent=win)
+                return
+            except Exception as exc:  # noqa: BLE001
+                messagebox.showerror("恢复数据库", f"恢复失败：{exc}", parent=win)
+                return
+            win.destroy()
+            self.write(f"已用 {src.name} 覆盖当前数据库；原库存为 {safety.name}\n")
+            self.refresh_stats()
+            messagebox.showinfo("恢复数据库", "恢复完成。请重启看板使其生效。")
+
+        tk.Button(win, text="恢复所选备份", command=_do, bg=p["accent"],
+                  fg=p["accent_fg"], bd=0, padx=16, pady=6, cursor="hand2",
+                  font=("Microsoft YaHei UI", 9, "bold")).pack(pady=12)
+        lb.bind("<Double-Button-1>", lambda _e: _do())
 
     def on_snap(self) -> None:
         """截图待办：独立小窗进程，不阻塞控制台（自带确认弹窗）。"""

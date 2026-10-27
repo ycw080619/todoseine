@@ -72,5 +72,49 @@ class TestConfigIO(unittest.TestCase):
         self.assertIn("clock = true", text)
 
 
+class TestBackupRestore(unittest.TestCase):
+    """一键备份 / 恢复：带时间戳复制、只留最近 5 份、恢复前自动自保。"""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self._old_root = console.ROOT
+        console.ROOT = self.root
+
+    def tearDown(self) -> None:
+        console.ROOT = self._old_root
+        self.tmp.cleanup()
+
+    def _seed_db(self, content: bytes = b"live-db") -> Path:
+        db = self.root / "qq.db"
+        db.write_bytes(content)
+        return db
+
+    def test_backup_and_prune_keeps_five(self) -> None:
+        db = self._seed_db()
+        bdir = console._backups_dir()
+        # 预置 6 份旧备份，加上新备份共 7 份 → 只留最近 5 份
+        for i in range(6):
+            (bdir / f"qq-2026102{i}-120000.db").write_bytes(b"old")
+        dst = console.backup_db(db)
+        self.assertTrue(dst.exists())
+        self.assertEqual(dst.read_bytes(), b"live-db")
+        names = [f.name for f in console._list_backups()]
+        self.assertEqual(len(names), 5)
+        self.assertIn(dst.name, names)
+        self.assertNotIn("qq-20261020-120000.db", names)   # 最旧的被剪掉
+        self.assertNotIn("qq-20261021-120000.db", names)
+
+    def test_restore_overwrites_and_saves_current(self) -> None:
+        db = self._seed_db(b"current")
+        bdir = console._backups_dir()
+        bak = bdir / "qq-20261026-080000.db"
+        bak.write_bytes(b"backup")
+        safety = console.restore_db(bak, db)
+        self.assertEqual(db.read_bytes(), b"backup")        # 已覆盖成备份内容
+        self.assertEqual(safety.read_bytes(), b"current")   # 原库被自保
+        self.assertTrue(safety.name.startswith("qq-"))      # 也是一份正常备份（可再恢复）
+
+
 if __name__ == "__main__":
     unittest.main()
