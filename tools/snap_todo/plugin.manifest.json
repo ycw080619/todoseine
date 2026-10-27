@@ -1,0 +1,16 @@
+{
+  "schema": "chat2todo-plugin-v1",
+  "id": "snap_todo",
+  "name": "截图待办",
+  "version": "0.1.0",
+  "author": "Chat2Todo contributors",
+  "description": "Win+Shift+S 框选屏幕区域 → Windows 自带 OCR → 确认弹窗 → 入库。",
+  "permission_level": "uia",
+  "entry": "snap.py",
+  "capabilities": ["ocr", "hotkey", "ai_refine"],
+  "dependencies": ["chat2todo>=0.4.0"],
+  "triggers": {
+    "autostart": true,
+    "hotkey": "ctrl+shift+s"
+  }
+}

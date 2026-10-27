@@ -22,7 +22,15 @@
 - 实测 score_message L143 权重匹配逻辑（`if key and key in tag`）在 explain_todo 里镜像复现，确保报告与实际评分走同一套逻辑
 - **dashboard TodoItem 字段修正**：`models.TodoItem` 只有 `todo_id` 没有 `id`，explain_why 写的 `item.id` 会 AttributeError——改为 `item.todo_id`（整 dashboard 统一用 todo_id）
 
-### 部署与分发：一键 exe 打包 + bat 自解析路径
+### 插件注册协议（chat2todo-plugin-v1）
+
+- 新增 `src/chat2todo/plugin_manifest.py`：
+  - Manifest dataclass：schema / id / name / version / permission_level / entry / capabilities / triggers
+  - `validate_manifest(path_or_dict)` 严格校验：schema 不匹配拒、id 非 snake_case 拒、permission_level 非 file/db/uia 拒、必填缺失拒
+  - **刻意不做文件系统检查**（manifest 可跨机器分发），只校验数据正确性
+- `tools/qq_db_export/plugin.manifest.json` + `tools/snap_todo/plugin.manifest.json`：两个现有插件的真实 manifest 实例，fields 如实填
+- `tests/test_plugin_manifest.py`：8 用例（good dict + good file + bad schema + bad perm + bad id case + missing id + default perm=file + optional defaults）
+- pytest 174 passed
 
 - 新增 PyInstaller onefile windowed 打包：`tools/chat2todo-launcher.py` 单一入口同时路由控制台 GUI / CLI 子命令 / `-m chat2todo` 子进程调用 / 独立 `.py` 脚本（frozen 跳过、开发态 exec），**console.py 源码零改动**
 - 新增 `tools/build.ps1`：Set-Location + Join-Path 绝对路径拼接（cwd 无关），try/finally 恢复调用者 cwd；pip 分拆显式检查 `$LASTEXITCODE`，解决 `$ErrorActionPreference=Stop` 把 stderr 日志（pip warning / PyInstaller INFO）误判为 NativeCommandError 的问题；实测一键产出 17.87 MB onefile windowed exe
