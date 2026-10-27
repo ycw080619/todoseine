@@ -415,3 +415,67 @@ def load_messages(cfg: Dict, limit: int = 0, days: int = 0,
     rows, star_groups, star_senders = _apply_filters(
         rows, cfg, keep_ignored=keep_ignored)
     return _rows_to_messages(rows, star_groups=star_groups, star_senders=star_senders)
+
+
+#: 群名不在消息库里，在同级 group_info.db 的这张表
+#: （60001=群号，66530=内部群代码=消息里的 chat_id，60007=群名）
+GROUP_INFO_TABLE = "group_detail_info_ver1"
+
+
+def fetch_group_names(cfg: Dict) -> Dict[str, str]:
+    """读 nt_msg.db 同级的 group_info.db，返回 {群号或内部代码: 群名}。
+
+    同一群有两个 ID：用户看到的群号（60001，控制台过滤名单里配的就是它）和
+    消息库 chat_id 用的内部代码（66530）。两个键都写进映射，展示层拿到哪个
+    都能查出群名。
+    同一密钥、同一开库手法（快照 → 剥头 → SQLCipher PRAGMA 序列）。
+    群名只是展示层的锦上添花：任何一步失败都返回空 dict，绝不抛异常，
+    以免影响消息同步主流程。
+    """
+    import shutil
+    import tempfile
+
+    try:
+        db_cfg = cfg.get("db", {}) if isinstance(cfg, dict) else {}
+        path = locate(db_cfg.get("path") or None)
+        if not path:
+            return {}
+        info_path = path.parent / "group_info.db"
+        if not info_path.exists():
+            return {}
+        if not BuiltinBackend.engine_available():
+            return {}
+        key = resolve_key(db_cfg)
+        if not key:
+            return {}
+        import sqlcipher3
+
+        tmp = tempfile.mkdtemp(prefix="c2t_ginfo_")
+        try:
+            stripped = _snapshot_without_header(str(info_path), tmp)
+            conn = sqlcipher3.connect(stripped)
+            try:
+                conn.execute(PRAGMA_BEFORE_KEY)
+                conn.execute(f"PRAGMA key = '{key.replace(chr(39), chr(39) * 2)}'")
+                for pragma in SQLCIPHER_PRAGMAS:
+                    conn.execute(pragma)
+                rows = conn.execute(
+                    f'SELECT "60001", "66530", "60007" FROM "{GROUP_INFO_TABLE}"'
+                ).fetchall()
+            finally:
+                conn.close()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        out: Dict[str, str] = {}
+        for num, code, name in rows:
+            name = str(name or "").strip()
+            if not name:
+                continue
+            num, code = str(num or "").strip(), str(code or "").strip()
+            if num:
+                out[num] = name
+            if code:
+                out[code] = name
+        return out
+    except Exception:  # noqa: BLE001 - 展示层辅助功能，静默降级
+        return {}

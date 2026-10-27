@@ -358,6 +358,33 @@ def _split_ids(text: str) -> list:
     return out
 
 
+def _read_chat_names() -> dict:
+    """读库里的 群号 → 群名 映射（db-import 时顺带从 QQ 库刷新）；读不到返回空。
+
+    群名只用于展示：查不到名字的号码（比如机器人 QQ 号）保持原样显示。
+    """
+    import sqlite3
+
+    if not DB.exists():
+        return {}
+    try:
+        conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+        try:
+            rows = conn.execute("SELECT chat_id, name FROM chat_names").fetchall()
+        finally:
+            conn.close()
+        return {str(k): str(v) for k, v in rows if str(v).strip()}
+    except Exception:  # noqa: BLE001 - 老库可能还没有 chat_names 表
+        return {}
+
+
+def _disp_width(text: str) -> int:
+    """显示宽度：全角字符按 2 算，避免含群名的标签排版被低估。"""
+    import unicodedata
+
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
+
+
 def _read_hotkey(section: str = "dash", key: str = "hotkey",
                  default: str = "ctrl+alt+d") -> str:
     """读某个段里的快捷键配置（[dash] hotkey 或 [snap] hotkey）。"""
@@ -450,8 +477,12 @@ class Console(tk.Tk):
         return b
 
     def _chip_card(self, p: dict, parent, icon: str, title: str, sub: str,
-                   values: list, placeholder: str):
-        """列表式编辑器：已有项做成可删除的胶囊，输入框回车/点添加；重复项自动拦住。"""
+                   values: list, placeholder: str, names: dict | None = None):
+        """列表式编辑器：已有项做成可删除的胶囊，输入框回车/点添加；重复项自动拦住。
+
+        names 传入 群号→群名 映射时，胶囊显示「群名（号码）」；查不到名字的
+        号码（机器人 QQ 号等）保持原样。内部仍按原始号码存取。
+        """
         outer = tk.Frame(parent, bg=p["card"], highlightbackground=p["border"],
                          highlightthickness=1)
         outer.pack(fill="x", pady=(0, 8))
@@ -470,6 +501,12 @@ class Console(tk.Tk):
             tk.Label(texts, text=sub, bg=p["card"], fg=p["muted"], anchor="w",
                      justify="left", wraplength=520,
                      font=("Microsoft YaHei UI", 8)).pack(anchor="w", pady=(1, 0))
+
+        names = names or {}
+
+        def _label(item: str) -> str:
+            gname = names.get(item, "")
+            return f"{gname}（{item}）" if gname else item
 
         state = {"items": []}
         for v in values:
@@ -498,7 +535,8 @@ class Console(tk.Tk):
             row = None
             used = 0
             for item in state["items"]:
-                width = len(item) * 9 + 54
+                label = _label(item)
+                width = _disp_width(label) * 9 + 54
                 if row is None or used + width > 560:
                     row = tk.Frame(chips, bg=p["card"])
                     row.pack(fill="x", pady=2)
@@ -506,8 +544,9 @@ class Console(tk.Tk):
                 chip = tk.Frame(row, bg=p["field"], highlightbackground=p["border"],
                                 highlightthickness=1)
                 chip.pack(side="left", padx=(0, 6))
-                tk.Label(chip, text=item, bg=p["field"], fg=p["text"],
-                         font=("Consolas", 9)).pack(side="left", padx=(8, 2), pady=2)
+                tk.Label(chip, text=label, bg=p["field"], fg=p["text"],
+                         font=("Microsoft YaHei UI", 9)).pack(side="left", padx=(8, 2),
+                                                              pady=2)
                 tk.Button(chip, text="×", command=lambda x=item: remove(x), bd=0,
                           bg=p["field"], fg=p["muted"], activebackground=p["field"],
                           activeforeground=p["err"], cursor="hand2",
@@ -904,15 +943,16 @@ class Console(tk.Tk):
                                  highlightcolor=p["accent"], font=("Microsoft YaHei UI", 9))
         self.pw_entry.pack(side="left", ipady=4)
 
+        chat_names = _read_chat_names()
         self.ignore_state = self._chip_card(
             p, page, "🚫", "免打扰（不统计）",
             "这些群号或 QQ 号（如群机器人）的消息完全不参与抽取；重复添加会自动拦住",
-            _read_filter("ignore_groups"), "群号或 QQ 号")
+            _read_filter("ignore_groups"), "群号或 QQ 号", names=chat_names)
 
         self.star_state = self._chip_card(
             p, page, "★", "特别关心（标重点）",
             "群号或 QQ 号；这些来源产生的待办会标记为 ★重点，看板里有独立标签页",
-            _read_filter("star_groups"), "群号或 QQ 号")
+            _read_filter("star_groups"), "群号或 QQ 号", names=chat_names)
 
         r = self._card_row(p, page, "⏱", "定时同步", "由 Windows 计划任务每小时触发")
         tk.Button(r, text="打开计划任务", command=lambda: subprocess.Popen(

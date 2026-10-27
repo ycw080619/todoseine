@@ -4,6 +4,7 @@ from .db import (  # noqa: F401
     BuiltinBackend,
     CommunityBackend,
     DBInfo,
+    fetch_group_names,
     get_backend,
     inspect,
     load_messages,

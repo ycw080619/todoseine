@@ -103,3 +103,60 @@ def test_builtin_backend_no_key_raises():
     with pytest.raises(C2TError) as exc:
         BuiltinBackend().fetch(None)  # type: ignore[arg-type]
     assert exc.value.code == "E4002"
+
+
+def _make_group_info_db(tmp_path, key: str = KEY) -> str:
+    """在 nt_msg.db 旁边造一个加密的 group_info.db（60001=群号 66530=内部代码 60007=群名）。"""
+    from chat2todo.sources.db import GROUP_INFO_TABLE
+
+    plain = tmp_path / "ginfo_plain.db"
+    conn = sqlcipher3.connect(str(plain))
+    conn.execute(PRAGMA_BEFORE_KEY)
+    conn.execute(f"PRAGMA key = '{key}'")
+    for pragma in SQLCIPHER_PRAGMAS:
+        conn.execute(pragma)
+    conn.execute(f'CREATE TABLE "{GROUP_INFO_TABLE}" '
+                 '("60001" INTEGER, "66530" INTEGER, "60007" TEXT)')
+    conn.execute(f'INSERT INTO "{GROUP_INFO_TABLE}" VALUES (?, ?, ?)',
+                 (116316805, 123343757, "C#技术交流"))
+    conn.execute(f'INSERT INTO "{GROUP_INFO_TABLE}" VALUES (?, ?, ?)',
+                 (12345, 67890, ""))  # 空名要被跳过
+    conn.commit()
+    conn.close()
+
+    wrapped = tmp_path / "group_info.db"
+    with open(wrapped, "wb") as out:
+        out.write(b"SQLite header 3" + b"\x00" * (HEADER_SIZE - 15))
+        with open(plain, "rb") as fh:
+            out.write(fh.read())
+    os.remove(plain)
+    return str(wrapped)
+
+
+def test_fetch_group_names(tmp_path, monkeypatch):
+    """端到端：加密的 group_info.db → 群号与内部代码都能查到群名；空名跳过。"""
+    from chat2todo.sources import db as src_db
+
+    db_path = _make_qq_like_db(tmp_path)
+    _make_group_info_db(tmp_path)
+    monkeypatch.setattr(src_db, "locate",
+                        lambda root=None: __import__("pathlib").Path(db_path))
+    monkeypatch.setattr(src_db, "resolve_key", lambda cfg: KEY)
+
+    names = src_db.fetch_group_names({})
+    assert names == {"116316805": "C#技术交流", "123343757": "C#技术交流"}
+
+
+def test_fetch_group_names_degrades_silently(tmp_path, monkeypatch):
+    """没有 group_info.db / 没有密钥时返回空 dict，不抛异常。"""
+    from chat2todo.sources import db as src_db
+
+    db_path = _make_qq_like_db(tmp_path)  # 旁边不放 group_info.db
+    monkeypatch.setattr(src_db, "locate",
+                        lambda root=None: __import__("pathlib").Path(db_path))
+    monkeypatch.setattr(src_db, "resolve_key", lambda cfg: KEY)
+    assert src_db.fetch_group_names({}) == {}
+
+    monkeypatch.setattr(src_db, "resolve_key", lambda cfg: "")
+    _make_group_info_db(tmp_path)
+    assert src_db.fetch_group_names({}) == {}

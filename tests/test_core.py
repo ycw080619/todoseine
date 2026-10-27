@@ -94,6 +94,22 @@ class TestStore(unittest.TestCase):
             finally:
                 store.close()
 
+    def test_chat_names_roundtrip(self):
+        """群号 → 群名：写入、覆盖、跳过空名。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "t.db"))
+            try:
+                n = store.set_chat_names({"116316805": "C#技术交流",
+                                          "10001": "", "": "匿名"})
+                self.assertEqual(n, 1)
+                self.assertEqual(store.chat_name_map(),
+                                 {"116316805": "C#技术交流"})
+                store.set_chat_names({"116316805": "C# 技术交流·新"})
+                self.assertEqual(store.chat_name_map()["116316805"],
+                                 "C# 技术交流·新")
+            finally:
+                store.close()
+
 
 class TestMarkdown(unittest.TestCase):
     def test_render(self):

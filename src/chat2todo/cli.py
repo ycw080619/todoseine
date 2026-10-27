@@ -498,6 +498,12 @@ def cmd_db_import(args) -> int:
     try:
         added = store.add_messages(messages)
         tadded = store.add_todos(todos)
+        # 顺带刷新群名表（群名在同级另一个库里；失败静默，不影响同步）
+        try:
+            from .sources import fetch_group_names
+            store.set_chat_names(fetch_group_names(cfg))
+        except Exception:  # noqa: BLE001
+            pass
         s = store.stats()
     finally:
         store.close()
@@ -545,11 +551,12 @@ def cmd_purge_chat(args) -> int:
             if not rows:
                 print("库里还没有消息。")
                 return 0
-            print(f"{'chat_id':<22}{'消息':>7}{'最早':>13}{'最晚':>13}")
+            names = store.chat_name_map()
+            print(f"{'chat_id':<22}{'群名':<20}{'消息':>7}{'最早':>13}{'最晚':>13}")
             for r in rows:
                 name = r["chat_id"] or "(未标记)"
-                print(f"{name:<22}{r['n']:>7}{_fmt_ts(r['first_ts']):>13}"
-                      f"{_fmt_ts(r['last_ts']):>13}")
+                print(f"{name:<22}{names.get(r['chat_id'], ''):<20}{r['n']:>7}"
+                      f"{_fmt_ts(r['first_ts']):>13}{_fmt_ts(r['last_ts']):>13}")
             return 0
         chat = (args.chat or "").strip()
         if not chat:

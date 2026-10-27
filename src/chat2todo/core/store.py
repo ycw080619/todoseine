@@ -55,6 +55,12 @@ CREATE TABLE IF NOT EXISTS trash (
     done_at    TEXT NOT NULL DEFAULT '',
     deleted_at TEXT NOT NULL
 );
+
+-- 群号 → 群名（db-import 时从 QQ 的 group_info.db 顺带刷新，仅展示用）
+CREATE TABLE IF NOT EXISTS chat_names (
+    chat_id TEXT PRIMARY KEY,
+    name    TEXT NOT NULL DEFAULT ''
+);
 """
 
 
@@ -204,6 +210,23 @@ class Store:
         )
         self.conn.commit()
         return self._count("todos") - before
+
+    # --- 群名（仅展示用） ------------------------------------------
+    def set_chat_names(self, names: dict) -> int:
+        """刷新群名表（群号 → 群名），返回写入条数；空名字跳过。"""
+        rows = [(str(k), str(v).strip()) for k, v in (names or {}).items()
+                if str(k).strip() and str(v).strip()]
+        if not rows:
+            return 0
+        self.conn.executemany(
+            "INSERT OR REPLACE INTO chat_names (chat_id, name) VALUES (?, ?)", rows)
+        self.conn.commit()
+        return len(rows)
+
+    def chat_name_map(self) -> dict:
+        """全部已知的 群号 → 群名 映射，给展示层把群号换成群名用。"""
+        return {r[0]: r[1] for r in
+                self.conn.execute("SELECT chat_id, name FROM chat_names")}
 
     # --- 按群清理 -------------------------------------------------
     def list_chats(self, limit: int = 50) -> List[dict]:
