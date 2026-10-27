@@ -20,6 +20,7 @@
 - CLI 新增 `c2t explain <todo_id>`：框线头部 + 原消息 + 规则分解 + 校准命中 + 上下文
 - dashboard 右键菜单「判定理由」：Toplevel 弹窗复用 explain_todo 报告，show_detail 风格
 - 实测 score_message L143 权重匹配逻辑（`if key and key in tag`）在 explain_todo 里镜像复现，确保报告与实际评分走同一套逻辑
+- **dashboard TodoItem 字段修正**：`models.TodoItem` 只有 `todo_id` 没有 `id`，explain_why 写的 `item.id` 会 AttributeError——改为 `item.todo_id`（整 dashboard 统一用 todo_id）
 
 ### 部署与分发：一键 exe 打包 + bat 自解析路径
 
