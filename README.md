@@ -19,8 +19,8 @@ Chat2Todo 把这些话自动挑出来，汇成一份待办清单，放在桌面�
 
 ## 3 步上手（小白路径）
 
-1. 安装 Python 3.9+（勾选 Add to PATH）
-2. 双击 `tools/qq_db_export/console.bat` 打开控制台
+1. **零安装优先**：运行 `tools/build.ps1` 一键产出 `dist/chat2todo.exe`（17.9 MB），双击即可
+2. 或装 Python 3.10+ → 双击 `tools/qq_db_export/console.bat` 打开控制台
 3. 点「导入文件」选一份导出的 txt / JSON → 点「打开看板」
 
 > 进阶：想直读 QQ 数据库？进「设置」填一次口令（DPAPI 加密保存）→ 点「立即同步」。

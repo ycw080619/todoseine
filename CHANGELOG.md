@@ -8,6 +8,20 @@
 - 校准档案导出/导入：`schema: c2t-calibration-v1` 格式（项目专属），自带 chat_names；同 todo_id + action 重复导入自动跳过；schema 版本不匹配拒绝
 - **适配器基类 `SourceAdapter` 加 `permission_level` 字段**：`'file'`（纯文本导出）/ `'db'`（读本机聊天数据库）/ `'uia'`（UI 自动化）；给未来插件生态和 UIA 适配器预留权限分级接口
 
+### 部署与分发：一键 exe 打包 + bat 自解析路径
+
+- 新增 PyInstaller onefile windowed 打包：`tools/chat2todo-launcher.py` 单一入口同时路由控制台 GUI / CLI 子命令 / `-m chat2todo` 子进程调用 / 独立 `.py` 脚本（frozen 跳过、开发态 exec），**console.py 源码零改动**
+- 新增 `tools/build.ps1`：Set-Location + Join-Path 绝对路径拼接（cwd 无关），try/finally 恢复调用者 cwd；pip 分拆显式检查 `$LASTEXITCODE`，解决 `$ErrorActionPreference=Stop` 把 stderr 日志（pip warning / PyInstaller INFO）误判为 NativeCommandError 的问题；实测一键产出 17.87 MB onefile windowed exe
+- `.gitignore` 加 `*.spec`（PyInstaller spec 文件机器特定，不入库）
+- 四个 .bat（后台同步 / dash_autostart / console / launch）路径自解析重写：**不再硬编码** `C:\Program Files\Python312\python.exe`，也不依赖 `py -3w`（py launcher 在某些机器 exit 103 找不到 pythonw runtime）；改为 `where pythonw` 拿绝对路径、找不到 fallback `where python`；Windows 计划任务和开机自启跨 Python 版本都能跑
+- CI 收敛：Windows 11 × Python 3.12/3.13 + Ubuntu 冒烟；**加 pytest step**（原只跑 unittest discover 漏 36 个 fixture 测试），现 pytest 164 / unittest 128 全绿
+
+### 看板每日早报三件套
+
+- **每日早报 daily_mode**：每天首次启动自动切到卡片式摘要视图，`last_shown_date` 持久化到 `dash_pos.json`，当天不再重复切
+- **每日 top-5 上限**：看板每日最多渲染 5 条待办（按 confidence 降序），剩余收在「展开」区，避免长列表淹没重点
+- **周进度 footer**：看板底部新增 `· 本周清 N · 新增 M`，数据源 `Store.weekly_stats()` 纯查询方法，控制台「常规」页每周摘要卡复用同一函数
+
 ### 看板首次使用引导（用户体验 P0）
 
 - **看板空状态按场景区分文案**：第一次打开（db 不存在）→ 👋「第一次使用 Chat2Todo → Ctrl+Shift+C 打开控制台」；db 有但 todos 为 0（没跑 sync）→ 「点 ⚙ 打开控制台立即同步，5 秒自动刷新」；有 todos 但当前筛选没匹配 → 通用引导。不再一律显示「暂无待办」让用户懵
