@@ -758,6 +758,22 @@ def cmd_import_calibration(args) -> int:
     return 0
 
 
+def cmd_export_chatlab(args) -> int:
+    """把库里全部消息导出成 ChatLab Format（JSON 或 JSONL）。"""
+    from .adapters import ChatLabJsonAdapter
+
+    store = Store(_db(args))
+    try:
+        msgs = store.all_messages()
+    finally:
+        store.close()
+
+    adapter = ChatLabJsonAdapter()
+    n = adapter.write(args.path, msgs)
+    print(f"已导出 {n} 条消息到 {args.path}（ChatLab Format）")
+    return 0
+
+
 def _pipeline(path: str, cfg: dict, encoding: str = "") -> tuple:
     """把一份导出文件跑完 读→去重→抽取→AI 清洗，返回 (messages, todos)。"""
     src = path
@@ -953,6 +969,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", help="JSON 档案路径")
     p.add_argument("--db", default="")
     p.set_defaults(func=cmd_import_calibration)
+
+    p = sub.add_parser("export-chatlab", help="导出全部消息为 ChatLab Format")
+    p.add_argument("path", help="输出文件路径（.json 或 .jsonl）")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_export_chatlab)
 
     p = sub.add_parser("watch", help="监视文件夹，自动导入新导出的聊天记录")
     p.add_argument("--dir", default="", help="默认监视桌面")

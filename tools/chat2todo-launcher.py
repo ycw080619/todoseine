@@ -33,7 +33,7 @@ _KNOWN_SUBCOMMANDS = {
     "stats", "doctor", "adapters", "dash",
     "db", "db-key", "db-import", "db-backfill",
     "purge-chat", "purge-unmarked",
-    "export-calibration", "import-calibration",
+    "export-calibration", "import-calibration", "export-chatlab",
     "watch", "plugins",
 }
 

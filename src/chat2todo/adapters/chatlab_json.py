@@ -46,6 +46,72 @@ class ChatLabJsonAdapter(SourceAdapter):
         else:
             yield from self._read_json(path)
 
+    # --- 导出 -----------------------------------------------------
+    def write(self, path: str, messages: Iterable[Message], **kwargs) -> int:
+        """把消息写成 ChatLab Format（JSON 或 JSONL，按后缀决定）。
+
+        kwargs:
+            chat_id:  可选，会作为每条 message 的 chatId 写出（保留群归属）
+            members:  可选，显式成员列表 [{platformId, accountName}]；
+                      不传则从消息里自动收集 sender_id/sender_name 去重
+        """
+        msgs = list(messages)
+        if path.lower().endswith(".jsonl"):
+            return self._write_jsonl(path, msgs, **kwargs)
+        return self._write_json(path, msgs, **kwargs)
+
+    @staticmethod
+    def _build_members(msgs: list, extras=None) -> list:
+        seen = {}
+        for m in msgs:
+            pid = m.sender_id or ""
+            if pid and pid not in seen:
+                seen[pid] = m.sender_name or pid
+        if extras:
+            for entry in extras:
+                pid = str(entry.get("platformId", ""))
+                if pid and pid not in seen:
+                    seen[pid] = entry.get("accountName", pid)
+        return [{"platformId": k, "accountName": v} for k, v in seen.items()]
+
+    @staticmethod
+    def _msg_to_dict(m: Message, chat_id: str = "") -> dict:
+        item = {
+            "sender": m.sender_id,
+            "accountName": m.sender_name,
+            "content": m.content,
+            "type": int(m.type),
+            "timestamp": m.timestamp,
+        }
+        if chat_id:
+            item["chatId"] = chat_id
+        return item
+
+    def _write_json(self, path: str, msgs: list, **kwargs) -> int:
+        payload = {
+            "schema": "chatlab-format-v1",
+            "members": self._build_members(msgs, kwargs.get("members")),
+            "messages": [self._msg_to_dict(m, kwargs.get("chat_id", "")) for m in msgs],
+        }
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+        return len(msgs)
+
+    def _write_jsonl(self, path: str, msgs: list, **kwargs) -> int:
+        chat_id = kwargs.get("chat_id", "")
+        with open(path, "w", encoding="utf-8") as fh:
+            # 先写成员
+            for member in self._build_members(msgs, kwargs.get("members")):
+                obj = dict(member)
+                obj["_type"] = "member"
+                fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
+            # 再写消息
+            for m in msgs:
+                obj = self._msg_to_dict(m, chat_id)
+                obj["_type"] = "message"
+                fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        return len(msgs)
+
     def _read_json(self, path: str) -> Iterator[Message]:
         with open(path, "r", encoding="utf-8-sig") as fh:
             data = json.load(fh)

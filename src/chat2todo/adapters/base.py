@@ -32,6 +32,15 @@ class SourceAdapter(ABC):
         """读取文件并产出 Message。实现应当是流式的，避免一次性载入大文件。"""
         raise NotImplementedError
 
+    def write(self, path: str, messages: Iterable[Message], **kwargs) -> int:
+        """把 Message 序列写成交换格式文件（默认不支持，子类按需实现）。
+
+        返回写入的消息条数。
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} 不支持导出到 {path}"
+        )
+
     # --- 工具方法 -------------------------------------------------
     @staticmethod
     def read_lines(path: str) -> List[str]:

@@ -1,6 +1,17 @@
 ## [Unreleased] - 2026-10-27
 
-### 战略转折点：本地校准反馈闭环（用户专属壁垒）
+### ChatLab Format 深度对齐：双向交换
+
+- 此前只有 `read`（导入 ChatLab），没有 `write`（导出）——适配器协议是单向的
+- `adapters/base.py`：加可选 `write(path, messages, **kwargs)` 抽象方法，默认 raise NotImplementedError
+- `adapters/chatlab_json.py`：实现 `write()`，按后缀输出 JSON 或 JSONL：
+  - JSON: `{"schema": "chatlab-format-v1", "members": [...], "messages": [...]}`
+  - JSONL: 每行一个对象，`_type` 区分 `"member"` / `"message"`（与 read 端严格对称）
+  - members 自动从消息的 sender_id/sender_name 去重收集；可选 `chat_id` 参数保留群归属
+- CLI 新增 `c2t export-chatlab <path>`：`Store.all_messages()` → `ChatLabJsonAdapter.write()`
+- launcher `_KNOWN_SUBCOMMANDS` 加 `export-chatlab`
+- tests/test_adapters_chatlab.py 6 用例：JSON/JSONL roundtrip 消息数一致 + members 去重 + schema 字段 + qq_txt/wechat_txt 无 write 抛 NotImplementedError
+- pytest 180 passed（新增 6）；实测从真实库导出 51717 条消息 + 72 成员
 
 - 新增 `feedback` 表 + `Store.record_feedback()/load_feedback_weights()/calibration_stats()/export_calibration()/import_calibration()`：每次用户点「标为非待办 / 标记完成 / 恢复」都自动写一条校准记录（mark_reviewed → feedback 表，零侵入）
 - `load_feedback_weights()` 聚合出 `{(chat_id, sender_name): {reason_tag: adjustment}}`，adjustment ∈ [-0.5, 0.5]，样本数 < 3 过滤；**同标签在不同群权重独立**
