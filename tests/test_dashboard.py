@@ -12,8 +12,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from chat2todo.adapters import get_adapter
 from chat2todo.core import Store, dedupe, extract_todos
 from chat2todo.dashboard import (_anchor_of, _apply_anchor, _clamp_to_rects,
-                                 _ease_out_cubic, _slide_offset,
-                                 _snap_to_edges, load_items)
+                                 _ease_out_cubic, _extract_filenames,
+                                 _slide_offset, _snap_to_edges, load_items)
 
 SAMPLE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -240,6 +240,25 @@ class TestSlideOffset(unittest.TestCase):
 
     def test_empty_rects_returns_as_is(self) -> None:
         self.assertEqual(_slide_offset(5, 5, 360, 540, []), (5, 5))
+
+
+class TestExtractFilenames(unittest.TestCase):
+    """从待办文字 / 原文消息里识别 QQ 下载文件的文件名。"""
+
+    def test_qq_file_prefix(self) -> None:
+        self.assertEqual(_extract_filenames(["[文件] 周报.docx"]), ["周报.docx"])
+
+    def test_filename_in_sentence(self) -> None:
+        self.assertEqual(_extract_filenames(["把 报价单v2.xlsx 周五前发我"]),
+                         ["报价单v2.xlsx"])
+
+    def test_no_filename(self) -> None:
+        self.assertEqual(_extract_filenames(["记得吃饭", "好的"]), [])
+
+    def test_dedupe_and_order(self) -> None:
+        self.assertEqual(
+            _extract_filenames(["收 数据.csv", "再发一次 数据.csv 和 图.png"]),
+            ["数据.csv", "图.png"])
 
 
 if __name__ == "__main__":
