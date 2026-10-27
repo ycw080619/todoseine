@@ -171,7 +171,7 @@ def _set_layer(root, keep_topmost: bool) -> None:
 
 
 def _ease_out_cubic(t: float) -> float:
-    """缓动曲线：起步快、收尾慢（DeskBox 面板伸缩的手感）。"""
+    """缓动曲线：起步快、收尾慢（与 DeskBox 的 ease-out power 3 一致）。"""
     t = max(0.0, min(1.0, t))
     return 1 - (1 - t) ** 3
 
@@ -755,14 +755,14 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         render()
 
     def _fade_in() -> None:
-        """唤出时从半透淡入到目标透明度（约 130ms，ease-out cubic）。"""
+        """唤出时从半透淡入到目标透明度（约 210ms，ease-out cubic）。"""
         if not ANIM_ON:
             return
         target = float(state.get("alpha", 0.93))
         start = max(0.35, target - 0.25)
         state["fade_gen"] = state.get("fade_gen", 0) + 1
         gen = state["fade_gen"]
-        frames = 8
+        frames = 13                       # ≈210ms，对齐 DeskBox 详情页进入时长
 
         def _step(i: int) -> None:
             if state.get("fade_gen") != gen:
@@ -836,11 +836,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         state["h"], state["w"] = h, w
         state["anim_gen"] = state.get("anim_gen", 0) + 1
         gen = state["anim_gen"]
-        # 变化太小或动画关闭时直接到位；否则约 130ms 缓动过去（DeskBox 手感）
+        # 变化太小或动画关闭时直接到位；否则约 220ms 缓动过去（对齐 DeskBox Smooth 档）
         if not ANIM_ON or (abs(h - old_h) < 24 and abs(w - old_w) < 24):
             _set_size(w, h)
             return
-        frames = 8
+        frames = 14
 
         def _step(i: int) -> None:
             if state.get("anim_gen") != gen:
