@@ -1247,6 +1247,12 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         """每日早报模式：卡片式摘要，只显示最有把握的 5 条。"""
         from datetime import datetime
 
+        # 清理可能从 _render_full 残留的输入框
+        if entry.winfo_ismapped():
+            entry.place_forget()
+        if sentry.winfo_ismapped():
+            sentry.place_forget()
+
         # 取置信度最高的 5 条 pending/unconfirmed，已完成的今天的也留
         pending = [i for i in todo_items if i.status != "done"]
         done_today = [i for i in todo_items
