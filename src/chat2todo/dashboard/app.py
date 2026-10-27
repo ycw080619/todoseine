@@ -1508,7 +1508,20 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                            font=("Microsoft YaHei UI", 7), tags="body")
 
         foot_y = h - 26
-        cv.create_text(PAD, foot_y, text=f"待办 {open_count} · 已完成 {max(0, len(items) - open_count)}",
+        # 正反馈：weekly_stats 告诉用户本周进度
+        try:
+            from ..core import Store as _Store
+
+            _s = _Store(db_path)
+            try:
+                _ws = _s.weekly_stats()
+            finally:
+                _s.close()
+            _ws_text = f" · 本周清 {_ws['done']} · 新增 {_ws['new']}"
+        except Exception:  # noqa: BLE001 - 读库失败不影响界面
+            _ws_text = ""
+        cv.create_text(PAD, foot_y,
+                       text=f"待办 {open_count} · 已完成 {max(0, len(items) - open_count)}{_ws_text}",
                        anchor="w", fill=SUB, font=("Microsoft YaHei UI", 8), tags="body")
         if state["undo"]:
             cv.create_text(PAD + 92, foot_y, text="撤销", anchor="w", fill=ACCENT,
