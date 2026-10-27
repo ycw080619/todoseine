@@ -15,7 +15,7 @@ from chat2todo.core import Store, dedupe, extract_todos
 from chat2todo.dashboard import (_anchor_of, _apply_anchor, _clamp_to_rects,
                                  _ease_out_cubic, _extract_filenames,
                                  _slide_offset, _snap_to_edges, due_remindable,
-                                 load_items)
+                                 filter_items, load_items)
 from chat2todo.models import TodoItem
 
 SAMPLE = os.path.join(
@@ -289,6 +289,35 @@ class TestDueRemindable(unittest.TestCase):
         items = [self._item("今天14点前交报告", tid=1)]     # 2 小时后
         self.assertEqual(due_remindable(items, self.NOW, within=3600), [])
         self.assertEqual(len(due_remindable(items, self.NOW, within=3 * 3600)), 1)
+
+
+class TestFilterItems(unittest.TestCase):
+    """看板搜索框的过滤逻辑：大小写不敏感子串，匹配内容 / 发送人。"""
+
+    def _item(self, text, sender="张三", tid=1):
+        return TodoItem(text=text, session="s", sender=sender,
+                        message_ts=0, status="pending", todo_id=tid)
+
+    def test_empty_query_returns_all(self) -> None:
+        items = [self._item("写周报", tid=1), self._item("买牛奶", tid=2)]
+        self.assertEqual(len(filter_items(items, "")), 2)
+        self.assertEqual(len(filter_items(items, "   ")), 2)
+
+    def test_matches_text_case_insensitive(self) -> None:
+        items = [self._item("把 ReportFinal.docx 发群里", tid=1),
+                 self._item("写周报", tid=2)]
+        hit = filter_items(items, "reportfinal")
+        self.assertEqual([i.todo_id for i in hit], [1])
+
+    def test_matches_sender(self) -> None:
+        items = [self._item("写周报", sender="李四", tid=1),
+                 self._item("买牛奶", sender="张三", tid=2)]
+        hit = filter_items(items, "李四")
+        self.assertEqual([i.todo_id for i in hit], [1])
+
+    def test_no_match_returns_empty(self) -> None:
+        items = [self._item("写周报", tid=1)]
+        self.assertEqual(filter_items(items, "不存在的关键词"), [])
 
 
 if __name__ == "__main__":

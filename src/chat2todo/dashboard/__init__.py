@@ -27,7 +27,7 @@ from .app import (ACCENT, ACCENTS, ACTIVE, ANIM_ON, BLUR_ON, BORDER, BORDER_ON,
                   TABS, TEXT, TOP, W, W_MAX, W_MIN, W_MINI, _apply_ui_config,
                   _build, _config_mtime, _draw_bg, _pos_file, _rounded,
                   _ui_config, load_pos, run, save_pos)
-from .data import _is_today_due, due_remindable, load_items
+from .data import _is_today_due, due_remindable, filter_items, load_items
 from .files import (_FILE_EXTS, _documents_dir, _extract_filenames,
                     _find_downloaded_file, _fmt_ts)
 from .geom import (SNAP_PX, _anchor_of, _apply_anchor, _clamp_to_rects,

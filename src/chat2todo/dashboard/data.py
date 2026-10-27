@@ -49,6 +49,15 @@ def _is_today_due(item: TodoItem, now=None) -> bool:
     return text == "已过期" or text.startswith("今天")
 
 
+def filter_items(items, query: str):
+    """搜索框过滤：大小写不敏感子串，匹配待办内容 / 发送人；空串原样返回。"""
+    q = (query or "").strip().lower()
+    if not q:
+        return list(items)
+    return [i for i in items
+            if q in (i.text or "").lower() or q in (i.sender or "").lower()]
+
+
 def due_remindable(items, now=None, within: int = 3600) -> List[Tuple[TodoItem, int]]:
     """挑出「within 秒内到期或刚过期」的未完成条目，返回 [(item, due_ts)] 按到期升序。
 

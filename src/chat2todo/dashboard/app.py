@@ -11,7 +11,7 @@ from typing import List, Tuple
 from ..core import Store
 from ..core.hotkey import parse_hotkey
 from ..models import TodoItem
-from .data import _is_today_due, due_remindable, load_items
+from .data import _is_today_due, due_remindable, filter_items, load_items
 from .files import _extract_filenames, _find_downloaded_file, _fmt_ts
 from .geom import (SNAP_PX, _anchor_of, _apply_anchor, _clamp_to_rects,
                    _ease_out_cubic, _monitor_work_areas, _slide_offset,
@@ -322,6 +322,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         "pos_full": None,      # 展开态记住的位置（迷你胶囊有自己独立的位置）
         "pos_mini": None,
         "hover_open": False,   # 由悬停展开的：指针离开 0.8s 自动收回
+        "search": False,       # 搜索模式：顶部输入卡变成搜索框
+        "query": "",           # 当前搜索词（大小写不敏感子串过滤）
     }
 
     def housekeeping() -> None:
@@ -373,6 +375,30 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     entry.bind("<FocusIn>", ph_off)
     entry.bind("<FocusOut>", ph_on)
 
+    # ---- 搜索框（Ctrl+F 唤出，与添加框共用顶部输入卡的位置）----
+    SPLACEHOLDER = "搜索待办 / 发送人，Esc 退出"
+    sentry = tk.Entry(root, bg=FIELD, fg=TEXT, insertbackground=TEXT, bd=0,
+                      highlightthickness=0, font=("Microsoft YaHei UI", 9))
+    sentry.insert(0, SPLACEHOLDER)
+    sentry.config(fg="#6f6a64")
+    sph = {"on": True}
+
+    def sph_off(_evt=None) -> None:
+        if sph["on"]:
+            sentry.delete(0, "end")
+            sentry.config(fg=TEXT)
+            sph["on"] = False
+
+    def sph_on(_evt=None) -> None:
+        if not sentry.get().strip():
+            sentry.delete(0, "end")
+            sentry.insert(0, SPLACEHOLDER)
+            sentry.config(fg="#6f6a64")
+            sph["on"] = True
+
+    sentry.bind("<FocusIn>", sph_off)
+    sentry.bind("<FocusOut>", sph_on)
+
     # ---- 数据操作 ----
     def _store() -> Store:
         return Store(db_path)
@@ -399,6 +425,39 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         """进入/退出批量模式。"""
         state["batch"] = not state["batch"]
         state["sel"] = set()
+        if state["batch"]:
+            search_close()               # 批量操作条要占输入卡，先退出搜索
+        render()
+
+    def search_open() -> None:
+        """Ctrl+F：顶部输入卡切换成搜索框（收起态先展开）。"""
+        if state["mini"]:
+            toggle_mini()
+        if state["batch"]:
+            state["batch"] = False
+            state["sel"] = set()
+        state["search"] = True
+        render()
+        root.after(60, lambda: (sph_off(), sentry.focus_set()))
+
+    def search_close(_evt=None) -> str:
+        """Esc：清空搜索词并退回「添加待办」框。"""
+        if not state.get("search"):
+            return "break"
+        state["search"] = False
+        state["query"] = ""
+        sentry.delete(0, "end")
+        sph_on()
+        render()
+        root.focus_set()
+        return "break"
+
+    def search_type(_evt=None) -> None:
+        """边敲边过滤；清空搜索词即恢复完整列表。"""
+        if sph["on"]:
+            return
+        state["query"] = sentry.get()
+        state["offset"] = 0
         render()
 
     def toggle_sel(item) -> None:
@@ -1076,6 +1135,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                        font=("Microsoft YaHei UI", 9), tags=("body", "close"))
         if entry.winfo_ismapped():
             entry.place_forget()
+        if sentry.winfo_ismapped():
+            sentry.place_forget()
 
     def _render_full(todo_items: List[TodoItem], unconfirmed: int, err: str) -> None:
         # 先定数据，再定窗口高度（条目少就矮一点，不浪费屏幕）
@@ -1095,6 +1156,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 items = []
         else:
             items = todo_items
+
+        tab_len = len(items)             # 搜索前的标签页数量，给分段控件计数用
+        query = (state.get("query") or "").strip()
+        if query:
+            items = filter_items(items, query)
 
         h = TOP + max(1, min(len(items) or 1, 8)) * ROW + FOOT
         h = max(360, min(h, 660))
@@ -1158,13 +1224,15 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             cv.create_text(PAD + 14, 68, text=f"已选 {n_sel}", anchor="w", fill=TEXT,
                            font=("Microsoft YaHei UI", 9, "bold"), tags="body")
         else:
-            cv.create_text(PAD + 18, 68, text="＋", anchor="center", fill=SUB,
-                           font=("Microsoft YaHei UI", 12), tags="body")
+            searching = bool(state.get("search"))
+            cv.create_text(PAD + 18, 68, text=("搜" if searching else "＋"),
+                           anchor="center", fill=(ACCENT if searching else SUB),
+                           font=("Microsoft YaHei UI", 9 if searching else 12), tags="body")
 
         # 筛选标签：圆角胶囊 + 数量（DeskBox 的 All / Today / ... 风格）
         open_count = sum(1 for i in todo_items if i.status != "done")
         counts = {
-            "todo": len(items),
+            "todo": tab_len,
             "maybe": unconfirmed,
             "star": sum(1 for i in todo_items if "★重点" in (i.reason or "")),
             "today": sum(1 for i in todo_items if _is_today_due(i)),
@@ -1203,14 +1271,18 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             cv.create_text(PAD, y, text=f"读取失败：{err}", anchor="w", fill="#ff8fab",
                            width=W - 2 * PAD, tags="body")
         elif not items:
-            empty = {"todo": "暂无待办", "star": "还没有重点条目",
-                     "maybe": "没有待确认的条目",
-                     "today": "今天没有到期的待办", "done": "还没有完成的记录"}[state["tab"]]
-            hint = {"todo": "在下方添加，或等同步把聊天里的活儿捞进来",
-                    "star": "在控制台把某人/某个群设为「特别关心」即可",
-                    "maybe": "规则拿不准的条目会先放这里，点一下确认",
-                    "today": "今天没有截止项，轻松一点",
-                    "done": "完成一条就会出现在这里"}[state["tab"]]
+            if query:
+                empty = f"没有匹配「{query}」的条目"
+                hint = "换个关键词，或按 Esc 退出搜索"
+            else:
+                empty = {"todo": "暂无待办", "star": "还没有重点条目",
+                         "maybe": "没有待确认的条目",
+                         "today": "今天没有到期的待办", "done": "还没有完成的记录"}[state["tab"]]
+                hint = {"todo": "在下方添加，或等同步把聊天里的活儿捞进来",
+                        "star": "在控制台把某人/某个群设为「特别关心」即可",
+                        "maybe": "规则拿不准的条目会先放这里，点一下确认",
+                        "today": "今天没有截止项，轻松一点",
+                        "done": "完成一条就会出现在这里"}[state["tab"]]
             cv.create_text(W / 2, y + 30, text=empty, anchor="center", fill=TEXT,
                            font=("Microsoft YaHei UI", 10), tags="body")
             cv.create_text(W / 2, y + 54, text=hint, anchor="center", fill=SUB,
@@ -1332,10 +1404,15 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                        font=("Microsoft YaHei UI", 8), tags=("body", "clear"))
         cv.tag_bind("clear", "<Button-1>", lambda _e: clear_all())
 
-        # 输入框压在顶部「添加待办」卡片上（批量模式下隐藏）
+        # 输入框压在顶部卡片上：搜索模式放搜索框，批量模式两个都藏起来
         if state["batch"]:
             entry.place_forget()
+            sentry.place_forget()
+        elif state.get("search"):
+            entry.place_forget()
+            sentry.place(x=PAD + 42, y=57, width=W - 2 * PAD - 52, height=22)
         else:
+            sentry.place_forget()
             entry.place(x=PAD + 42, y=57, width=W - 2 * PAD - 52, height=22)
 
     # ---- 交互绑定 ----
@@ -1410,16 +1487,22 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     def _new_todo(_evt=None) -> str:
         if state["mini"]:
             toggle_mini()
+        if state.get("search"):
+            search_close()               # Ctrl+N：从搜索切回「添加待办」
         ph_off()
         root.after(60, entry.focus_set)
         return "break"        # Ctrl+N：收起时先展开，再把光标放进输入框
 
     entry.bind("<Return>", submit)
     entry.bind("<Escape>", _blur)
+    sentry.bind("<KeyRelease>", search_type)
+    sentry.bind("<Escape>", search_close)
+    sentry.bind("<Return>", lambda _e: "break")
 
     root.bind("<Escape>", lambda _e: close())
     root.bind("<Control-z>", lambda _e: undo())
     root.bind("<Control-n>", _new_todo)
+    root.bind("<Control-f>", lambda _e: (search_open(), "break")[1])
 
     tick()
     render()
