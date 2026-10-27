@@ -13,12 +13,19 @@ from ..models import Message
 
 
 class SourceAdapter(ABC):
-    """把一个导出文件转换成统一的 Message 序列。"""
+    """把一个导出文件转换成统一的 Message 序列。
+
+    新增平台 = 继承 SourceAdapter 并实现 read()；第三方贡献者写适配器时
+    只需实现这一个方法 + 两个类属性，然后通过 entry points 注册。
+    """
 
     #: 适配器标识，CLI 的 --adapter 用它选择
     name: str = "base"
     #: 支持的文件后缀（小写，含点）
     extensions: tuple = ()
+    #: 权限级别：'file'（纯文本导出，低权限）/ 'db'（读本机聊天数据库，中权限）/ 'uia'（UI 自动化，高权限）
+    #: UI 层可以据此给用户展示"这个适配器需要管理员权限吗"之类的提示
+    permission_level: str = "file"
 
     @abstractmethod
     def read(self, path: str) -> Iterable[Message]:

@@ -61,6 +61,21 @@ CREATE TABLE IF NOT EXISTS chat_names (
     chat_id TEXT PRIMARY KEY,
     name    TEXT NOT NULL DEFAULT ''
 );
+
+-- 用户校准反馈：每次点「非待办/完成/恢复」都写一条，长这个用户专属权重表
+CREATE TABLE IF NOT EXISTS feedback (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    todo_id      INTEGER NOT NULL,
+    chat_id      TEXT NOT NULL DEFAULT '',
+    sender       TEXT NOT NULL DEFAULT '',
+    reason_tags  TEXT NOT NULL DEFAULT '',
+    confidence   REAL NOT NULL DEFAULT 0,
+    user_action  TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_lookup
+    ON feedback (chat_id, sender, reason_tags);
 """
 
 
@@ -388,7 +403,12 @@ class Store:
         ]
 
     def mark_reviewed(self, todo_id: int, status: Optional[str] = None) -> bool:
-        """记录某条已被复核，可选同时改状态（pending / unconfirmed / noise）。"""
+        """记录某条已被复核，可选同时改状态（pending / unconfirmed / noise）。
+
+        关键：改状态的同时把用户纠偏信号写进 feedback 表——
+        noise → rejected（这条被规则误抓）
+        done → confirmed（规则抽对了）
+        """
         if status:
             cur = self.conn.execute(
                 "UPDATE todos SET reviewed=1, status=? WHERE id=?", (status, todo_id)
@@ -397,8 +417,162 @@ class Store:
             cur = self.conn.execute(
                 "UPDATE todos SET reviewed=1 WHERE id=?", (todo_id,)
             )
+        # 自动记录校准反馈
+        if status in ("noise", "done"):
+            action = "rejected" if status == "noise" else "confirmed"
+            try:
+                self.record_feedback(todo_id, action)
+            except Exception:  # noqa: BLE001 - 校准记账不能阻塞主流程
+                pass
         self.conn.commit()
         return cur.rowcount > 0
+
+    # ---------- 用户校准反馈闭环 -------------------------------
+    def record_feedback(self, todo_id: int, user_action: str) -> int:
+        """写一条校准反馈：完成/非待办/恢复。返回写入行数。
+
+        从 todos 反查 chat_id/sender/reason/confidence，入库。
+        reason 里的标签分号拆成 reason_tags，方便按 reason 粒度算权重。
+        """
+        row = self.conn.execute(
+            "SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
+        if not row:
+            return 0
+        # chat_id 从 messages 反查（待办存的是 ts+sender，消息里才有 chat_id）
+        chat_id = ""
+        try:
+            mrow = self.conn.execute(
+                "SELECT chat_id FROM messages WHERE ts=? AND sender_id=? LIMIT 1",
+                (row["ts"], row["sender"])).fetchone()
+            if mrow:
+                chat_id = mrow["chat_id"] or ""
+        except Exception:  # noqa: BLE001 - messages 可能不存在这个 ts/sender 组合
+            pass
+        reason_tags = row["reason"] or ""
+        if reason_tags:
+            # "★重点 · 行动词:需要" → 拆成 ["★重点 · 行动词:需要"]
+            # 保留完整 reason 字符串（分号分隔的标签），extract 用的时候再解析
+            pass
+        created_at = datetime.now().isoformat(timespec="seconds")
+        cur = self.conn.execute(
+            "INSERT INTO feedback "
+            "(todo_id, chat_id, sender, reason_tags, confidence, user_action, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (todo_id, chat_id, row["sender"], reason_tags,
+             row["confidence"], user_action, created_at))
+        self.conn.commit()
+        return cur.rowcount
+
+    def load_feedback_weights(self) -> dict:
+        """把 feedback 表聚合成权重字典，给 extract.py score_message() 用。
+
+        返回 {(chat_id, sender): {reason_key: adjustment}}，adjustment ∈ [-0.5, 0.5]
+        规则：每个 (chat_id, sender, reason_key) 组合的 confirmed_rate - rejected_rate
+        再缩放到 [-0.5, 0.5] 区间；总样本 < 3 的不输出（噪声太大）。
+
+        注意：reason_key 是 reason 字符串里的分号分隔标签，每个标签单独算权重。
+        """
+        rows = self.conn.execute(
+            "SELECT chat_id, sender, reason_tags, user_action "
+            "FROM feedback WHERE chat_id != '' OR sender != ''").fetchall()
+        # 先展平成每 (chat_id, sender, reason_tag) 一条
+        # reason_tags 里每个分号分隔的 tag 单独计数
+        pairs: dict = {}
+        for r in rows:
+            tags = [t.strip() for t in (r["reason_tags"] or "").split(";") if t.strip()]
+            # 兼容老数据：整个 reason 也可能是一个标签
+            if not tags and r["reason_tags"]:
+                tags = [r["reason_tags"].strip()]
+            # reason 里带 "通知全体" / "行动词:需要" 这样的子标签也拆出来
+            fine_tags = []
+            for t in tags:
+                fine_tags.append(t)                              # 整条
+                if "·" in t:
+                    fine_tags.append(t.split("·")[-1].strip())   # 最后那段，如 "行动词:需要"
+            for tag in set(fine_tags):
+                if not tag:
+                    continue
+                key = (r["chat_id"], r["sender"], tag)
+                c = pairs.setdefault(key, {"confirmed": 0, "rejected": 0})
+                if r["user_action"] == "confirmed":
+                    c["confirmed"] += 1
+                elif r["user_action"] == "rejected":
+                    c["rejected"] += 1
+        # 聚合成权重字典（按 chat_id + sender 维度分组）
+        out: dict = {}
+        for (chat_id, sender, tag), counts in pairs.items():
+            total = counts["confirmed"] + counts["rejected"]
+            if total < 3:
+                continue                                # 样本太少，忽略
+            rate = counts["confirmed"] / total
+            adj = round((rate - 0.5) * 1.0, 2)           # [-0.5, 0.5] 区间
+            if abs(adj) < 0.05:
+                continue                                # 权重太小，省一次查表
+            ck = (chat_id, sender)
+            out.setdefault(ck, {})[tag] = adj
+        return out
+
+    def calibration_stats(self) -> dict:
+        """给控制台/CLI 展示：攒了多少条校准。"""
+        try:
+            rows = self.conn.execute(
+                "SELECT user_action, COUNT(*) FROM feedback GROUP BY user_action").fetchall()
+            total = self.conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0]
+            unique_users = self.conn.execute(
+                "SELECT COUNT(DISTINCT chat_id || '/' || sender) FROM feedback").fetchone()[0]
+            return {r[0]: r[1] for r in rows} | {"total": total, "unique_keys": unique_users}
+        except Exception:  # noqa: BLE001
+            return {"total": 0, "unique_keys": 0}
+
+    def export_calibration(self, path: str) -> int:
+        """导出校准档案到 JSON。格式是这个项目专属的（有 schema 版本），别人读不懂。
+
+        返回导出的 feedback 条数。"""
+        import json
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({
+                "schema": "c2t-calibration-v1",
+                "exported_at": datetime.now().isoformat(timespec="seconds"),
+                "feedback": [dict(r) for r in self.conn.execute(
+                    "SELECT * FROM feedback ORDER BY id").fetchall()],
+                "chat_names": {r["chat_id"]: r["name"]
+                               for r in self.conn.execute(
+                                   "SELECT * FROM chat_names").fetchall()},
+            }, fh, ensure_ascii=False, indent=2)
+        return self.conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0]
+
+    def import_calibration(self, path: str) -> dict:
+        """从 JSON 导入校准档案。返回合并后的统计。
+
+        schema 版本不匹配时跳过导入。已存在的 feedback 记录（同 todo_id + action）不重复插入。
+        """
+        import json
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if data.get("schema") != "c2t-calibration-v1":
+            raise ValueError(f"不识别的校准档案 schema：{data.get('schema')}")
+        inserted = 0
+        for row in data.get("feedback", []):
+            # 同 todo_id + action 不重复
+            cur = self.conn.execute(
+                "SELECT id FROM feedback WHERE todo_id=? AND user_action=?",
+                (row["todo_id"], row["user_action"])).fetchone()
+            if cur:
+                continue
+            self.conn.execute(
+                "INSERT INTO feedback (todo_id, chat_id, sender, reason_tags, "
+                "confidence, user_action, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (row["todo_id"], row.get("chat_id", ""), row.get("sender", ""),
+                 row.get("reason_tags", ""), row.get("confidence", 0),
+                 row["user_action"], row.get("created_at", "")))
+            inserted += 1
+        for cid, name in data.get("chat_names", {}).items():
+            self.conn.execute(
+                "INSERT OR REPLACE INTO chat_names (chat_id, name) VALUES (?, ?)",
+                (cid, name))
+        self.conn.commit()
+        return {"inserted": inserted, "total": self.calibration_stats()}
 
     def add_todo(self, text: str, session: str = "手动", sender: str = "我") -> int:
         """手动添加一条待办（看板上的「＋ 添加」）。返回写入行数。"""

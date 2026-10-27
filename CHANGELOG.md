@@ -1,6 +1,14 @@
 ## [Unreleased] - 2026-10-27
 
-- 条目行 hover 高亮：鼠标移到任意待办行时背景矩形从 `#2c2b31` 微亮到 `#3a363d`，移走恢复；每行背景用 `row-{todo_id}` 稳定 tag，render 后重绑 `<Enter>/<Leave>`（cv.delete("body") 会清旧绑定）
+### 战略转折点：本地校准反馈闭环（用户专属壁垒）
+
+- 新增 `feedback` 表 + `Store.record_feedback()/load_feedback_weights()/calibration_stats()/export_calibration()/import_calibration()`：每次用户点「标为非待办 / 标记完成 / 恢复」都自动写一条校准记录（mark_reviewed → feedback 表，零侵入）
+- `load_feedback_weights()` 聚合出 `{(chat_id, sender_name): {reason_tag: adjustment}}`，adjustment ∈ [-0.5, 0.5]，样本数 < 3 过滤；**同标签在不同群权重独立**
+- `extract.score_message(msg, weights_map=None)` 接权重——同群同 sender 上被 reject 过的 reason_tag 降分，被 confirm 过的升分；**db-import 入口自动 load_feedback_weights() 灌进 extract_todos()**，不需要用户手动干预
+- 校准档案导出/导入：`schema: c2t-calibration-v1` 格式（项目专属），自带 chat_names；同 todo_id + action 重复导入自动跳过；schema 版本不匹配拒绝
+- **适配器基类 `SourceAdapter` 加 `permission_level` 字段**：`'file'`（纯文本导出）/ `'db'`（读本机聊天数据库）/ `'uia'`（UI 自动化）；给未来插件生态和 UIA 适配器预留权限分级接口
+
+### 看板体验优化（视觉/性能）
 - loop 轮询 30s → 5s：`refresh_ms` 固定 5000ms，render debounce 兜底——条目/筛选条件/库 mtime 全没变就整跳过，mtime 没变时 CPU 几乎零占用；同步完新待办最多 5s 就能看到
 - mini ↔ 展开切换位置动画：原来瞬间切位置，现在启动 14 帧 ease_out_cubic 帧循环（与 _resize 的尺寸动画并行），约 220ms 整体过渡——同时动画位置和尺寸，视觉上更连贯
 - render debounce：loop 里每次调 render() 都算一次 debounce hash（mini/tab/query/batch/pin/search + db mtime + 条目 signature 列表），和上次一样就整跳过，不 cv.delete("body") 不重画；库里没新待办时 CPU 几乎零占用

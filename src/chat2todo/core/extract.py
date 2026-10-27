@@ -90,8 +90,12 @@ def _hits(text: str, words: Iterable[str]) -> List[str]:
     return [w for w in words if w in text]
 
 
-def score_message(msg: Message) -> tuple:
-    """返回 (分数, 命中的理由列表)。"""
+def score_message(msg: Message, weights_map: dict = None) -> tuple:
+    """返回 (分数, 命中的理由列表)。
+
+    weights_map 可选：{(chat_id, sender_name): {reason_tag: adjustment}}
+    对每个命中的 reason 标签额外叠加用户校准权重 [-0.5, 0.5]。
+    """
     text = (msg.content or "").strip()
     if not text or msg.type not in (MsgType.TEXT, MsgType.REPLY):
         return 0, []
@@ -129,16 +133,28 @@ def score_message(msg: Message) -> tuple:
     score += penalty
     reasons.extend(penalty_reasons)
 
+    # 用户校准权重叠加：同群同 sender 上被 reject 过的 reason_tag 降权，被 confirm 过的升权
+    if weights_map:
+        ck = (msg.chat_id or "", msg.sender_name or "")
+        local_w = weights_map.get(ck, {})
+        if local_w:
+            for tag in reasons:
+                for key, adj in local_w.items():
+                    if key and key in tag:
+                        score = round(score + adj * 7.0, 2)   # 权重域 [-3.5, 3.5]
+                        break
+
     return score, reasons
 
 
-def extract_todos(messages: Iterable[Message], session: str = "") -> List[TodoItem]:
+def extract_todos(messages: Iterable[Message], session: str = "",
+                  weights_map: dict = None) -> List[TodoItem]:
     """从消息流里抽取出待办，返回按时间排序的结果。"""
     todos: List[TodoItem] = []
     for msg in messages:
         if classify(msg) == "risk":
             continue
-        score, reasons = score_message(msg)
+        score, reasons = score_message(msg, weights_map)
         if score < WEAK_THRESHOLD:
             continue
         todos.append(
@@ -148,7 +164,7 @@ def extract_todos(messages: Iterable[Message], session: str = "") -> List[TodoIt
                 sender=msg.sender_name,
                 message_ts=msg.timestamp,
                 reason=("★重点 · " if getattr(msg, "star", False) else "") + "; ".join(reasons),
-                confidence=round(min(score / 7.0, 1.0), 2),
+                confidence=round(min(max(score, 0) / 7.0, 1.0), 2),
                 status="pending" if score >= TODO_THRESHOLD else "unconfirmed",
             )
         )

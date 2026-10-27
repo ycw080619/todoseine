@@ -409,5 +409,146 @@ class TestWeeklyStats(unittest.TestCase):
                 store.close()
 
 
+class TestCalibration(unittest.TestCase):
+    """用户校准反馈闭环：mark_reviewed → feedback 表 → weights_map → extract 权重微调。"""
+
+    def _store(self, tmp: str) -> Store:
+        return Store(os.path.join(tmp, "chat.db"))
+
+    def _seed_msg_and_todo(self, store: Store, chat_id: str, sender: str,
+                           content: str, reason: str = "") -> int:
+        """写一条 messages + todos，返回 todo_id。"""
+        ts = int(datetime.now().timestamp()) - 60
+        store.add_messages([
+            Message(timestamp=ts, sender_id=sender, sender_name=sender,
+                    content=content, chat_id=chat_id),
+        ], session="qq")
+        # 直接用底层 insert 跳过 extract（测试里控制 reason 更方便）
+        store.conn.execute(
+            "INSERT INTO todos (text, session, sender, ts, reason, confidence, status, created_at) "
+            "VALUES (?, 'qq', ?, ?, ?, 0.6, 'pending', ?)",
+            (content, sender, ts, reason, datetime.now().isoformat()))
+        store.conn.commit()
+        return store.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    def test_review_noise_auto_records_feedback(self):
+        """标为 noise → feedback 表自动记 rejected。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "chat.db"))
+            try:
+                tid = self._seed_msg_and_todo(
+                    store, chat_id="g1", sender="张三",
+                    content="@全体成员 今天放假", reason="通知全体")
+                self.assertTrue(store.mark_reviewed(tid, "noise"))
+                stats = store.calibration_stats()
+                self.assertEqual(stats["total"], 1)
+                self.assertEqual(stats.get("rejected"), 1)
+                # weights 还没够 3 条样本，所以不输出
+                self.assertEqual(store.load_feedback_weights(), {})
+            finally:
+                store.close()
+
+    def test_weights_emerge_after_three_samples(self):
+        """同 (chat_id, sender) 上连续 reject 3 次，权重表输出该 reason_tag 降权。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "chat.db"))
+            try:
+                base_ts = int(datetime.now().timestamp())
+                for i in range(3):
+                    tid = self._seed_msg_and_todo_at(
+                        store, chat_id="g1", sender="张三",
+                        content=f"@全体成员 放假{i}", reason="通知全体",
+                        ts_offset=-60 + i)
+                    store.mark_reviewed(tid, "noise")
+                weights = store.load_feedback_weights()
+                self.assertIn(("g1", "张三"), weights)
+                self.assertIn("通知全体", weights[("g1", "张三")])
+                self.assertLess(weights[("g1", "张三")]["通知全体"], 0)  # 负权重
+
+                # 同标签在不同群不共享权重
+                tid2 = self._seed_msg_and_todo_at(
+                    store, chat_id="g2", sender="张三",
+                    content="@全体成员 开会", reason="通知全体", ts_offset=100)
+                store.mark_reviewed(tid2, "done")  # g2 里这条被确认
+                weights = store.load_feedback_weights()
+                # g1 里 "通知全体" 还是负，g2 里不够样本数不输出
+                self.assertLess(weights[("g1", "张三")]["通知全体"], 0)
+            finally:
+                store.close()
+
+    def test_extract_respects_weights(self):
+        """extract_todos 接 weights_map 时，被 reject 过的 reason_tag 降分会让消息过不了阈值。"""
+        # 基线：只有 @全体成员（4分）+ 行动词（3分）= 7 分，抽到
+        msg = Message(timestamp=100, sender_id="s1", sender_name="张三",
+                      content="@全体成员 放假 需要处理", chat_id="g1")
+        todos = extract_todos([msg], session="qq")
+        self.assertTrue(len(todos) >= 1)
+
+        # 给 "通知全体" 强加 -0.5 权重 → 4 + 3 + (-0.5*7) = 3.5，还是在弱阈值之上
+        # 改成 -0.6 → 4 + 3 + (-0.6*7) = 2.8 < 3，应该被过滤
+        weights = {("g1", "张三"): {"通知全体": -0.6}}
+        todos = extract_todos([msg], session="qq", weights_map=weights)
+        self.assertEqual(todos, [])
+
+    def test_calibration_roundtrip(self):
+        """export_calibration → import_calibration 往返一致。"""
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            store1 = Store(os.path.join(tmp, "a.db"))
+            try:
+                base_ts = int(datetime.now().timestamp())
+                for i in range(3):
+                    tid = self._seed_msg_and_todo_at(
+                        store1, chat_id="g1", sender="张三",
+                        content=f"@全体成员 放假{i}", reason="通知全体",
+                        ts_offset=-60 + i)
+                    store1.mark_reviewed(tid, "noise")
+                store1.set_chat_names({"g1": "测试群"})
+
+                dst = os.path.join(tmp, "cal.json")
+                n = store1.export_calibration(dst)
+                self.assertEqual(n, 3)
+
+                store2 = Store(os.path.join(tmp, "b.db"))
+                try:
+                    res = store2.import_calibration(dst)
+                    self.assertEqual(res["inserted"], 3)
+                    self.assertEqual(res["total"]["total"], 3)
+                    self.assertEqual(store2.chat_name_map(), {"g1": "测试群"})
+                    self.assertEqual(store1.load_feedback_weights(),
+                                     store2.load_feedback_weights())
+                finally:
+                    store2.close()
+            finally:
+                store1.close()
+
+    def test_import_rejects_bad_schema(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "chat.db"))
+            try:
+                bad = os.path.join(tmp, "bad.json")
+                with open(bad, "w", encoding="utf-8") as fh:
+                    json.dump({"schema": "v0-legacy", "feedback": []}, fh)
+                self.assertRaises(ValueError, store.import_calibration, bad)
+            finally:
+                store.close()
+
+    def _seed_msg_and_todo_at(self, store: Store, chat_id: str, sender: str,
+                              content: str, reason: str, ts_offset: int = 0) -> int:
+        """_seed_msg_and_todo 的变体：允许指定时间戳偏移，避免 UNIQUE 冲突。"""
+        ts = int(datetime.now().timestamp()) + ts_offset
+        store.add_messages([
+            Message(timestamp=ts, sender_id=sender, sender_name=sender,
+                    content=content, chat_id=chat_id),
+        ], session="qq")
+        store.conn.execute(
+            "INSERT INTO todos (text, session, sender, ts, reason, confidence, status, created_at) "
+            "VALUES (?, 'qq', ?, ?, ?, 0.6, 'pending', ?)",
+            (content, sender, ts, reason, datetime.now().isoformat()))
+        store.conn.commit()
+        return store.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+
 if __name__ == "__main__":
     unittest.main()

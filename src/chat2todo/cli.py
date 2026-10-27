@@ -480,7 +480,20 @@ def cmd_db_import(args) -> int:
         print("没有读到消息（可能后端返回空）")
         return 1
     messages = dedupe(messages)
-    todos = extract_todos(messages, session=args.session or "qq")
+
+    # 用户校准权重：如果本地库已存在，先查 feedback 表聚合成权重字典
+    weights = None
+    try:
+        store = Store(_db(args))
+        try:
+            weights = store.load_feedback_weights() or None
+        finally:
+            store.close()
+    except Exception:  # noqa: BLE001 - 权重加载失败不阻塞导入
+        pass
+
+    todos = extract_todos(messages, session=args.session or "qq",
+                          weights_map=weights)
 
     from .semantic import vector_pass
 
