@@ -5,14 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+# 核心目标平台：Windows 11 × Python 3.12/3.13
+# ubuntu 冒烟只保证 CLI 在 Linux 上不崩（README 示例命令路径兼容）
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python: ["3.9", "3.11", "3.12"]
+        os: [windows-latest]
+        python: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,12 +25,26 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Test
+      - name: Test (unittest)
         run: python -m unittest discover -s tests -v
+      - name: Test (pytest, fixture-based cases)
+        run: python -m pytest tests -q
       - name: Lint
         run: ruff check src tests
-      - name: Smoke test CLI
-        if: runner.os == 'Linux'
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
         run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Smoke test CLI
+        run: |
+          python -m unittest discover -s tests -v
           python -m chat2todo import examples/sample_qq_export.txt --db /tmp/c2t.db
           python -m chat2todo todos --db /tmp/c2t.db
