@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -47,7 +48,10 @@ ACCENTS = ["#ff6b6b", "#ff9f43", "#ffd93d", "#6ee7a8",
 W, H = 360, 540        # 展开态
 RADIUS = 18            # 面板圆角，可由 [ui] radius 覆盖
 BORDER_ON = True       # 是否画 1px 描边（[ui] border）
+BORDER_W = 1           # 面板描边宽度（[ui] border_width，0-4）
 SHOW_CLOCK = True      # 标题栏是否显示时间（[ui] clock）
+ANIM_ON = True         # 唤出淡入 / 尺寸缓动动画（[ui] anim）
+BLUR_ON = False        # Win10+ 毛玻璃（[ui] blur，实验性，与透明色键可能冲突）
 W_MINI, H_MINI = 200, 108
 PAD = 16
 TOP = 156              # 列表起始 y（顶部输入卡之下）
@@ -166,6 +170,117 @@ def _set_layer(root, keep_topmost: bool) -> None:
         pass
 
 
+def _ease_out_cubic(t: float) -> float:
+    """缓动曲线：起步快、收尾慢（DeskBox 面板伸缩的手感）。"""
+    t = max(0.0, min(1.0, t))
+    return 1 - (1 - t) ** 3
+
+
+def _monitor_work_areas() -> List[Tuple[int, int, int, int]]:
+    """所有显示器的工作区矩形 [(left, top, right, bottom)]。
+
+    副屏拔掉/换位置后，保存的坐标可能落在虚空里；非 Windows 或枚举
+    失败时返回空列表（调用方退回不钳位）。
+    """
+    if os.name != "nt":
+        return []
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD),
+                        ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT),
+                        ("dwFlags", wintypes.DWORD)]
+
+        user32 = ctypes.windll.user32
+        rects: List[Tuple[int, int, int, int]] = []
+        callback_t = ctypes.WINFUNCTYPE(
+            ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p,
+            ctypes.POINTER(wintypes.RECT), ctypes.c_void_p)
+
+        def _cb(hmon, _hdc, _rect, _lp) -> int:
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            if user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+                rc = info.rcWork
+                rects.append((rc.left, rc.top, rc.right, rc.bottom))
+            return 1
+
+        user32.EnumDisplayMonitors(None, None, callback_t(_cb), 0)
+        return rects
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _clamp_to_rects(x: int, y: int, w: int, h: int, rects,
+                    margin: int = 48) -> Tuple[int, int]:
+    """把窗口左上角钳位到工作区并集内，保证至少 margin 像素可见。
+
+    当前位置已经够可见就原样返回；否则贴到最近工作区的边缘收回来。
+    """
+    if not rects:
+        return x, y
+
+    def _visible(nx: int, ny: int) -> bool:
+        for left, top, right, bottom in rects:
+            if (min(nx + w, right) - max(nx, left) >= margin
+                    and min(ny + h, bottom) - max(ny, top) >= margin):
+                return True
+        return False
+
+    if _visible(x, y):
+        return x, y
+    cx, cy = x + w // 2, y + h // 2
+
+    def _dist2(rc) -> int:
+        left, top, right, bottom = rc
+        dx = max(left - cx, 0, cx - right)
+        dy = max(top - cy, 0, cy - bottom)
+        return dx * dx + dy * dy
+
+    left, top, right, bottom = min(rects, key=_dist2)
+    nx = min(max(x, left - w + margin), right - margin)
+    ny = min(max(y, top - h + margin), bottom - margin)
+    return nx, ny
+
+
+def _apply_blur(root, enable: bool) -> bool:
+    """Win10+ 毛玻璃（SetWindowCompositionAttribute / ACCENT_ENABLE_BLURBEHIND）。
+
+    与 -alpha 半透明叠加时，窗口背后的内容会糊成一片（DeskBox 的毛玻璃
+    卡片感）。返回系统是否接受了设置；失败就静默退回普通半透明。
+    """
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+
+        class AccentPolicy(ctypes.Structure):
+            _fields_ = [("AccentState", ctypes.c_int),
+                        ("AccentFlags", ctypes.c_int),
+                        ("GradientColor", ctypes.c_uint32),
+                        ("AnimationId", ctypes.c_int)]
+
+        class WinCompAttrData(ctypes.Structure):
+            _fields_ = [("Attribute", ctypes.c_int),
+                        ("Data", ctypes.c_void_p),
+                        ("SizeOfData", ctypes.c_size_t)]
+
+        hwnd = _hwnd_of(root)
+        if not hwnd:
+            return False
+        # AccentState: 0=关闭 3=BLURBEHIND；GradientColor 是 ABGR 叠加色
+        policy = AccentPolicy(3 if enable else 0, 0, 0x00101010, 0)
+        data = WinCompAttrData(19, ctypes.addressof(policy),
+                               ctypes.sizeof(policy))
+        return bool(ctypes.windll.user32.SetWindowCompositionAttribute(
+            hwnd, ctypes.byref(data)))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _rounded(canvas, x1, y1, x2, y2, r, **kw):
     """用平滑多边形画圆角矩形（避免依赖第三方绘图库）。"""
     pts = [
@@ -174,6 +289,15 @@ def _rounded(canvas, x1, y1, x2, y2, r, **kw):
         x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
     ]
     return canvas.create_polygon(pts, smooth=True, **kw)
+
+
+def _draw_bg(cv, w: int, h: int) -> None:
+    """重画面板底（圆角 + 描边）；建窗 / 改尺寸 / 热重载三处共用。"""
+    cv.delete("bg")
+    _rounded(cv, 1, 1, w - 1, h - 1, RADIUS, fill=PANEL,
+             outline=BORDER if BORDER_ON else PANEL,
+             width=BORDER_W if BORDER_ON else 0, tags="bg")
+    cv.tag_lower("bg")
 
 
 def _ui_config() -> dict:
@@ -235,13 +359,20 @@ def _apply_ui_config() -> dict:
     import re as _re
 
     global ACCENT, PANEL, BORDER, TEXT, SUB, LINE, FIELD, ACTIVE
+    global RADIUS, W, BORDER_ON, SHOW_CLOCK, BORDER_W, ANIM_ON, BLUR_ON
 
     ui = _ui_config()
     theme = str(ui.get("theme") or "dark").lower()
+    # 每次热重载都先铺回默认值，避免上一次主题/配色的残留
+    ACCENT = "#4cc2ff"
     if theme == "light":
         PANEL, BORDER = "#f8f8fb", "#e3e3ec"
         TEXT, SUB, LINE = "#1f2330", "#6b7280", "#ececf3"
         FIELD, ACTIVE = "#ffffff", "#e8eefc"
+    else:
+        PANEL, BORDER = "#212024", "#3a3940"
+        TEXT, SUB, LINE = "#f2f2f4", "#9c9ca6", "#332f2f"
+        FIELD, ACTIVE = "#2c2b31", "#3a3942"
 
     accent = str(ui.get("accent") or "").strip()
     if _re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
@@ -249,11 +380,13 @@ def _apply_ui_config() -> dict:
     panel = str(ui.get("panel") or "").strip()
     if _re.fullmatch(r"#[0-9a-fA-F]{6}", panel):
         PANEL = panel
+    border_color = str(ui.get("border_color") or "").strip()
+    if _re.fullmatch(r"#[0-9a-fA-F]{6}", border_color):
+        BORDER = border_color
     try:
         alpha = float(ui.get("opacity", 0.93))
     except (TypeError, ValueError):
         alpha = 0.93
-    global RADIUS, W, BORDER_ON, SHOW_CLOCK
     try:
         RADIUS = max(0, min(30, int(ui.get("radius", RADIUS))))
     except (TypeError, ValueError):
@@ -262,8 +395,14 @@ def _apply_ui_config() -> dict:
         W = max(280, min(560, int(ui.get("width", W))))
     except (TypeError, ValueError):
         pass
+    try:
+        BORDER_W = max(0, min(4, int(ui.get("border_width", 1))))
+    except (TypeError, ValueError):
+        BORDER_W = 1
     BORDER_ON = str(ui.get("border", "true")).lower() not in ("false", "0", "no")
     SHOW_CLOCK = str(ui.get("clock", "true")).lower() not in ("false", "0", "no")
+    ANIM_ON = str(ui.get("anim", "true")).lower() not in ("false", "0", "no")
+    BLUR_ON = str(ui.get("blur", "false")).lower() in ("true", "1", "yes")
     return {"alpha": max(0.35, min(1.0, alpha))}
 
 
@@ -276,6 +415,8 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
     saved = load_pos()
     if saved and (x, y) == (120, 120):
         x, y = saved
+    # 副屏拔掉/换位置后坐标可能落在虚空里，启动时钳回可见工作区
+    x, y = _clamp_to_rects(x, y, W, H, _monitor_work_areas())
     if not _single_instance():
         print("看板已在运行（Ctrl+Alt+D 可唤出）", file=sys.stderr)
         return 0
@@ -329,14 +470,16 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     cv = tk.Canvas(root, width=W, height=H, bg=KEY, highlightthickness=0)
     cv.pack()
     root.after(150, lambda: _set_layer(root, False))
-    _rounded(cv, 1, 1, W - 1, H - 1, RADIUS, fill=PANEL,
-                 outline=BORDER if BORDER_ON else PANEL, width=1 if BORDER_ON else 0, tags="bg")
+    if BLUR_ON:
+        root.after(300, lambda: _apply_blur(root, True))
+    _draw_bg(cv, W, H)
 
     state = {
         "tab": {"pending": "todo", "unconfirmed": "maybe", "done": "done"}.get(status, "todo"),
         "offset": 0,
         "mini": False,
         "h": H,
+        "alpha": alpha,      # 目标透明度（动画终点 / Ctrl+滚轮 会同步更新）
         "busy": False,
         "undo": None,          # (todo_id, 原状态)
         "counts": (0, 0),
@@ -611,6 +754,29 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         _set_layer(root, state["pin"])
         render()
 
+    def _fade_in() -> None:
+        """唤出时从半透淡入到目标透明度（约 130ms，ease-out cubic）。"""
+        if not ANIM_ON:
+            return
+        target = float(state.get("alpha", 0.93))
+        start = max(0.35, target - 0.25)
+        state["fade_gen"] = state.get("fade_gen", 0) + 1
+        gen = state["fade_gen"]
+        frames = 8
+
+        def _step(i: int) -> None:
+            if state.get("fade_gen") != gen:
+                return                       # 被更新的唤出/热重载打断
+            try:
+                root.attributes("-alpha", round(
+                    start + (target - start) * _ease_out_cubic(i / frames), 3))
+            except Exception:  # noqa: BLE001
+                return
+            if i < frames:
+                root.after(16, lambda: _step(i + 1))
+
+        _step(0)
+
     def reveal() -> None:
         """热键唤出：每次都浮到最前；闲置 15 秒后自动沉回桌面层（钉住则常驻）。"""
         if state.get("pin"):
@@ -622,6 +788,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             root.lift()
         except Exception:  # noqa: BLE001
             pass
+        _fade_in()
 
     # 全局热键只置一个标志，真正操作在 UI 线程的 tick 里做（避免跨线程动 Tk）
     hotkey_spec = "ctrl+alt+d"
@@ -648,19 +815,43 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         render()
 
     # ---- 尺寸与列表 ----
+    def _set_size(w: int, h: int) -> None:
+        """直接到位：改窗口/画布尺寸并重画背景。
+
+        位置从 geometry() 字符串解析（窗口未映射时 winfo_x/y 会返回 0，
+        直接把窗口顶到 (0,0)——启动动画阶段就会踩到）。
+        """
+        import re as _re
+
+        m = _re.search(r"([+-]\d+)([+-]\d+)$", root.geometry())
+        pos = f"{m.group(1)}{m.group(2)}" if m else "+120+120"
+        root.geometry(f"{w}x{h}{pos}")
+        cv.config(width=w, height=h)
+        _draw_bg(cv, w, h)
+
     def _resize(h: int, w: int = W) -> None:
         if h == state["h"] and w == state["w"]:
             return
+        old_h, old_w = state.get("h", h), state.get("w", w)
         state["h"], state["w"] = h, w
-        geo = root.geometry()                      # 形如 360x540+120+120
-        pos = geo[geo.find("+"):]
-        root.geometry(f"{w}x{h}{pos}")
-        cv.config(width=w, height=h)
-        cv.delete("bg")
-        _rounded(cv, 1, 1, w - 1, h - 1, RADIUS, fill=PANEL,
-                 outline=BORDER if BORDER_ON else PANEL,
-                 width=1 if BORDER_ON else 0, tags="bg")
-        cv.tag_lower("bg")
+        state["anim_gen"] = state.get("anim_gen", 0) + 1
+        gen = state["anim_gen"]
+        # 变化太小或动画关闭时直接到位；否则约 130ms 缓动过去（DeskBox 手感）
+        if not ANIM_ON or (abs(h - old_h) < 24 and abs(w - old_w) < 24):
+            _set_size(w, h)
+            return
+        frames = 8
+
+        def _step(i: int) -> None:
+            if state.get("anim_gen") != gen:
+                return                       # 被更新的尺寸打断
+            t = _ease_out_cubic(i / frames)
+            _set_size(round(old_w + (w - old_w) * t),
+                      round(old_h + (h - old_h) * t))
+            if i < frames:
+                root.after(16, lambda: _step(i + 1))
+
+        _step(1)
 
     state["w"] = W
 
@@ -704,11 +895,10 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     root.attributes("-alpha", ui["alpha"])
                 except Exception:  # noqa: BLE001
                     pass
-                cv.delete("bg")
-                _rounded(cv, 1, 1, W - 1, state.get("h", H) - 1, RADIUS,
-                         fill=PANEL, outline=BORDER if BORDER_ON else PANEL,
-                         width=1 if BORDER_ON else 0, tags="bg")
-                cv.tag_lower("bg")
+                state["alpha"] = ui["alpha"]
+                state["fade_gen"] = state.get("fade_gen", 0) + 1   # 打断进行中的淡入
+                _draw_bg(cv, W, state.get("h", H))
+                _apply_blur(root, BLUR_ON)
                 render()
         # 唤出状态到期 → 收起；平时贴桌面层，被点浮上来也会被压回去
         if state.get("reveal_on") and time.time() >= state.get("reveal_until", 0):
@@ -1048,6 +1238,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         cur = float(root.attributes("-alpha"))
         nxt = min(1.0, max(0.35, cur + (0.05 if e.delta > 0 else -0.05)))
         root.attributes("-alpha", round(nxt, 2))
+        state["alpha"] = round(nxt, 2)              # 淡入动画的新终点
+        state["fade_gen"] = state.get("fade_gen", 0) + 1
         return "break"
 
     cv.bind("<MouseWheel>", on_wheel)

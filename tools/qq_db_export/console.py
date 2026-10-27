@@ -870,6 +870,10 @@ class Console(tk.Tk):
         _ui_switch(tog_row, "描边", "border", _read_ui_flag("border"))
         tk.Frame(tog_row, bg=p["card"], width=12).pack(side="left")
         _ui_switch(tog_row, "显示时间", "clock", _read_ui_flag("clock"))
+        tk.Frame(tog_row, bg=p["card"], width=12).pack(side="left")
+        _ui_switch(tog_row, "动画", "anim", _read_ui_flag("anim"))
+        tk.Frame(tog_row, bg=p["card"], width=12).pack(side="left")
+        _ui_switch(tog_row, "毛玻璃", "blur", _read_ui_flag("blur", False))
 
 
         r = self._card_row(p, page, "⌨", "全局快捷键",

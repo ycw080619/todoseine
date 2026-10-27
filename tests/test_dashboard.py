@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from chat2todo.adapters import get_adapter
 from chat2todo.core import Store, dedupe, extract_todos
-from chat2todo.dashboard import load_items
+from chat2todo.dashboard import _clamp_to_rects, _ease_out_cubic, load_items
 
 SAMPLE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -93,6 +93,54 @@ class TestDashboardData(unittest.TestCase):
         self.assertIn("半信半疑的一条", texts)
         self.assertEqual(len(texts), 4)
         self.assertEqual(len(load_items(self.db, "unconfirmed")), 1)
+
+
+class TestMonitorClamp(unittest.TestCase):
+    """多显示器钳位：副屏拔掉后坐标不能落在虚空里（纯函数，不碰 Win32）。"""
+
+    RECTS = [(0, 0, 1920, 1040), (1920, 0, 3840, 1080)]   # 主屏（含任务栏）+ 右副屏
+
+    def test_keeps_visible_position(self) -> None:
+        self.assertEqual(_clamp_to_rects(100, 100, 360, 540, self.RECTS),
+                         (100, 100))
+
+    def test_keeps_second_monitor_position(self) -> None:
+        self.assertEqual(_clamp_to_rects(3000, 200, 360, 540, self.RECTS),
+                         (3000, 200))
+
+    def test_pulls_back_when_monitor_unplugged(self) -> None:
+        # 副屏（x≥1920）没了：坐标 2500 落在虚空 → 贴回主屏右边缘
+        self.assertEqual(_clamp_to_rects(2500, 300, 360, 540,
+                                         [(0, 0, 1920, 1040)]),
+                         (1920 - 48, 300))
+
+    def test_pulls_back_from_left_void(self) -> None:
+        # 完全在左屏之外：拉回后至少露出 margin=48px
+        x, y = _clamp_to_rects(-500, 100, 360, 540, [(0, 0, 1920, 1040)])
+        self.assertEqual((x, y), (-360 + 48, 100))
+
+    def test_picks_nearest_monitor(self) -> None:
+        # 两台之间偏副屏的虚空点（上方）→ 钳进副屏：横向已够可见不动，纵向拉回
+        x, y = _clamp_to_rects(1880, -600, 360, 540, self.RECTS)
+        self.assertEqual((x, y), (1880, -540 + 48))
+
+    def test_empty_rects_returns_as_is(self) -> None:
+        self.assertEqual(_clamp_to_rects(9999, 9999, 360, 540, []),
+                         (9999, 9999))
+
+    def test_margin_is_respected(self) -> None:
+        # 露出不足 margin 也算不可见，会被钳回去
+        x, y = _clamp_to_rects(1900, 100, 360, 540, [(0, 0, 1920, 1040)])
+        self.assertEqual(x, 1920 - 48)
+
+
+class TestEasing(unittest.TestCase):
+    def test_ease_out_cubic(self) -> None:
+        self.assertEqual(_ease_out_cubic(0), 0)
+        self.assertEqual(_ease_out_cubic(1), 1)
+        self.assertGreater(_ease_out_cubic(0.5), 0.5)   # 起步快、收尾慢
+        self.assertEqual(_ease_out_cubic(2), 1)          # 越界钳位
+        self.assertEqual(_ease_out_cubic(-1), 0)
 
 
 if __name__ == "__main__":
