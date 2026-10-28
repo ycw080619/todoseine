@@ -178,6 +178,27 @@ class TestP2SearchAndExport(unittest.TestCase):
                 store.close()
 
 
+    def test_fts_incremental_watermark(self):
+        """回归：增量同步只补水位之后的消息，不再每次 NOT IN 全表 diff。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._seeded(tmp)
+            try:
+                first = store._meta_get("fts_last_id")
+                self.assertIsNotNone(first, "首次同步后应记录 FTS 水位")
+                store.add_messages([
+                    Message(timestamp=999, sender_id="u9", sender_name="小李",
+                            content="明天交季度总结", chat_id="g9"),
+                ], session="s")
+                self.assertTrue(store.search("季度总结"), "新增消息应立即可检索")
+                self.assertGreater(int(store._meta_get("fts_last_id")), int(first))
+                # 索引条数与消息条数对齐，说明有且仅有一次补齐、没有重复灌入
+                self.assertEqual(
+                    store.conn.execute("SELECT COUNT(*) FROM messages_fts").fetchone()[0],
+                    store.conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0])
+            finally:
+                store.close()
+
+
 class TestChatPurge(unittest.TestCase):
     """P1：消息记录来源群，并按群清理历史。"""
 
@@ -488,6 +509,23 @@ class TestCalibration(unittest.TestCase):
         weights = {("g1", "张三"): {"通知全体": -0.6}}
         todos = extract_todos([msg], session="qq", weights_map=weights)
         self.assertEqual(todos, [])
+
+    def test_feedback_orphans_not_left_behind(self):
+        """回归：待办删掉后校准样本必须解绑（todo_id → NULL），不留孤儿行。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "fb.db"))
+            try:
+                tid = self._seed_msg_and_todo(
+                    store, chat_id="g1", sender="张三",
+                    content="@全体成员 今天放假", reason="通知全体")
+                store.mark_reviewed(tid, "noise")
+                self.assertTrue(store.trash_item(tid))
+                rows = store.conn.execute(
+                    "SELECT todo_id FROM feedback").fetchall()
+                self.assertTrue(rows, "删待办不该把校准样本一起丢掉")
+                self.assertTrue(all(r[0] is None for r in rows), "孤儿行必须解绑为 NULL")
+            finally:
+                store.close()
 
     def test_calibration_roundtrip(self):
         """export_calibration → import_calibration 往返一致。"""

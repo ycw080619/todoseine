@@ -5,11 +5,15 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import sqlite3
 from datetime import datetime, timezone
 from typing import Iterable, List, Optional
 
 from ..models import Message, TodoItem
+
+logger = logging.getLogger("chat2todo.store")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -63,27 +67,42 @@ CREATE TABLE IF NOT EXISTS chat_names (
 );
 
 -- 用户校准反馈：每次点「非待办/完成/恢复」都写一条，长这个用户专属权重表
+-- todo_id 故意可空、且不建 FK：校准档案要能跨机器导入，落地时源库的 todo_id
+-- 在本库多半不存在，硬约束会让整份档案导入失败。孤儿行由 _heal_feedback_orphans()
+-- 在每次删待办后置 NULL（等价于 ON DELETE SET NULL 的效果）。
 CREATE TABLE IF NOT EXISTS feedback (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    todo_id      INTEGER NOT NULL,
+    todo_id      INTEGER,
     chat_id      TEXT NOT NULL DEFAULT '',
     sender       TEXT NOT NULL DEFAULT '',
     reason_tags  TEXT NOT NULL DEFAULT '',
     confidence   REAL NOT NULL DEFAULT 0,
     user_action  TEXT NOT NULL,
-    created_at   TEXT NOT NULL,
-    FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE SET NULL
+    created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_lookup
     ON feedback (chat_id, sender, reason_tags);
+
+-- 内部簿记（FTS 增量同步水位等），一个 key 一行
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
 """
 
 
 class Store:
     def __init__(self, path: str = "c2t.db") -> None:
         self.path = path
+        # 默认库在 ~/Chat2Todo/ 下，首次使用目录还不存在，先补上再连
+        parent = os.path.dirname(os.path.abspath(path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
+        # SQLite 默认不校验外键，必须每条连接显式打开；目前表结构里 feedback
+        # 的解绑是显式 _heal_feedback_orphans()，但保留开关，新增关系表时才生效
+        self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
         self._migrate()
         self._fts = self._init_fts()
@@ -116,9 +135,65 @@ class Store:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages (chat_id)"
         )
+        self._rebuild_feedback_nullable()
+        self._heal_feedback_orphans()
         self.conn.commit()
 
+    def _rebuild_feedback_nullable(self) -> None:
+        """老库的 feedback.todo_id 是 NOT NULL，孤儿样本根本没法解绑。
+
+        这里把表重建成可空（并去掉已失效的 FK），顺手把历史上指向不存在待办的
+        行置 NULL —— 那些样本仍可用于校准，权重按 chat/sender/标签 聚合。
+        """
+        info = {r[1]: r for r in self.conn.execute("PRAGMA table_info(feedback)")}
+        col = info.get("todo_id")
+        if col is None or not col[3]:      # notnull=0，已是可空，无需处理
+            return
+        self.conn.executescript(
+            """
+            CREATE TABLE feedback_new (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                todo_id      INTEGER,
+                chat_id      TEXT NOT NULL DEFAULT '',
+                sender       TEXT NOT NULL DEFAULT '',
+                reason_tags  TEXT NOT NULL DEFAULT '',
+                confidence   REAL NOT NULL DEFAULT 0,
+                user_action  TEXT NOT NULL,
+                created_at   TEXT NOT NULL
+            );
+            INSERT INTO feedback_new
+                (id, todo_id, chat_id, sender, reason_tags, confidence,
+                 user_action, created_at)
+            SELECT id, todo_id, chat_id, sender, reason_tags, confidence,
+                   user_action, created_at
+            FROM feedback;
+            DROP TABLE feedback;
+            ALTER TABLE feedback_new RENAME TO feedback;
+            CREATE INDEX IF NOT EXISTS idx_feedback_lookup
+                ON feedback (chat_id, sender, reason_tags);
+            """
+        )
+
+    def _heal_feedback_orphans(self) -> None:
+        """把指向已删待办的校准样本解绑（todo_id → NULL）。"""
+        self.conn.execute(
+            "UPDATE feedback SET todo_id = NULL "
+            "WHERE todo_id IS NOT NULL "
+            "AND todo_id NOT IN (SELECT id FROM todos)"
+        )
+
     # --- 全文索引（P2） -------------------------------------------
+    def _meta_get(self, key: str) -> Optional[str]:
+        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def _meta_set(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
     def _init_fts(self) -> bool:
         """优先建 trigram 分词 FTS5（对中文友好）；不支持则退回 LIKE 检索。"""
         for tokenizer in ("trigram", "unicode61"):
@@ -129,19 +204,51 @@ class Store:
                     f"tokenize='{tokenizer}')"
                 )
                 return True
-            except sqlite3.OperationalError:
+            except sqlite3.OperationalError as exc:
+                # 不静默：日志里能看到是分词器不支持还是 FTS5 整个不可用
+                logger.debug("FTS5 tokenizer '%s' 不可用：%s", tokenizer, exc)
                 continue
+        logger.warning("SQLite 未启用 FTS5，全文检索退化为 LIKE（大库会慢）")
         return False
 
+    def _fts_watermark(self) -> int:
+        """已建索引的最大 messages.id，增量同步只补这之后的行。
+
+        老库首次升级时 meta 里没有水位：此前 _sync_fts 是全量对齐的，
+        所以已有索引就以当前最大消息 id 为准，避免重复灌一遍。
+        """
+        value = self._meta_get("fts_last_id")
+        if value is not None:
+            return int(value or 0)
+        indexed = self.conn.execute("SELECT COUNT(*) FROM messages_fts").fetchone()[0]
+        last = self.conn.execute("SELECT COALESCE(MAX(id), 0) FROM messages").fetchone()[0]
+        watermark = int(last) if indexed else 0
+        self._meta_set("fts_last_id", str(watermark))
+        return watermark
+
     def _sync_fts(self) -> None:
+        """增量补齐全文索引：只扫 id > 水位的消息，避免每次同步全表 diff。"""
         if not self._fts:
             return
-        self.conn.execute(
+        watermark = self._fts_watermark()
+        cur = self.conn.execute(
             "INSERT INTO messages_fts (content, sender_name, session, msg_id) "
             "SELECT m.content, m.sender_name, m.session, m.id FROM messages m "
-            "WHERE m.id NOT IN (SELECT msg_id FROM messages_fts)"
+            "WHERE m.id > ?",
+            (watermark,),
         )
+        if cur.rowcount:
+            last = self.conn.execute("SELECT COALESCE(MAX(id), 0) FROM messages").fetchone()[0]
+            self._meta_set("fts_last_id", str(last))
         self.conn.commit()
+
+    def _rebuild_fts(self) -> None:
+        """整表重建索引（按群清理后用）：一次全扫，比逐行删快得多。"""
+        if not self._fts:
+            return
+        self.conn.execute("DELETE FROM messages_fts")
+        self._meta_set("fts_last_id", "0")
+        self._sync_fts()
 
     def search(self, keyword: str, limit: int = 20) -> List[dict]:
         """检索原文。先用 FTS，再用 LIKE 兜底（2 字中文查询 FTS 可能不命中）。"""
@@ -288,11 +395,12 @@ class Store:
                                   [(i,) for i in todo_ids])
         cur = self.conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
         removed = cur.rowcount
+        if todo_ids:
+            self._heal_feedback_orphans()      # 待办没了，对应校准样本解绑
         self.conn.commit()
         if removed and self._fts:
             # FTS5 不支持按普通列删除，直接重建索引（万级消息也是毫秒级）
-            self.conn.execute("DELETE FROM messages_fts")
-            self._sync_fts()
+            self._rebuild_fts()
         return {"messages": removed, "todos": len(todo_ids)}
 
     def unmarked_counts(self) -> dict:
@@ -313,8 +421,7 @@ class Store:
         self.conn.commit()
         if removed and self._fts:
             # FTS5 不支持按普通列删除，直接重建索引（万级消息也是毫秒级）
-            self.conn.execute("DELETE FROM messages_fts")
-            self._sync_fts()
+            self._rebuild_fts()
         return {"messages": removed}
 
     def backfill_chat_ids(self, rows: Iterable[tuple]) -> int:
@@ -675,11 +782,10 @@ class Store:
             raise ValueError(f"不识别的校准档案 schema：{data.get('schema')}")
         inserted = 0
         for row in data.get("feedback", []):
-            # 同 todo_id + action 不重复
-            cur = self.conn.execute(
-                "SELECT id FROM feedback WHERE todo_id=? AND user_action=?",
-                (row["todo_id"], row["user_action"])).fetchone()
-            if cur:
+            # 同 todo_id + action 不重复（todo_id 保留原值，孤儿行由构造函数统一解绑）
+            if self.conn.execute(
+                    "SELECT id FROM feedback WHERE todo_id IS ? AND user_action=?",
+                    (row["todo_id"], row["user_action"])).fetchone():
                 continue
             self.conn.execute(
                 "INSERT INTO feedback (todo_id, chat_id, sender, reason_tags, "
@@ -757,6 +863,7 @@ class Store:
                  r["done_at"] if "done_at" in r.keys() else "", self._today()),
             )
             self.conn.execute("DELETE FROM todos WHERE id=?", (r["id"],))
+        self._heal_feedback_orphans()          # 待办没了，对应校准样本解绑
         self.conn.commit()
         return len(rows)
 
@@ -773,6 +880,7 @@ class Store:
              r["done_at"] if "done_at" in r.keys() else "", self._today()),
         )
         self.conn.execute("DELETE FROM todos WHERE id=?", (todo_id,))
+        self._heal_feedback_orphans()          # 待办没了，对应校准样本解绑
         self.conn.commit()
         return True
 
