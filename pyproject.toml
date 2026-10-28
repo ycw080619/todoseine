@@ -22,7 +22,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "ruff>=0.4"]
+dev = ["pytest>=7", "ruff>=0.17,<0.18"]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
 db = ["sqlcipher3>=0.6.2"]
 snap = ["winsdk>=1.0.0b10"]   # 截图待办的快速 OCR（不装则回退 PowerShell，慢 2~3 秒）
@@ -39,3 +39,11 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py39"
+
+[tool.ruff.lint]
+# 显式固定规则集：ruff 版本升级换了默认规则也不会让 CI 突然变红
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# 包门面：集中再导出 dashboard 的公共接口，导入即对外 API
+"src/chat2todo/dashboard/__init__.py" = ["F401"]

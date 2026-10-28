@@ -7,7 +7,6 @@ AES 用 FIPS-197 标准向量自检；密钥校验只测「错误口令必须返
 from __future__ import annotations
 
 import os
-import struct
 import sys
 import tempfile
 import unittest

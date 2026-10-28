@@ -100,7 +100,7 @@ def validate_manifest(path_or_dict) -> Optional[Manifest]:
     # 必填
     for k in ("id", "name", "version"):
         if not data.get(k):
-            raise ManifestError(k, f"必填字段缺失或为空")
+            raise ManifestError(k, "必填字段缺失或为空")
 
     pid = data["id"]
     if not pid.isidentifier() or pid != pid.lower():

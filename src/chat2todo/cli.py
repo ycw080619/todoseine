@@ -269,26 +269,26 @@ def cmd_explain(args) -> int:
         return 1
     t = report["todo"]
     star = " ★重点" if report["star"] else ""
-    print(f"╔═══════════════════════════════════════════════════")
+    print("╔═══════════════════════════════════════════════════")
     print(f"║ 待办 #{t['id']}{star}  状态: {t['status']}  置信度: {t['confidence']:.2f}")
     print(f"║ 发送者: {report['sender']}  会话: {t['session']}")
     if report["chat_id"]:
         print(f"║ 群号: {report['chat_id']}")
-    print(f"╚═══════════════════════════════════════════════════")
+    print("╚═══════════════════════════════════════════════════")
     print(f"  内容: {t['text']}")
     print()
 
     # 原消息
     if report["original_msg"]:
         m = report["original_msg"]
-        print(f"── 原消息 ──")
+        print("── 原消息 ──")
         print(f"  [{_fmt_ts(m['ts'])}] {m['sender_name']}: {m['content']}")
         print()
 
     # 规则分解
     print(f"── 规则判定分解（总分 {report['final_score']:.1f}，阈值 {report['threshold']}）──")
     if not report["tags"]:
-        print(f"  （这条是手动添加或 reason 字段为空）")
+        print("  （这条是手动添加或 reason 字段为空）")
     for item in report["tags"]:
         sign = "+" if item["base_score"] >= 0 else ""
         line = f"  {item['tag']:<22} {sign}{item['base_score']} → {item['description']}"
@@ -305,14 +305,14 @@ def cmd_explain(args) -> int:
 
     # 校准权重
     if report["weights_hit"]:
-        print(f"── 本组用户校准权重 ──")
+        print("── 本组用户校准权重 ──")
         for k, v in report["weights_hit"].items():
             print(f"  {k}: {v}")
         print()
 
     # 附近消息上下文
     if report["nearby"]:
-        print(f"── 上下文（原消息前后各 2 条）──")
+        print("── 上下文（原消息前后各 2 条）──")
         for row in report["nearby"]:
             mark = ">" if row["id"] == report["original_msg"]["id"] else " "
             print(f"  {mark}#{row['id']:<5} {_fmt_ts(row['ts'])} {row['sender_name']}: {row['content'][:60]}")
@@ -390,7 +390,7 @@ def cmd_export(args) -> int:
 
 
 def _obsidian_md(todos, vault: str) -> str:
-    lines = [f"# 待办清单（Obsidian 双链）", ""]
+    lines = ["# 待办清单（Obsidian 双链）", ""]
     for item in todos:
         box = "x" if item.status == "done" else " "
         src = f"[[{item.session}]]" if item.session else "[[未命名]]"
@@ -537,7 +537,6 @@ def cmd_db_key(args) -> int:
 
 def cmd_db(args) -> int:
     """检查数据库只读通道：库在哪里、是不是加密、引擎和密钥是否就绪。"""
-    from .core import keybox
     from .sources import BuiltinBackend, CommunityBackend, inspect, locate, resolve_key
 
     cfg = _cfg(args)
@@ -640,7 +639,7 @@ def cmd_db_import(args) -> int:
         s = store.stats()
     finally:
         store.close()
-    print(f"来源        : 数据库（只读）")
+    print("来源        : 数据库（只读）")
     print(f"读到消息    : {len(messages)}")
     print(f"去重后      : {len(messages)}（新增入库 {added}）")
     print(f"抽取待办    : {len(todos)}（新增 {tadded}）{vec_note}{ai_note}")

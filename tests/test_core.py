@@ -453,7 +453,6 @@ class TestCalibration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(os.path.join(tmp, "chat.db"))
             try:
-                base_ts = int(datetime.now().timestamp())
                 for i in range(3):
                     tid = self._seed_msg_and_todo_at(
                         store, chat_id="g1", sender="张三",
@@ -492,11 +491,9 @@ class TestCalibration(unittest.TestCase):
 
     def test_calibration_roundtrip(self):
         """export_calibration → import_calibration 往返一致。"""
-        import json
         with tempfile.TemporaryDirectory() as tmp:
             store1 = Store(os.path.join(tmp, "a.db"))
             try:
-                base_ts = int(datetime.now().timestamp())
                 for i in range(3):
                     tid = self._seed_msg_and_todo_at(
                         store1, chat_id="g1", sender="张三",

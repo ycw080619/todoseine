@@ -68,10 +68,10 @@ class TestChatLabRoundtrip(unittest.TestCase):
             path = os.path.join(tmp, "out.jsonl")
             adapter.write(path, self._make_msgs())
             with open(path, encoding="utf-8") as fh:
-                lines = [json.loads(l) for l in fh if l.strip()]
+                lines = [json.loads(ln) for ln in fh if ln.strip()]
             # 前两行是 member，后三行是 message
-            self.assertEqual([l["_type"] for l in lines[:2]], ["member", "member"])
-            self.assertTrue(all(l["_type"] == "message" for l in lines[2:]))
+            self.assertEqual([ln["_type"] for ln in lines[:2]], ["member", "member"])
+            self.assertTrue(all(ln["_type"] == "message" for ln in lines[2:]))
             self.assertEqual(len(lines), 5)
 
     def test_other_adapters_no_write(self):

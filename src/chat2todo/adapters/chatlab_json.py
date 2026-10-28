@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import json
-from typing import Dict, Iterator
+from typing import Dict, Iterable, Iterator
 
 from ..models import Message, MsgType
 from .base import SourceAdapter

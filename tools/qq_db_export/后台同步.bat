@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 rem Chat2Todo 后台同步：供 Windows 计划任务调用（控制台「定时同步」按钮会自动注册）
 rem 内置引擎直读 QQ 数据库，无需 Docker；日志追加到 %USERPROFILE%\Chat2Todo\sync.log

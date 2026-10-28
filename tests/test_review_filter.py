@@ -29,7 +29,6 @@ class TestNoiseFilter(unittest.TestCase):
         try:
             store.add_todo("明天前把周报发我")
             store.add_todo("哈哈哈笑死")
-            items = store.list_todos("pending")
         finally:
             store.close()
         # 把第二条标记成 AI 判定的噪声

@@ -30,7 +30,7 @@ jobs:
       - name: Test (pytest, fixture-based cases)
         run: python -m pytest tests -q
       - name: Lint
-        run: ruff check src tests
+        run: ruff check src tests tools
 
   smoke:
     runs-on: ubuntu-latest

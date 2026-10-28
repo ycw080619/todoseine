@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 rem Chat2Todo 控制台：双击启动（无黑窗）
 

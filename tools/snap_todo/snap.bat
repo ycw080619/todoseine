@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 rem 截图待办：先 Win+Shift+S 框选截图，再双击本文件。路径自解析，无需 pip install
 rem pythonw.exe 优先（无黑窗），py launcher 某些机器上 -3w 找不到 runtime

@@ -715,7 +715,6 @@ def hotkey_loop(args, cfg: dict) -> int:
         _notify("error", f"全局热键 {spec} 被其它程序占用，请到设置里换一个组合")
         return 2
     print(f"截图热键已生效：{spec}（结束本进程即取消）")
-    script = Path(__file__).resolve()
     msg = wintypes.MSG()
     try:
         while u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:

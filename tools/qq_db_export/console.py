@@ -19,12 +19,16 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from types import SimpleNamespace
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 SRC = HERE.parents[1] / "src"           # 仓库源码（src 布局，免 pip install 直接跑）
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))       # 同目录的 c2t_pages 包（按页拆分）
+from c2t_pages import about, ai, general, home, snap, trash  # noqa: E402
 ROOT = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Chat2Todo"
 CONFIG = ROOT / "c2t.toml"
 DB = ROOT / "qq.db"
@@ -485,6 +489,26 @@ class Console(tk.Tk):
         self.snap_proc: subprocess.Popen | None = None
         self.theme = _read_theme()
 
+        # 页面模块只依赖 app 与这个 ctx；函数仍在本模块取值，测试替换 CONFIG 依旧生效
+        self._ctx = SimpleNamespace(
+            read_cfg=_read_cfg,
+            write_section=_write_section,
+            read_ui=_read_ui,
+            read_ui_flag=_read_ui_flag,
+            save_ui_key=_save_ui_key,
+            save_ui_accent=_save_ui_accent,
+            autostart_on=_autostart_on,
+            set_autostart=_set_autostart,
+            read_snap_model=_read_snap_model,
+            read_snap_refine=_read_snap_refine,
+            read_filter=_read_filter,
+            read_chat_names=_read_chat_names,
+            read_hotkey=_read_hotkey,
+            ai_presets=AI_PRESETS,
+            db=DB,
+            root=ROOT,
+        )
+
         self._build_ui()
         self.refresh_stats()
 
@@ -757,20 +781,33 @@ class Console(tk.Tk):
         p = self._pal()
         holder = tk.Frame(self.body, bg=p["bg"])
         canvas = tk.Canvas(holder, bg=p["bg"], highlightthickness=0)
-        bar = ttk.Scrollbar(holder, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=bar.set)
-        bar.pack(side="right", fill="y")
+        vbar = ttk.Scrollbar(holder, orient="vertical", command=canvas.yview)
+        hbar = ttk.Scrollbar(holder, orient="horizontal", command=canvas.xview)
+        canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
+        vbar.pack(side="right", fill="y")
+        hbar.pack(side="bottom", fill="x")
         canvas.pack(side="left", fill="both", expand=True)
 
         inner = tk.Frame(canvas, bg=p["bg"])
         win = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>",
-                   lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>",
-                    lambda e: canvas.itemconfigure(win, width=e.width))
+        def _on_inner_cfg(_e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_canvas_cfg(e):
+            # 内容区宽度取「画布宽度」和「内容自然宽度」的较大者：
+            # 内容窄时撑满画布（保留 fill=x 布局），内容宽时保留自然宽度 → 横向滚动条生效。
+            inner.update_idletasks()
+            req_w = inner.winfo_reqwidth()
+            canvas.itemconfigure(win, width=max(e.width, req_w))
+
+        inner.bind("<Configure>", _on_inner_cfg)
+        canvas.bind("<Configure>", _on_canvas_cfg)
 
         def on_wheel(e) -> None:
-            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+            if e.state & 0x0001:  # Shift 按下 → 横向滚
+                canvas.xview_scroll(int(-1 * (e.delta / 120)), "units")
+            else:
+                canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
 
         canvas.bind_all("<MouseWheel>", on_wheel, add="+")
         inner._holder = holder  # type: ignore[attr-defined]
@@ -827,299 +864,11 @@ class Console(tk.Tk):
 
     # ---------- 页：控制台 ----------
     def _build_page_console(self) -> None:
-        p = self._pal()
-        page = self._new_page()
-        self._pages["console"] = page
-
-        r = self._card_row(p, page, "▦", "导入文件",
-                           "选一份导出的 txt / JSON → 规则抽取 → 本地 AI 复核")
-        self.import_btn = self._pill(p, r, "导入文件", self.on_import, primary=True)
-
-        r = self._card_row(p, page, "⟳", "快捷操作", "看板与截图待办")
-        self._pill(p, r, "打开看板", self.on_dashboard)
-        self._pill(p, r, "截图待办", self.on_snap)
-
-        r = self._card_row(p, page, "⚙", "更多", "立即同步、截图热键、目录监视与定时同步")
-        self.sync_btn = self._pill(p, r, "立即同步", self.on_sync)
-        self.snap_btn = self._pill(p, r, "截图热键", self.on_snap_hotkey)
-        self.watch_btn = self._pill(p, r, "开始监视", self.on_watch)
-        self._pill(p, r, "定时同步", self.on_schedule)
-
-        outer = tk.Frame(page, bg=p["card"], highlightbackground=p["border"],
-                         highlightthickness=1)
-        outer.pack(fill="both", expand=True, pady=(0, 8))
-        inner = tk.Frame(outer, bg=p["card"])
-        inner.pack(fill="both", expand=True, padx=14, pady=12)
-        tk.Label(inner, text="运行日志", bg=p["card"], fg=p["text"], anchor="w",
-                 font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
-        self.log = tk.Text(inner, bg=p["log_bg"], fg=p["log_fg"],
-                           insertbackground=p["log_fg"], relief="flat",
-                           font=("Consolas", 9), wrap="word", borderwidth=0,
-                           padx=12, pady=10, height=8)
-        self.log.pack(fill="both", expand=True)
-        self.log.configure(state="disabled")
+        home.build(self, self._ctx)
 
     # ---------- 页：常规 ----------
     def _build_page_general(self) -> None:
-        p = self._pal()
-        page = self._new_page()
-        self._pages["general"] = page
-        cfg = _read_cfg()
-
-        r = self._card_row(p, page, "🎨", "深色模式", "开启后整个控制台与看板切换为深色")
-        mk = tk.Canvas(r, width=46, height=24, bg=p["card"], highlightthickness=0,
-                       cursor="hand2")
-        mk.pack(side="left")
-        state = {"on": self.theme == "dark"}
-
-        def draw_switch() -> None:
-            mk.delete("all")
-            on = state["on"]
-            track = p["accent"] if on else ("#c7ccd6" if self.theme == "light" else "#3a4553")
-            mk.create_oval(2, 4, 22, 24, fill=track, outline="")
-            mk.create_oval(24, 4, 44, 24, fill=track, outline="")
-            mk.create_rectangle(12, 4, 34, 24, fill=track, outline="")
-            x = 32 if on else 12
-            mk.create_oval(x - 9, 3, x + 9, 21, fill="#ffffff", outline="")
-
-        def flip(_e=None) -> None:
-            state["on"] = not state["on"]
-            draw_switch()
-            t = "dark" if state["on"] else "light"
-            _write_section("ui", {"theme": t})
-            self._show_page("general")
-            self.set_theme(t)
-
-        mk.bind("<Button-1>", flip)
-        draw_switch()
-
-        r = self._card_row(p, page, "🚀", "开机自启",
-                           "登录 Windows 时自动拉起看板与截图热键")
-        auto_on = {"on": _autostart_on()}
-        ask = tk.Canvas(r, width=46, height=24, bg=p["card"], highlightthickness=0,
-                        cursor="hand2")
-        ask.pack(side="right")
-
-        def draw_auto() -> None:
-            ask.delete("all")
-            on = auto_on["on"]
-            track = p["accent"] if on else ("#c7ccd6" if self.theme == "light" else "#3a4553")
-            ask.create_oval(2, 4, 22, 24, fill=track, outline="")
-            ask.create_oval(24, 4, 44, 24, fill=track, outline="")
-            ask.create_rectangle(12, 4, 34, 24, fill=track, outline="")
-            x = 32 if on else 12
-            ask.create_oval(x - 9, 3, x + 9, 21, fill="#ffffff", outline="")
-
-        def flip_auto(_e=None) -> None:
-            auto_on["on"] = not auto_on["on"]
-            draw_auto()
-            ok, msg = _set_autostart(auto_on["on"])
-            self.write(msg + "\n")
-
-        ask.bind("<Button-1>", flip_auto)
-        draw_auto()
-
-        r = self._card_row(p, page, "🎨", "外观",
-                           "强调色、面板底色、宽度、圆角、描边与时间显示；改完看板会自动刷新")
-        box = tk.Frame(r, bg=p["card"])
-        box.pack(side="right")
-
-        def _swatch_row(parent, label, colors, on_pick):
-            row = tk.Frame(parent, bg=p["card"])
-            row.pack(side="top", anchor="e", pady=2)
-            tk.Label(row, text=label, bg=p["card"], fg=p["muted"],
-                     font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(0, 4))
-            for color in colors:
-                dot = tk.Canvas(row, width=16, height=16, bg=p["card"],
-                                highlightthickness=0, cursor="hand2")
-                dot.pack(side="left", padx=2)
-                dot.create_oval(1, 1, 15, 15, fill=color, outline="#8b8b95")
-                dot.bind("<Button-1>", lambda _e, c=color: on_pick(c))
-
-        _swatch_row(box, "强调色",
-                    ("#4cc2ff", "#7c9cff", "#ff8fab", "#6ee7a8", "#ffd93d"),
-                    lambda c: _save_ui_accent(c, self))
-        _swatch_row(box, "面板",
-                    ("#212024", "#17181c", "#2b2a33", "#4a3f5c", "#f8f8fb"),
-                    lambda c: _save_ui_key("panel", c, self, "面板底色"))
-
-        geo_row = tk.Frame(box, bg=p["card"])
-        geo_row.pack(side="top", anchor="e", pady=2)
-        tk.Label(geo_row, text="宽度", bg=p["card"], fg=p["muted"],
-                 font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(0, 4))
-        self.width_entry = tk.Entry(geo_row, width=5, bg=p["field"], fg=p["text"], bd=0,
-                                    relief="flat", justify="center", font=("Consolas", 9))
-        self.width_entry.insert(0, str(_read_ui("width", "360")))
-        self.width_entry.pack(side="left", padx=(0, 10))
-        tk.Label(geo_row, text="圆角", bg=p["card"], fg=p["muted"],
-                 font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(0, 4))
-        self.radius_entry = tk.Entry(geo_row, width=5, bg=p["field"], fg=p["text"], bd=0,
-                                     relief="flat", justify="center", font=("Consolas", 9))
-        self.radius_entry.insert(0, str(_read_ui("radius", "18")))
-        self.radius_entry.pack(side="left")
-
-        op_row = tk.Frame(box, bg=p["card"])
-        op_row.pack(side="top", anchor="e", pady=2)
-        tk.Label(op_row, text="不透明度", bg=p["card"], fg=p["muted"],
-                 font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(0, 4))
-        self.op_entry = tk.Entry(op_row, width=6, bg=p["field"], fg=p["text"], bd=0,
-                                 relief="flat", justify="center",
-                                 font=("Consolas", 9))
-        self.op_entry.insert(0, str(_read_ui("opacity", "0.93")))
-        self.op_entry.pack(side="left")
-
-        tog_row = tk.Frame(box, bg=p["card"])
-        tog_row.pack(side="top", anchor="e", pady=2)
-
-        def _ui_switch(parent, label: str, cfg_key: str, on: bool) -> None:
-            """小型开关：即时写回 [ui]，看板 2 秒内自动生效。"""
-            tk.Label(parent, text=label, bg=p["card"], fg=p["muted"],
-                     font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(0, 4))
-            mk = tk.Canvas(parent, width=46, height=24, bg=p["card"],
-                           highlightthickness=0, cursor="hand2")
-            mk.pack(side="left")
-            state = {"on": on}
-
-            def draw() -> None:
-                mk.delete("all")
-                track = p["accent"] if state["on"] else (
-                    "#c7ccd6" if self.theme == "light" else "#3a4553")
-                mk.create_oval(2, 4, 22, 24, fill=track, outline="")
-                mk.create_oval(24, 4, 44, 24, fill=track, outline="")
-                mk.create_rectangle(12, 4, 34, 24, fill=track, outline="")
-                x = 32 if state["on"] else 12
-                mk.create_oval(x - 9, 3, x + 9, 21, fill="#ffffff", outline="")
-
-            def flip(_e=None) -> None:
-                state["on"] = not state["on"]
-                draw()
-                _write_section("ui", {cfg_key: state["on"]})
-                self.write(f"{label}已{'开启' if state['on'] else '关闭'}"
-                           "（看板会自动刷新）\n")
-
-            mk.bind("<Button-1>", flip)
-            draw()
-
-        _ui_switch(tog_row, "描边", "border", _read_ui_flag("border"))
-        tk.Frame(tog_row, bg=p["card"], width=12).pack(side="left")
-        _ui_switch(tog_row, "显示时间", "clock", _read_ui_flag("clock"))
-        tk.Frame(tog_row, bg=p["card"], width=12).pack(side="left")
-        _ui_switch(tog_row, "动画", "anim", _read_ui_flag("anim"))
-        tk.Frame(tog_row, bg=p["card"], width=12).pack(side="left")
-        _ui_switch(tog_row, "毛玻璃", "blur", _read_ui_flag("blur", False))
-        tk.Frame(tog_row, bg=p["card"], width=12).pack(side="left")
-        _ui_switch(tog_row, "边缘吸附", "snap", _read_ui_flag("snap"))
-        tk.Frame(tog_row, bg=p["card"], width=12).pack(side="left")
-        _ui_switch(tog_row, "悬停展开", "hover_expand", _read_ui_flag("hover_expand", False))
-
-
-        r = self._card_row(p, page, "⌨", "全局快捷键",
-                           "看板贴在桌面层时，按这个组合唤出；录制后重启看板生效")
-        self.hotkey_label = tk.Label(r, text=_read_hotkey(), bg=p["card"], fg=p["text"],
-                                     font=("Consolas", 9))
-        self.hotkey_label.pack(side="left", padx=(0, 10))
-        tk.Button(r, text="录制", command=lambda: self._record_hotkey("dash", "hotkey", self.hotkey_label, "ctrl+alt+d"), bg=p["btn"],
-                  fg=p["btn_text"], bd=0, padx=12, pady=4, cursor="hand2",
-                  font=("Microsoft YaHei UI", 8)).pack(side="left")
-
-        r = self._card_row(p, page, "🗄", "聊天数据库", str(DB))
-        tk.Label(r, text="只读", bg=p["card"], fg=p["ok"],
-                 font=("Microsoft YaHei UI", 8, "bold")).pack(side="left")
-        tk.Button(r, text="恢复", command=self.on_restore_db, bg=p["btn"],
-                  fg=p["btn_text"], bd=0, padx=12, pady=4, cursor="hand2",
-                  font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(10, 0))
-        tk.Button(r, text="备份", command=self.on_backup_db, bg=p["btn"],
-                  fg=p["btn_text"], bd=0, padx=12, pady=4, cursor="hand2",
-                  font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(6, 0))
-
-        unmarked = self._unmarked_count()
-        r = self._card_row(p, page, "🧹", "未标记消息",
-                           "txt 导入的老消息没有来源群；清理只删消息，已抽出的待办保留")
-        tk.Label(r, text=f"{unmarked} 条", bg=p["card"],
-                 fg=p["muted"] if unmarked else p["ok"],
-                 font=("Microsoft YaHei UI", 9, "bold")).pack(side="left", padx=(0, 10))
-        if unmarked:
-            tk.Button(r, text="清理", command=self.on_purge_unmarked, bg=p["btn"],
-                      fg=p["btn_text"], bd=0, padx=14, pady=4, cursor="hand2",
-                      font=("Microsoft YaHei UI", 9)).pack(side="left")
-
-        weekly = self._weekly_stats()
-        r = self._card_row(p, page, "📊", "每周摘要",
-                           "近 7 天的待办进出与最活跃群（群名来自同步时的群名映射）")
-        if weekly:
-            bits = [f"新增 {weekly['new']} 条", f"完成 {weekly['done']} 条"]
-            if weekly.get("top_chat"):
-                bits.append(f"最活跃：{weekly['top_chat'][0]}（{weekly['top_chat'][1]} 条消息）")
-            tk.Label(r, text=" · ".join(bits), bg=p["card"], fg=p["text"],
-                     font=("Microsoft YaHei UI", 9, "bold")).pack(side="left")
-        else:
-            tk.Label(r, text="还没有数据", bg=p["card"], fg=p["muted"],
-                     font=("Microsoft YaHei UI", 9)).pack(side="left")
-
-        cal = self._calibration_stats()
-        r = self._card_row(p, page, "🎯", "校准反馈",
-                           "标记待办为「非待办」或「完成」都自动写入，够 3 条样本后自动生效")
-        st = cal.get("stats", {})
-        total = st.get("total", 0)
-        if total == 0:
-            tk.Label(r, text="还没攒下校准。在看板或控制台把几条误抽的点掉就开始了",
-                     bg=p["card"], fg=p["muted"],
-                     font=("Microsoft YaHei UI", 9)).pack(side="left")
-        else:
-            bits = [f"累计 {total} 条",
-                    f"确认 {st.get('confirmed', 0)}",
-                    f"拒绝 {st.get('rejected', 0)}"]
-            bits.append(f"{st.get('unique_keys', 0)} 个来源")
-            if cal.get("active_groups", 0) > 0:
-                bits.append(f"其中 {cal['active_groups']} 组已够样本生效")
-            tk.Label(r, text=" · ".join(bits), bg=p["card"], fg=p["text"],
-                     font=("Microsoft YaHei UI", 9, "bold")).pack(side="left")
-            if cal.get("top_tags"):
-                # 最大纠偏：列前 2 个 |adj| 最大的 reason_tag
-                top = cal["top_tags"][:2]
-                tag_str = " / ".join(
-                    f"{t.split('·')[-1] if '·' in t else t}({('+' if a > 0 else '')}{a})"
-                    for t, a in top)
-                tk.Label(r, text=f"   最大纠偏: {tag_str}", bg=p["card"], fg=p["accent"],
-                         font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(6, 0))
-        tk.Button(r, text="导出", command=self.on_export_calibration,
-                  bg=p["btn"], fg=p["btn_text"], bd=0, padx=10, pady=3, cursor="hand2",
-                  font=("Microsoft YaHei UI", 8)).pack(side="right", padx=(6, 0))
-        tk.Button(r, text="导入", command=self.on_import_calibration,
-                  bg=p["btn"], fg=p["btn_text"], bd=0, padx=10, pady=3, cursor="hand2",
-                  font=("Microsoft YaHei UI", 8)).pack(side="right")
-
-        has_key = (ROOT / "dbkey.dat").exists()
-        r = self._card_row(
-            p, page, "🔑", "解密口令",
-            "已保存（DPAPI 加密，仅本机当前用户可解）；留空表示不修改"
-            if has_key else "尚未保存，首次同步前必须填写")
-        self.pw_entry = tk.Entry(r, width=24, show="*", bg=p["field"], fg=p["field_text"],
-                                 insertbackground=p["field_text"], bd=0, relief="flat",
-                                 highlightthickness=1, highlightbackground=p["border"],
-                                 highlightcolor=p["accent"], font=("Microsoft YaHei UI", 9))
-        self.pw_entry.pack(side="left", ipady=4)
-
-        chat_names = _read_chat_names()
-        self.ignore_state = self._chip_card(
-            p, page, "🚫", "免打扰（不统计）",
-            "这些群号或 QQ 号（如群机器人）的消息完全不参与抽取；重复添加会自动拦住",
-            _read_filter("ignore_groups"), "群号或 QQ 号", names=chat_names)
-
-        self.star_state = self._chip_card(
-            p, page, "★", "特别关心（标重点）",
-            "群号或 QQ 号；这些来源产生的待办会标记为 ★重点，看板里有独立标签页",
-            _read_filter("star_groups"), "群号或 QQ 号", names=chat_names)
-
-        if not chat_names:
-            # 库里还没有群名映射：后台去 QQ 库抓一次，抓完把两张卡片上的号码换成群名
-            threading.Thread(target=self._refresh_chat_names, daemon=True).start()
-
-        r = self._card_row(p, page, "⏱", "定时同步", "由 Windows 计划任务每小时触发")
-        tk.Button(r, text="打开计划任务", command=lambda: subprocess.Popen(
-            ["control", "schedtasks"]), bg=p["btn"], fg=p["btn_text"], bd=0,
-            padx=12, pady=4, cursor="hand2",
-            font=("Microsoft YaHei UI", 8)).pack(side="left")
+        general.build(self, self._ctx)
 
     def _refresh_chat_names(self) -> None:
         """后台补抓群名：写库后回到主线程刷新两张过滤卡片的显示。"""
@@ -1152,70 +901,7 @@ class Console(tk.Tk):
 
     # ---------- 页：AI ----------
     def _build_page_ai(self) -> None:
-        p = self._pal()
-        page = self._new_page()
-        self._pages["ai"] = page
-        cfg = _read_cfg()
-        ai_ok = str(cfg.get("enabled")).lower() == "true"
-        local_now = str(cfg.get("base_url", "")).startswith(("http://127.0.0.1", "http://localhost"))
-
-        r = self._card_row(
-            p, page, "✨", "服务状态",
-            f"已启用 · {'本地 Ollama' if local_now else '云端'} · {cfg.get('model', '')}"
-            if ai_ok else "未启用（仅用规则抽取，不联网）")
-        tk.Label(r, text="● 运行中" if ai_ok else "○ 未启用", bg=p["card"],
-                 fg=p["ok"] if ai_ok else p["muted"],
-                 font=("Microsoft YaHei UI", 9, "bold")).pack(side="left")
-
-        r = self._card_row(p, page, "🏷", "服务商", "选择后自动填入地址与模型")
-        preset = ttk.Combobox(r, values=list(AI_PRESETS), state="readonly", width=22,
-                              font=("Microsoft YaHei UI", 9))
-        preset.pack(side="left")
-        preset.set("本地 Ollama（免费无需 Key）")
-        self._preset = preset
-
-        r = self._card_row(p, page, "🌐", "API 地址", "OpenAI 兼容端点")
-        self.base_entry = tk.Entry(r, width=30, bg=p["field"], fg=p["field_text"],
-                                   insertbackground=p["field_text"], bd=0, relief="flat",
-                                   highlightthickness=1, highlightbackground=p["border"],
-                                   font=("Microsoft YaHei UI", 9))
-        self.base_entry.pack(side="left", ipady=4)
-        self.base_entry.insert(0, cfg["base_url"])
-
-        r = self._card_row(p, page, "🧠", "模型", "本地建议 qwen2.5:14b")
-        self.model_entry = tk.Entry(r, width=26, bg=p["field"], fg=p["field_text"],
-                                    insertbackground=p["field_text"], bd=0, relief="flat",
-                                    highlightthickness=1, highlightbackground=p["border"],
-                                    font=("Microsoft YaHei UI", 9))
-        self.model_entry.pack(side="left", ipady=4)
-        self.model_entry.insert(0, cfg["model"])
-
-        r = self._card_row(p, page, "🔐", "API Key", "本地 Ollama 可留空（自动用占位值）")
-        self.key_entry = tk.Entry(r, width=30, show="*", bg=p["field"], fg=p["field_text"],
-                                  insertbackground=p["field_text"], bd=0, relief="flat",
-                                  highlightthickness=1, highlightbackground=p["border"],
-                                  font=("Microsoft YaHei UI", 9))
-        self.key_entry.pack(side="left", ipady=4)
-        if cfg["api_key"] and cfg["api_key"] != "ollama":
-            self.key_entry.insert(0, cfg["api_key"])
-
-        r = self._card_row(p, page, "🔌", "连接测试", "会向服务端发一次最小请求")
-        self.probe_btn = tk.Button(r, text="测试连接", bg=p["accent"], fg=p["accent_fg"],
-                                   bd=0, padx=14, pady=4, cursor="hand2",
-                                   font=("Microsoft YaHei UI", 9), command=self._do_probe)
-        self.probe_btn.pack(side="left")
-        self.hint = tk.Label(r, text="", bg=p["card"], fg=p["muted"],
-                             font=("Microsoft YaHei UI", 8))
-        self.hint.pack(side="left", padx=(10, 0))
-
-        def on_preset(_evt=None) -> None:
-            base, model = AI_PRESETS.get(self._preset.get(), ("", ""))
-            if not base:
-                return
-            self.base_entry.delete(0, "end"); self.base_entry.insert(0, base)
-            self.model_entry.delete(0, "end"); self.model_entry.insert(0, model)
-
-        preset.bind("<<ComboboxSelected>>", on_preset)
+        ai.build(self, self._ctx)
 
     def _record_hotkey(self, section: str = "dash", cfg_key: str = "hotkey",
                        label=None, default: str = "ctrl+alt+d") -> None:
@@ -1292,95 +978,11 @@ class Console(tk.Tk):
 
     # ---------- 页：截图 ----------
     def _build_page_snap(self) -> None:
-        p = self._pal()
-        page = self._new_page()
-        self._pages["snap"] = page
+        snap.build(self, self._ctx)
 
-        r = self._card_row(
-            p, page, "📷", "视觉模型",
-            "留空=只用系统 OCR（离线零安装）；填视觉模型=看图直提，如 qwen2.5vl:7b")
-        self.vision = ttk.Combobox(r, values=["（不使用）", _read_snap_model() or ""],
-                                   width=24, font=("Microsoft YaHei UI", 9))
-        self.vision.pack(side="left")
-        self.vision.set(_read_snap_model() or "（不使用）")
-
-        r = self._card_row(p, page, "✨", "AI 整理识别文字",
-                           "识别后交给本地模型纠错、去噪、分行；关闭则原样显示 OCR 结果")
-        refine_on = {"on": str(_read_snap_refine()).lower() != "false"}
-        mk = tk.Canvas(r, width=46, height=24, bg=p["card"], highlightthickness=0,
-                       cursor="hand2")
-        mk.pack(side="left")
-
-        def draw_refine() -> None:
-            mk.delete("all")
-            on = refine_on["on"]
-            track = p["accent"] if on else ("#c7ccd6" if self.theme == "light" else "#3a4553")
-            mk.create_oval(2, 4, 22, 24, fill=track, outline="")
-            mk.create_oval(24, 4, 44, 24, fill=track, outline="")
-            mk.create_rectangle(12, 4, 34, 24, fill=track, outline="")
-            x = 32 if on else 12
-            mk.create_oval(x - 9, 3, x + 9, 21, fill="#ffffff", outline="")
-
-        def flip_refine(_e=None) -> None:
-            refine_on["on"] = not refine_on["on"]
-            draw_refine()
-            _write_section("snap", {"ai_refine": refine_on["on"]})
-            self.write(f"AI 整理已{'开启' if refine_on['on'] else '关闭'}（下次截图生效）\n")
-
-        mk.bind("<Button-1>", flip_refine)
-        draw_refine()
-
-        r = self._card_row(p, page, "⌨", "截图热键",
-                           "按热键后拖动框选屏幕区域；点「录制」可改键")
-        self.snap_hotkey_label = tk.Label(r, text=_read_hotkey("snap", "hotkey", "ctrl+alt+s"),
-                                         bg=p["card"], fg=p["text"], font=("Consolas", 9))
-        self.snap_hotkey_label.pack(side="left", padx=(0, 10))
-        tk.Button(r, text="录制",
-                  command=lambda: self._record_hotkey("snap", "hotkey",
-                                                      self.snap_hotkey_label, "ctrl+alt+s"),
-                  bg=p["btn"], fg=p["btn_text"], bd=0, padx=12, pady=4,
-                  cursor="hand2", font=("Microsoft YaHei UI", 8)).pack(side="left")
-
-    # ---------- 页：关于 ----------
+    # ---------- 页：最近删除 ----------
     def _build_page_trash(self) -> None:
-        page = self._new_page()
-        self._pages["trash"] = page
-        p = self._pal()
-        tk.Label(page, text="勾掉的待办第二天会进这里，可随时还原", bg=p["bg"],
-                 fg=p["muted"], anchor="w",
-                 font=("Microsoft YaHei UI", 8)).pack(fill="x", padx=28, pady=(0, 6))
-
-        card = tk.Frame(page, bg=p["card"], highlightbackground=p["border"],
-                        highlightthickness=1)
-        card.pack(fill="both", expand=True, padx=28, pady=(8, 16))
-        self.trash_box = tk.Listbox(card, bg=p["card"], fg=p["text"], bd=0,
-                                    highlightthickness=0, activestyle="none",
-                                    font=("Microsoft YaHei UI", 9))
-        self.trash_box.pack(fill="both", expand=True, padx=12, pady=(10, 6))
-
-        bar = tk.Frame(card, bg=p["card"])
-        bar.pack(fill="x", padx=12, pady=(0, 12))
-        tk.Button(bar, text="全选", command=self.on_trash_select_all, bg=p["btn"],
-                  fg=p["btn_text"], bd=0, padx=10, pady=5, cursor="hand2",
-                  font=("Microsoft YaHei UI", 8)).pack(side="left")
-        tk.Button(bar, text="还原选中", command=self.on_restore_trash, bg=p["btn"],
-                  fg=p["btn_text"], bd=0, padx=12, pady=5, cursor="hand2",
-                  font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(8, 0))
-        tk.Button(bar, text="清空回收站", command=self.on_clear_trash, bg=p["btn"],
-                  fg=p["btn_text"], bd=0, padx=12, pady=5, cursor="hand2",
-                  font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(8, 0))
-        tk.Button(bar, text="保存", command=self.on_save_trash_days, bg=p["btn"],
-                  fg=p["btn_text"], bd=0, padx=10, pady=5, cursor="hand2",
-                  font=("Microsoft YaHei UI", 8)).pack(side="right")
-        self.trash_days = tk.Entry(bar, width=5, bg=p["field"], fg=p["text"], bd=0,
-                                   highlightthickness=0,
-                                   font=("Consolas", 9), justify="center")
-        self.trash_days.pack(side="right", padx=(0, 8))
-        self.trash_days.insert(0, str(self._read_trash_days()))
-        tk.Label(bar, text="保留天数（0=永久）", bg=p["card"], fg=p["muted"],
-                 font=("Microsoft YaHei UI", 8)).pack(side="right", padx=(0, 6))
-
-        self._refresh_trash()
+        trash.build(self, self._ctx)
 
     def _read_trash_days(self) -> int:
         try:
@@ -1476,19 +1078,7 @@ class Console(tk.Tk):
         self.write(f"回收站保留天数已设为 {days} 天（0=永久）\n")
 
     def _build_page_about(self) -> None:
-        p = self._pal()
-        page = self._new_page()
-        self._pages["about"] = page
-        try:
-            from chat2todo import __version__ as ver
-        except Exception:  # noqa: BLE001
-            ver = "—"
-        for icon, title, sub in (
-            ("◈", "Chat2Todo", f"版本 {ver} · 本地优先的聊天记录待办提取器"),
-            ("💾", "数据目录", str(ROOT)),
-            ("📄", "许可", "MIT License"),
-        ):
-            self._card_row(p, page, icon, title, sub)
+        about.build(self, self._ctx)
 
     def _save_settings(self) -> None:
         cfg = _read_cfg()

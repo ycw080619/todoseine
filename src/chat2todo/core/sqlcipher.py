@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import hashlib
-import struct
 from typing import Optional, Tuple
 
 HEADER_SIZE = 1024
@@ -82,7 +81,6 @@ def decrypt_file(passphrase: str, src: str, dst: str) -> Tuple[bool, str]:
                     if len(page) < PAGE_SIZE:
                         break
                     iv = page[:16]
-                    reserve = PAGE_SIZE - 16 - len(plain_first) + 16
                     ct = page[16:len(page) - 20]
                     out.write(_aes_cbc(aes_key, iv, ct) + b"\x00" * 20)
         return True, "解密完成"

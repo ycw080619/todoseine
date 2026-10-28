@@ -47,8 +47,28 @@ PAD = 16
 TOP = 156              # 列表起始 y（顶部输入卡之下）
 FOOT = 54              # 底部预留（只看页脚一行）
 ROW = 62               # 单行高度（卡片式）
+HBAR_H = 14            # 横向滚动条预留高度
 TABS: List[Tuple[str, str]] = [("todo", "全部"), ("star", "重点"),
                                ("today", "今日"), ("maybe", "待定"), ("done", "完成")]
+
+
+def _fill_item_menu(menu, item: TodoItem, *, mark, edit_item,
+                    show_detail, explain_why) -> None:
+    """按条目状态填右键菜单。
+
+    与 Tk 解耦成普通函数：菜单项集合能在无图形环境下直接断言，
+    避免再出现「测试全绿、右键一点就 NameError」的盲区。
+    """
+    menu.delete(0, "end")
+    if item.status != "done":
+        menu.add_command(label="标记完成", command=lambda: mark(item, "done"))
+    else:
+        menu.add_command(label="恢复为待办", command=lambda: mark(item, "pending"))
+    menu.add_command(label="标为非待办", command=lambda: mark(item, "noise"))
+    menu.add_separator()
+    menu.add_command(label="修改内容", command=lambda: edit_item(item))
+    menu.add_command(label="查看原文", command=lambda: show_detail(item))
+    menu.add_command(label="判定理由", command=lambda: explain_why(item))
 
 
 def _rounded(canvas, x1, y1, x2, y2, r, **kw):
@@ -293,7 +313,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     正常运行由 run() 调用后进入 mainloop。
     """
     import tkinter as tk
-    from tkinter import messagebox
+    from tkinter import messagebox, ttk
 
     root = tk.Tk()
     root.overrideredirect(True)          # 无边框
@@ -312,8 +332,23 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     FONT_ITEM_DONE = tkfont.Font(family="Microsoft YaHei UI", size=9,
                                  weight="bold", overstrike=1)
 
-    cv = tk.Canvas(root, width=W, height=H, bg=KEY, highlightthickness=0)
-    cv.pack()
+    holder = tk.Frame(root, bg=KEY)
+    holder.pack(fill="both", expand=True)
+    cv = tk.Canvas(holder, width=W, height=H, bg=KEY, highlightthickness=0)
+
+    def _on_hscroll(*args) -> None:
+        """横向滚动条：拖动时只偏移待办条目，标题栏/页脚不动。"""
+        if args and args[0] == "moveto":
+            state["x_off"] = int(float(args[1]) * max(0, state.get("x_max", 0)))
+        elif args and args[0] == "scroll":
+            state["x_off"] = max(0, state["x_off"] + int(args[1]))
+        state["x_off"] = max(0, min(state["x_off"], max(0, state.get("x_max", 0))))
+        state.pop("render_hash", None)     # 强制重画（debounce 会跳过）
+        render()
+
+    hbar = ttk.Scrollbar(holder, orient="horizontal", command=_on_hscroll)
+    cv.pack(side="top", fill="both", expand=True)
+    hbar.pack(side="bottom", fill="x")
     root.after(150, lambda: _set_layer(root, False))
     if BLUR_ON:
         root.after(300, lambda: _apply_blur(root, True))
@@ -342,6 +377,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         "top_n": 5,            # 每日上限：只显示置信度最高的 5 条；None=全量
         "top_n_full": False,   # 是否已展开全部（点「展开更多」后）
         "daily_mode": False,   # 每日早报模式：卡片式摘要 vs 列表
+        "x_off": 0,            # 横向滚动偏移（只偏移待办条目，标题栏/页脚固定）
+        "x_max": 0,            # 横向最大可滚动距离（最宽条目的溢出量）
+        "_hbar": hbar,         # 横向滚动条控件（必须在 state 定义后赋值）
     }
 
     def housekeeping() -> None:
@@ -545,11 +583,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         st = _store()
         try:
             if tag == "bdone":
-                n = st.set_status_many(sel, "done")
-                msg = f"已批量标记完成 {n} 条"
+                st.set_status_many(sel, "done")
             else:
-                n = st.trash_many(sel)
-                msg = f"已批量移到回收站 {n} 条"
+                st.trash_many(sel)
         finally:
             st.close()
         state["batch"] = False
@@ -768,17 +804,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                    activebackground=ACTIVE, activeforeground=TEXT)
 
     def popup(e, item: TodoItem) -> None:
-        menu.delete(0, "end")
-        if item.status != "done":
-            menu.add_command(label="标记完成", command=lambda: _mark(item, "done"))
-        else:
-            menu.add_command(label="恢复为待办", command=lambda: _mark(item, "pending"))
-        menu.add_command(label="标为非待办", command=lambda: _mark(item, "noise"))
-        menu.add_separator()
-        menu.add_command(label="修改内容", command=lambda: edit_item(item))
-        menu.add_command(label="查看原文", command=lambda: show_detail(item))
-        menu.add_command(label="判定理由", command=lambda: explain_why(item))
-        menu_ref["item"] = item
+        _fill_item_menu(menu, item, mark=_mark, edit_item=edit_item,
+                        show_detail=show_detail, explain_why=explain_why)
         menu.tk_popup(e.x_root, e.y_root)
 
     def popup_win(e) -> None:
@@ -812,7 +839,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         return (int(m.group(1)), int(m.group(2))) if m else (120, 120)
 
     def _apply_width(nw: int, nx: int = None) -> None:
-        """拖动边缘时的逐帧宽度反馈：只重画背景，条目重排等松手后的 render。"""
+        """拖动边缘时的逐帧宽度反馈：改尺寸 + 重画背景 + 重排条目（debounce 含 w，不会重复画）。"""
         global W
 
         nw = max(W_MIN, min(W_MAX, int(nw)))
@@ -828,6 +855,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             root.geometry(f"{nw}x{h}+{nx}+{gy}")
             cv.config(width=nw, height=h)
             _draw_bg(cv, nw, h)
+        render()                                   # 条目按新宽度重排，文本不再错位/截断
 
     def on_press(e) -> None:
         _touch_raise()                 # 交互时临时抬到前面（DeskBox 的交互抬层级）
@@ -1128,8 +1156,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         m = _re.search(r"([+-]\d+)([+-]\d+)$", root.geometry())
         pos = f"{m.group(1)}{m.group(2)}" if m else "+120+120"
         root.geometry(f"{w}x{h}{pos}")
-        cv.config(width=w, height=h)
-        _draw_bg(cv, w, h)
+        cv_h = max(1, h - HBAR_H)
+        cv.config(width=w, height=cv_h)
+        _draw_bg(cv, w, cv_h)
 
     def _resize(h: int, w: int = W) -> None:
         if h == state["h"] and w == state["w"]:
@@ -1231,6 +1260,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             except Exception:  # noqa: BLE001
                 mtime = 0
             cached = state.get("cached_items")
+            err = ""
             if cached is not None and mtime == state.get("db_mtime"):
                 todo_items = cached        # 库没变就复用缓存，省一次 sqlite 连接
             else:
@@ -1250,12 +1280,14 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 for i in todo_items)
             debounce = (state["mini"], state["daily_mode"], state["tab"], state.get("query", ""),
                         state.get("batch", False), state.get("pin", False),
-                        state.get("search", False), mtime, signatures)
+                        state.get("search", False), state.get("w", W),
+                        state.get("x_off", 0), mtime, signatures)
             if debounce == state.get("render_hash"):
                 return                       # 什么都没变，省一次全量重画
             state["render_hash"] = debounce
 
             cv.delete("body")
+            state["slide_gen"] = state.get("slide_gen", 0) + 1   # 打断进行中的滑动动画
             unconfirmed = sum(1 for i in todo_items if i.status == "unconfirmed")
 
             if state["mini"]:
@@ -1286,6 +1318,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
     def _render_mini(total: int, unconfirmed: int) -> None:
         _resize(H_MINI, W_MINI)
+        hbar = state.get("_hbar")
+        if hbar is not None:
+            hbar.pack_forget()
         cv.itemconfig(clock, state="normal")
         cv.itemconfig(date_id, state="normal")
         cv.coords(clock, W_MINI // 2, 42)
@@ -1314,6 +1349,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             entry.place_forget()
         if sentry.winfo_ismapped():
             sentry.place_forget()
+        hbar = state.get("_hbar")
+        if hbar is not None:
+            hbar.pack_forget()
 
         # 取置信度最高的 5 条 pending/unconfirmed，已完成的今天的也留
         pending = [i for i in todo_items if i.status != "done"]
@@ -1460,7 +1498,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         else:
             state["_top_n_hidden"] = 0
 
-        h = TOP + max(1, min(len(items) or 1, 8)) * ROW + FOOT
+        h = TOP + max(1, min(len(items) or 1, 8)) * ROW + FOOT + HBAR_H
         h = max(360, min(h, 660))
         _resize(h, W)
 
@@ -1621,9 +1659,22 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         else:
             from ..core.deadline import label as due_label, parse as due_parse
 
+            state["_max_body_w"] = 0
+            text_area_w = W - 2 * PAD - 82      # PAD+48 到 W-PAD-34
+            global_x_off = state.get("x_off", 0)
+            rows_from = set(cv.find_all())      # 滚动动画用：记录本次画条目前的已有元素
             for idx, item in enumerate(visible):
                 tag = f"item{idx}"
                 i = state["offset"] + idx
+                # 先量文本宽度，再按本条溢出量限制横向偏移，避免短条目被滚成空白
+                body = item.text
+                if "★重点" in (item.reason or ""):
+                    body = "★ " + body
+                use_font = FONT_ITEM_DONE if item.status == "done" else FONT_ITEM
+                body_w = use_font.measure(body)
+                state["_max_body_w"] = max(state.get("_max_body_w", 0), body_w)
+                item_overflow = max(0, body_w - text_area_w)
+                xo = -min(global_x_off, item_overflow)
                 if item.status == "done":
                     bar = "#6f6a64"
                 elif item.status == "unconfirmed":
@@ -1633,35 +1684,30 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 # 卡片：圆角底 + 1px 描边，勾选框 / 色条 / 标题 / 说明 / ⋯
                 picked = item.todo_id in state["sel"]
                 row_tag = f"row-{item.todo_id}"
-                _rounded(cv, PAD, y - 26, W - PAD, y + 26, min(14, RADIUS),
+                _rounded(cv, PAD + xo, y - 26, W - PAD + xo, y + 26, min(14, RADIUS),
                          fill=(ACTIVE if picked else FIELD),
                          outline=(ACCENT if picked else BORDER), width=(2 if picked else 1),
                          tags=("body", row_tag))
                 # 勾选框（点击切换完成）
                 if item.status == "done":
-                    _rounded(cv, PAD + 12, y - 9, PAD + 30, y + 9, 5,
+                    _rounded(cv, PAD + 12 + xo, y - 9, PAD + 30 + xo, y + 9, 5,
                              fill=ACCENT, outline="", tags=("body", f"dot{idx}"))
-                    cv.create_text(PAD + 21, y, text="✓", fill="#0b1a22",
+                    cv.create_text(PAD + 21 + xo, y, text="✓", fill="#0b1a22",
                                    font=("Microsoft YaHei UI", 9, "bold"),
                                    tags=("body", f"dot{idx}"))
                 else:
-                    _rounded(cv, PAD + 12, y - 9, PAD + 30, y + 9, 5,
+                    _rounded(cv, PAD + 12 + xo, y - 9, PAD + 30 + xo, y + 9, 5,
                              fill="", outline="#6d6c74", width=1,
                              tags=("body", f"dot{idx}"))
                 # 左侧竖色条
-                cv.create_line(PAD + 38, y - 13, PAD + 38, y + 11, fill=bar,
+                cv.create_line(PAD + 38 + xo, y - 13, PAD + 38 + xo, y + 11, fill=bar,
                                width=3, capstyle="round", tags="body")
                 due = due_parse(item.text)
                 chip = due_label(due)
-                limit = 20
-                body = item.text if len(item.text) <= limit else item.text[:limit] + "…"
-                if "★重点" in (item.reason or ""):
-                    body = "★ " + body
                 base_c = SUB if item.status != "pending" else TEXT
-                use_font = FONT_ITEM_DONE if item.status == "done" else FONT_ITEM
                 # 搜索模式下，把正文里命中关键词那段用强调色高亮
                 q = (state.get("query") or "").strip()
-                x_t, y_t = PAD + 48, y - 9
+                x_t, y_t = PAD + 48 + xo, y - 9
                 if q:
                     lower = body.lower()
                     idx = lower.find(q.lower())
@@ -1701,13 +1747,13 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     meta_color = "#ff9f43"
                 else:
                     meta_color = SUB
-                cv.create_text(PAD + 48, y + 10, text=" · ".join(meta_bits), anchor="w",
+                cv.create_text(PAD + 48 + xo, y + 10, text=" · ".join(meta_bits), anchor="w",
                                fill=meta_color, font=("Microsoft YaHei UI", 7),
                                tags=("body", tag))
-                cv.create_text(W - PAD - 34, y - 8, text="⋯", anchor="e", fill="#6f6a64",
+                cv.create_text(W - PAD - 34 + xo, y - 8, text="⋯", anchor="e", fill="#6f6a64",
                                font=("Microsoft YaHei UI", 9), tags=("body", f"more{idx}"))
                 # 行尾最右：修改按钮（点一下弹小窗改文字）
-                cv.create_text(W - PAD - 12, y - 8, text="改", anchor="e", fill="#6f6a64",
+                cv.create_text(W - PAD - 12 + xo, y - 8, text="改", anchor="e", fill="#6f6a64",
                                font=("Microsoft YaHei UI", 8), tags=("body", f"edit{idx}"))
 
                 if state["batch"]:
@@ -1728,6 +1774,35 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 for t in (tag, f"dot{idx}", f"more{idx}", f"edit{idx}"):
                     cv.tag_bind(t, "<Button-3>", lambda e, it=item: popup(e, it))
                 y += ROW
+
+            # 把刚画出来的条目统一打上 rows 标签，滚轮后整体做轻微滑动动画
+            for _iid in cv.find_all():
+                if _iid not in rows_from:
+                    cv.addtag_withtag("rows", _iid)
+
+        # 横向滚动条：最宽条目超出可视区时才需要滚（text_area_w 已在循环前算好）
+        max_w = state.get("_max_body_w", 0)
+        state["x_max"] = max(0, max_w - text_area_w)
+        state["x_off"] = min(state.get("x_off", 0), state["x_max"])
+        hbar = state.get("_hbar")
+        if hbar is not None:
+            if state["x_max"] > 0:
+                total = max_w
+                first = state["x_off"] / total
+                last = (state["x_off"] + text_area_w) / total
+                hbar.set(first, min(1.0, last))
+                hbar.pack(side="bottom", fill="x")
+            else:
+                hbar.set(0, 1)
+                hbar.pack_forget()
+
+        # 顶部折叠堆叠提示：往上滚过之后，上方还有条目时露一条窄胶囊压在首卡上沿
+        if state["offset"] > 0:
+            _rounded(cv, PAD + 24, TOP - 28, W - PAD - 24, TOP - 12, 8,
+                     fill=FIELD, outline=BORDER, width=1, tags="body")
+            cv.create_text(W / 2, TOP - 20, text=f"↑ 上方还有 {state['offset']} 条 · 滚轮往上翻",
+                           anchor="center", fill=SUB,
+                           font=("Microsoft YaHei UI", 7), tags="body")
 
         # 页脚：左边统计，右边「清除已完成」胶囊按钮
         # 底部折叠堆叠提示：还有条目没显示时，画两层逐渐变窄的卡片边
@@ -1841,11 +1916,41 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     cv.bind("<Leave>", on_leave)
     cv.bind("<Button-3>", popup_win)
 
+    def _slide_scroll(dirn: int) -> None:
+        """滚轮后条目轻微滑动：新内容从滚动方向滑入，约 140ms 收敛到位。"""
+        if not ANIM_ON or not cv.find_withtag("rows"):
+            return
+        state["slide_gen"] = state.get("slide_gen", 0) + 1
+        gen = state["slide_gen"]
+        amp = 12 * dirn           # 下滚时整体先下移 12px 再滑回，形成"往上推"的手感
+        frames = 9
+        applied = {"dy": amp}
+        cv.move("rows", 0, amp)
+
+        def _step(i: int) -> None:
+            if state.get("slide_gen") != gen:
+                return                  # 被新的滚动/重画打断
+            t = _ease_out_cubic(i / frames)
+            want = round(amp * (1 - t))
+            dy = want - applied["dy"]
+            if dy:
+                cv.move("rows", 0, dy)
+                applied["dy"] = want
+            if i < frames:
+                root.after(16, lambda: _step(i + 1))
+
+        root.after(16, lambda: _step(1))
+
     def on_wheel(e) -> str:
         if state["mini"]:
             return "break"
+        old = state["offset"]
         state["offset"] = max(0, state["offset"] + (-1 if e.delta > 0 else 1))
+        if state["offset"] == old:
+            return "break"
+        state.pop("render_hash", None)      # offset 不在 debounce 里，必须强制重画
         render()
+        _slide_scroll(1 if e.delta < 0 else -1)
         return "break"
 
     def on_ctrl_wheel(e) -> str:

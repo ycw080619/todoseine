@@ -12,7 +12,7 @@ import pytest
 
 sqlcipher3 = pytest.importorskip("sqlcipher3", reason="可选依赖 sqlcipher3 未安装")
 
-from chat2todo.sources.db import (
+from chat2todo.sources.db import (  # noqa: E402 - 需先 importorskip(sqlcipher3)
     HEADER_SIZE,
     MSG_TABLES,
     PRAGMA_BEFORE_KEY,

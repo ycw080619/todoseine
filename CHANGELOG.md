@@ -1,5 +1,25 @@
 ## [Unreleased] - 2026-10-27
 
+### 工程化：控制台分页拆分与 UI 回归测试
+
+- `tools/qq_db_export/console.py` 从 1692 行降到 1318 行：六个页面（控制台 / 常规 / AI / 截图 / 最近删除 / 关于）搬进新包 `tools/qq_db_export/c2t_pages/`，每页只暴露 `build(app, ctx)`
+- 页面模块不 import console（避免循环导入），所有配置读写与路径通过 `ctx` 注入；`_read_cfg` 等函数仍在 console 模块取值，测试替换 `CONFIG / ROOT` 依旧生效
+- `src/chat2todo/dashboard/app.py`：右键菜单填充抽成模块级 `_fill_item_menu(menu, item, *, mark, edit_item, show_detail, explain_why)`，与 Tk 解耦
+- 新增 `tests/test_dashboard.py::TestItemMenu`（3 条）：用假 menu 断言菜单项集合、完成/恢复分支、三个动作回调的路由，补上「测试全绿但右键必崩」的盲区
+
+### 看板横向滚动条：长文本不再截断
+
+- `src/chat2todo/dashboard/app.py`：待办条目正文不再截断（`body = item.text`，保留 ★ 前缀），超长文本由底部横向滚动条拖动查看
+- 新增 `HBAR_H = 14` 常量，`_set_size` 中画布高度减 `HBAR_H` 给滚动条留位
+- `_on_hscroll(*args)` 处理 `moveto` / `scroll`，更新 `state["x_off"]` 并 pop `render_hash` 强制重画
+- `_render_full` 中所有待办条目元素 x 坐标加横向偏移 `xo`；循环后按最宽条目溢出量计算 `x_max`，仅 `x_max > 0` 时 `hbar.pack()`，迷你/每日模式 `pack_forget()`
+- 修复滚动方向：`xo = -x_off`（x_off>0 表示滚到右侧，内容整体左移，露出长文本后半段）
+- 修复 `NameError: name 'state' is not defined`（`_hbar` 移入 state 字典字面量）与 `UnboundLocalError: err`（缓存命中路径提前 `err = ""`）
+- **修复横向滚动时短文本变空白**：所有条目共享全局 `x_off`，长条目滚到右侧时短条目被完全滚出可视区；改为按条目自身溢出量 `item_overflow = max(0, body_w - text_area_w)` 限制偏移 `xo = -min(x_off, item_overflow)`，短条目只滚到自身溢出量，始终可见
+- **修复拖动左右边缘改宽度时文本不重渲染**：render debounce 元组不含 `w`，拖拽后 `render()` 被跳过；debounce 加入 `state.get("w", W)` 与 `state.get("x_off", 0)`，且 `_apply_width` 末尾调用 `render()` 实现拖拽中实时重排，文本不再截断/错位
+- **新增顶部折叠堆叠提示**：原来只有列表底部显示「下方还有 N 条」的堆叠卡片边；现在向上滚过之后（`offset > 0`）顶部同样露出窄胶囊「↑ 上方还有 N 条 · 滚轮往上翻」，压在首张卡片上沿，与底部提示对称
+- **新增滚轮滚动动画**：`_slide_scroll(dirn)` 在每次滚轮后把本屏条目（`rows` 标签）整体沿滚动方向先位移 12px，再用 9 帧 `_ease_out_cubic` 缓动在约 140ms 内收敛回原位；`slide_gen` 世代号在重画/新滚动时打断上一段动画，避免叠加抖动
+
 ### 本地 HTTP API：待办数据对外可用（B1）
 
 - 新增 `src/chat2todo/api.py`（纯标准库 `http.server`，零第三方依赖）：5 个端点
@@ -65,6 +85,9 @@
 - 新增 `tools/build.ps1`：Set-Location + Join-Path 绝对路径拼接（cwd 无关），try/finally 恢复调用者 cwd；pip 分拆显式检查 `$LASTEXITCODE`，解决 `$ErrorActionPreference=Stop` 把 stderr 日志（pip warning / PyInstaller INFO）误判为 NativeCommandError 的问题；实测一键产出 17.87 MB onefile windowed exe
 - `.gitignore` 加 `*.spec`（PyInstaller spec 文件机器特定，不入库）
 - 四个 .bat（后台同步 / dash_autostart / console / launch）路径自解析重写：**不再硬编码** `C:\Program Files\Python312\python.exe`，也不依赖 `py -3w`（py launcher 在某些机器 exit 103 找不到 pythonw runtime）；改为 `where pythonw` 拿绝对路径、找不到 fallback `where python`；Windows 计划任务和开机自启跨 Python 版本都能跑
+- **bat 启动崩溃修复（CRLF + UTF-8 BOM）**：全部 7 个 .bat 原是 LF 换行，cmd.exe 解析 .bat 必须 CRLF，导致双击弹出一连串 `'数据文件' 不是内部或外部命令` 后退出；统一转 CRLF + 新增 `.gitattributes` 锁定 `*.bat text eol=crlf`；`snap.bat` / `截图热键.bat` / `snap_autostart.bat` 的 `pyw -3` 改 `where pythonw` 自解析；`snap_autostart.bat` 去掉硬编码 `D:\QQ 待办项目` / `C:\Users\ycw`，改用 `%~dp0` + `%USERPROFILE%`；**补 UTF-8 BOM**：cmd.exe 默认用 GBK 读取 bat，中文 UTF-8 字节被误读后含 `&`/`>`/`^` 等特殊字符导致命令被错误拆分，加 BOM 后 cmd 从文件头识别 UTF-8 解析；实测全部 7 个 bat 正常拉起
+- **控制台页面加横向滚动条**：`_new_page` 的 canvas 原只有垂直滚动条，「更多」等多按钮行在窄窗口下被水平裁剪且无法滚动；新增横向 Scrollbar + Shift+滚轮横向滚动，所有页面共用
+- **修复控制台横向滚动条拖不动**：`canvas.bind("<Configure>", lambda e: itemconfigure(win, width=e.width))` 把 inner frame 宽度强制等于画布宽度，内容永远不溢出，横向滚动条永不激活；改为 `width = max(e.width, inner.winfo_reqwidth())`——内容窄时撑满画布（保留 fill=x 布局），内容宽时保留自然宽度 → 横向滚动条可拖动
 - CI 收敛：Windows 11 × Python 3.12/3.13 + Ubuntu 冒烟；**加 pytest step**（原只跑 unittest discover 漏 36 个 fixture 测试），现 pytest 164 / unittest 128 全绿
 
 ### 看板每日早报三件套

@@ -15,7 +15,7 @@ import json
 import math
 import urllib.error
 import urllib.request
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:

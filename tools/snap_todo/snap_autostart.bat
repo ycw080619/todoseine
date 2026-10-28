@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 rem auto-start screenshot hotkey (no console window)
 rem pythonw.exe 优先（无黑窗）

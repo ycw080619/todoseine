@@ -320,5 +320,69 @@ class TestFilterItems(unittest.TestCase):
         self.assertEqual(filter_items(items, "不存在的关键词"), [])
 
 
+class _FakeMenu:
+    """记录菜单调用序列的最小替身：不需要 Tk，也不需要显示器。"""
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    def delete(self, *args) -> None:
+        self.calls.append(("delete", args))
+
+    def add_command(self, label: str, command) -> None:
+        self.calls.append(("command", label, command))
+
+    def add_separator(self) -> None:
+        self.calls.append(("separator",))
+
+    def labels(self) -> list:
+        return [c[1] for c in self.calls if c[0] == "command"]
+
+
+class TestItemMenu(unittest.TestCase):
+    """右键菜单填充逻辑：曾因 menu_ref 未定义而每次右键必崩，这里守住菜单内容。"""
+
+    def setUp(self) -> None:
+        self.marked = []
+
+        def mark(item, status):
+            self.marked.append((item.todo_id, status))
+
+        self.mark = mark
+        self.touched = []
+
+    def _fill(self, status: str) -> _FakeMenu:
+        from chat2todo.dashboard.app import _fill_item_menu
+
+        item = TodoItem(text="写周报", session="群A", sender="张三",
+                        message_ts=0, todo_id=7, status=status)
+        menu = _FakeMenu()
+        _fill_item_menu(menu, item, mark=self.mark,
+                        edit_item=lambda i: self.touched.append(("edit", i.todo_id)),
+                        show_detail=lambda i: self.touched.append(("detail", i.todo_id)),
+                        explain_why=lambda i: self.touched.append(("why", i.todo_id)))
+        return menu
+
+    def test_pending_menu(self) -> None:
+        menu = self._fill("pending")
+        self.assertEqual(menu.calls[0], ("delete", (0, "end")))
+        self.assertEqual(menu.labels(), ["标记完成", "标为非待办", "修改内容",
+                                         "查看原文", "判定理由"])
+        menu.calls[1][2]()                      # 触发「标记完成」
+        self.assertEqual(self.marked, [(7, "done")])
+
+    def test_done_menu_offers_restore(self) -> None:
+        menu = self._fill("done")
+        self.assertIn("恢复为待办", menu.labels())
+        self.assertNotIn("标记完成", menu.labels())
+
+    def test_actions_route_to_handlers(self) -> None:
+        menu = self._fill("pending")
+        for call in menu.calls:
+            if call[0] == "command" and call[1] in ("修改内容", "查看原文", "判定理由"):
+                call[2]()
+        self.assertEqual(self.touched, [("edit", 7), ("detail", 7), ("why", 7)])
+
+
 if __name__ == "__main__":
     unittest.main()

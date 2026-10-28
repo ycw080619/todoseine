@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 rem 截图待办热键常驻：双击后 Ctrl+Alt+S 随时唤出截图待办（记得先 Win+Shift+S 截图）
 rem 关闭方法：任务管理器结束 pythonw.exe，或注销重登
