@@ -125,6 +125,13 @@ class TestApiServer(unittest.TestCase):
         self.assertFalse(_is_local("8.8.8.8"))
         self.assertFalse(_is_local("192.168.1.9"))
 
+    def test_is_local_rejects_prefix_lookalike_hosts(self):
+        """回归：startswith("127.") 会把恶意域名当回环地址，放行 CORS。"""
+        for host in ("127.0.0.1.evil.com", "127.0.0.1.nip.io",
+                     "localhost.evil.com", "127.0.0.1evil.com",
+                     "127.evil.com", ""):
+            self.assertFalse(_is_local(host), host)
+
     def test_cors_only_localhost(self):
         self.assertEqual(_cors_origin("http://localhost:3000"), "http://localhost:3000")
         self.assertEqual(_cors_origin("http://127.0.0.1:5173"), "http://127.0.0.1:5173")

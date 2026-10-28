@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional, Tuple
@@ -38,7 +39,21 @@ def _json_bytes(payload) -> bytes:
 
 
 def _is_local(addr: str) -> bool:
-    return addr in _LOCAL_ADDRS or addr.startswith("127.")
+    """判断是否本机。
+
+    不能用 ``startswith("127.")``：``127.0.0.1.evil.com`` 这种域名也满足前缀，
+    会被当成回环地址放行 CORS，任意网页就能读走本地待办数据。
+    这里只认三种情况：精确的 localhost/::1，或能解析成 IP 且确实是回环地址。
+    域名一律不放行（哪怕是 localhost 的变体）。
+    """
+    if not addr:
+        return False
+    if addr.lower() in _LOCAL_ADDRS:
+        return True
+    try:
+        return ipaddress.ip_address(addr).is_loopback
+    except ValueError:
+        return False   # 域名（含 127.0.0.1.evil.com 这类伪装）一律拒绝
 
 
 def _cors_origin(origin: str) -> Optional[str]:
@@ -51,7 +66,7 @@ def _cors_origin(origin: str) -> Optional[str]:
 
 class _ApiHandler(BaseHTTPRequestHandler):
     server_version = "Chat2TodoAPI/1.0"
-    store_path = "c2t.db"          # 由 make_handler 覆盖
+    store_path = ""                # 由 make_handler 覆盖；空则用配置默认库
 
     # --- 基础工具 ---------------------------------------------
     def log_message(self, fmt, *args):   # 静默：不刷屏到控制台
@@ -71,7 +86,11 @@ class _ApiHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _store(self) -> Store:
-        return Store(self.store_path)
+        if self.store_path:
+            return Store(self.store_path)
+        from .config import DEFAULTS      # 兜底：与控制台共用一个默认库
+
+        return Store(DEFAULTS["db_path"])
 
     def _query(self) -> dict:
         return parse_qs(urlparse(self.path).query)
