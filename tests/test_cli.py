@@ -20,7 +20,10 @@ def _msg(ts=1700000000, sid="u1", name="小李", content="你好"):
 class TestConfig(unittest.TestCase):
     def test_defaults_without_file(self):
         cfg = config.load("")
-        self.assertEqual(cfg["db_path"], "c2t.db")
+        # 默认库必须是用户目录下的 qq.db（和控制台/看板同一个），不是 CWD 里的 c2t.db
+        self.assertEqual(config.DEFAULTS["db_path"], cfg["db_path"])
+        self.assertTrue(os.path.isabs(cfg["db_path"]))
+        self.assertEqual(os.path.basename(cfg["db_path"]), "qq.db")
         self.assertEqual(cfg["todo_threshold"], 4)
         self.assertFalse(cfg["strict_dedupe"])
         self.assertFalse(cfg["ai"]["enabled"])
@@ -32,7 +35,8 @@ class TestConfig(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(config.sample_toml())
             cfg = config.load(path)
-            self.assertEqual(cfg["db_path"], "c2t.db")
+            # 示例里 db_path 留空 → 回落默认用户目录库
+            self.assertEqual(cfg["db_path"], config.DEFAULTS["db_path"])
             self.assertEqual(cfg["export_dir"], "out")
             self.assertIn("ai", cfg)
             self.assertFalse(cfg["ai"]["enabled"])
@@ -44,6 +48,20 @@ class TestConfig(unittest.TestCase):
             with open(path, "wb") as fh:
                 fh.write('\ufeffdb_path = "x.db"\n'.encode("utf-8"))
             self.assertEqual(config.load(path)["db_path"], "x.db")
+
+    def test_config_parses_inline_arrays(self):
+        """回归：示例配置里就有 ignore_groups = []，极简解析器必须支持数组。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "arr.toml")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(
+                    "[filter]\n"
+                    "ignore_groups = []\n"
+                    "star_groups = [\"111\", '222']\n"
+                )
+            cfg = config.load(path)
+            self.assertEqual(cfg["filter"]["ignore_groups"], [])
+            self.assertEqual(cfg["filter"]["star_groups"], ["111", "222"])
 
 
 class TestStrictDedupe(unittest.TestCase):

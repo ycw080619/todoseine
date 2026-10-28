@@ -16,7 +16,9 @@ import os
 from typing import Any, Dict, Optional
 
 DEFAULTS: Dict[str, Any] = {
-    "db_path": "c2t.db",
+    # 与控制台、看板、文档保持同一个库：%USERPROFILE%\Chat2Todo\qq.db。
+    # 之前是相对路径 "c2t.db"，CLI 换个工作目录就会凭空多出一个空库，看着像数据丢了。
+    "db_path": os.path.join(os.path.expanduser("~"), "Chat2Todo", "qq.db"),
     "export_dir": "out",
     "todo_threshold": 4,
     "pending_threshold": 3,
@@ -70,21 +72,21 @@ def _mini_parse(path: str) -> Dict[str, Any]:
 
 
 def _mini_parse_text(text: str) -> Dict[str, Any]:
-    """极简 TOML 子集：支持 [section] 与 key = value，忽略注释。"""
+    """极简 TOML 子集：支持 [section]、key = value、内联数组，忽略注释。"""
     data: Dict[str, Any] = {}
     section = ""
     for raw in text.splitlines():
-            line = raw.split("#", 1)[0].strip()
-            if not line:
-                continue
-            if line.startswith("[") and line.endswith("]"):
-                section = line[1:-1].strip()
-                continue
-            if "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key, value = key.strip(), value.strip()
-            data[f"{section}.{key}" if section else key] = _coerce(value)
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip()
+        data[f"{section}.{key}" if section else key] = _coerce(value)
     return _nest(data)
 
 
@@ -96,6 +98,10 @@ def _coerce(value: str) -> Any:
         value.startswith("'") and value.endswith("'")
     ):
         return value[1:-1]
+    if value.startswith("[") and value.endswith("]"):
+        # 内联数组：ignore_groups = ["123", "456"] / star_groups = []
+        body = value[1:-1].strip()
+        return [_coerce(part.strip()) for part in body.split(",") if part.strip()]
     try:
         return int(value)
     except ValueError:
@@ -169,6 +175,9 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
 
     if os.environ.get("C2T_DB"):
         cfg["db_path"] = os.environ["C2T_DB"]
+    if not str(cfg.get("db_path") or "").strip():
+        # 配置文件里留空（或用户写错成空串）时回落到默认用户目录库
+        cfg["db_path"] = DEFAULTS["db_path"]
     if os.environ.get("C2T_DB_MODULE"):
         cfg["db"]["module"] = os.environ["C2T_DB_MODULE"]
     if os.environ.get("C2T_DB_ARGS"):
@@ -186,8 +195,8 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
 
 def sample_toml() -> str:
     """`c2t doctor --write-sample` 用：一份可直接编辑的注释版配置。"""
-    return """# Chat2Todo 配置（放在当前目录或 ~/.config/chat2todo/config.toml）
-db_path          = "c2t.db"   # 数据库位置
+    return r"""# Chat2Todo 配置（放在当前目录或 ~/.config/chat2todo/config.toml）
+db_path          = ""         # 留空 = %USERPROFILE%\Chat2Todo\qq.db（与控制台同一个库）
 export_dir       = "out"      # 导出目录
 todo_threshold   = 4          # 判为待办的最低分
 pending_threshold= 3          # 判为待确认的最低分

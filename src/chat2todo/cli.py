@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import tempfile
@@ -596,8 +597,8 @@ def cmd_db_import(args) -> int:
             weights = store.load_feedback_weights() or None
         finally:
             store.close()
-    except Exception:  # noqa: BLE001 - 权重加载失败不阻塞导入
-        pass
+    except Exception as exc:  # noqa: BLE001 - 权重加载失败不阻塞导入
+        logging.getLogger("chat2todo.cli").debug("校准权重加载失败，按默认权重打分：%s", exc)
 
     todos = extract_todos(messages, session=args.session or "qq",
                           weights_map=weights)
@@ -1022,6 +1023,11 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if not hasattr(args, "config"):
         args.config = ""
+    # 默认只放行 WARNING 以上；设 C2T_DEBUG=1 可看到被容错吞掉的底层原因
+    logging.basicConfig(
+        level=logging.DEBUG if os.environ.get("C2T_DEBUG") else logging.WARNING,
+        format="[%(levelname)s] %(name)s: %(message)s",
+    )
     try:
         return args.func(args)
     except C2TError as err:

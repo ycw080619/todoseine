@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 from dataclasses import dataclass
@@ -54,8 +55,9 @@ def _documents_dirs() -> List[Path]:
                     expanded = os.path.expandvars(str(val))
                     if os.path.isdir(expanded):
                         dirs.append(Path(expanded))
-        except Exception:  # noqa: BLE001 - 探测失败就退回默认位置
-            pass
+        except Exception as exc:  # noqa: BLE001 - 探测失败就退回默认位置
+            logging.getLogger("chat2todo.sources.db").debug(
+                "读取注册表 Documents 位置失败，退回默认目录：%s", exc)
     home_docs = Path.home() / "Documents"
     if home_docs.is_dir():
         dirs.append(home_docs)
@@ -477,5 +479,7 @@ def fetch_group_names(cfg: Dict) -> Dict[str, str]:
             if code:
                 out[code] = name
         return out
-    except Exception:  # noqa: BLE001 - 展示层辅助功能，静默降级
+    except Exception as exc:  # noqa: BLE001 - 展示层辅助功能，降级为不显示群名
+        logging.getLogger("chat2todo.sources.db").debug(
+            "读取群名失败，看板将只显示群号：%s", exc)
         return {}
