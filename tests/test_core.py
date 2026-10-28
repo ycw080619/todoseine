@@ -66,6 +66,22 @@ class TestExtract(unittest.TestCase):
         self.assertIn("行动词", todo.reason)
         self.assertGreaterEqual(todo.confidence, 0.5)
 
+    def test_thresholds_from_config_override_constants(self):
+        """回归：todo_threshold/pending_threshold 必须真正影响抽取，
+        否则用户在 c2t.toml 里改阈值完全不生效（之前硬编码常量）。"""
+        # "记得提交月度报表" 得分 5（行动词 + 通知/要求），高于默认 todo(4)
+        msgs = [Message(timestamp=1, sender_id="a", sender_name="A",
+                        content="记得提交月度报表")]
+        # 默认：5 >= todo(4) → pending
+        default = extract_todos(msgs)
+        self.assertEqual(len(default), 1)
+        self.assertEqual(default[0].status, "pending")
+        # 抬高 todo_threshold 到 6：5 < 6 → 降为 unconfirmed（阈值真的生效）
+        unconfirmed = extract_todos(msgs, todo_threshold=6)
+        self.assertEqual(unconfirmed[0].status, "unconfirmed")
+        # 抬高 weak_threshold 到 6：5 < 6 → 直接被过滤
+        self.assertEqual(extract_todos(msgs, weak_threshold=6), [])
+
 
 class TestStore(unittest.TestCase):
     def test_idempotent_import(self):
@@ -110,6 +126,34 @@ class TestStore(unittest.TestCase):
                                  "C# 技术交流·新")
             finally:
                 store.close()
+
+    def test_wal_and_busy_timeout_enabled(self):
+        """回归：看板/同步线程/计划任务三路并发打同一个库，
+        没 WAL + busy_timeout 会随机 'database is locked'。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "t.db"))
+            try:
+                jm = store.conn.execute("PRAGMA journal_mode").fetchone()[0]
+                bt = store.conn.execute("PRAGMA busy_timeout").fetchone()[0]
+                self.assertEqual(jm, "wal")
+                self.assertGreaterEqual(int(bt), 5000)
+            finally:
+                store.close()
+
+    def test_migrate_runs_once_per_schema_version(self):
+        """回归：看板每 30 秒新建 Store，结构没变就跳过 _migrate 里的
+        全表 UPDATE ... NOT IN 子查询，否则库大了周期性卡顿。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "t.db")
+            s1 = Store(db)
+            try:
+                self.assertEqual(s1._meta_get("schema_version"),
+                                 s1.SCHEMA_VERSION)
+            finally:
+                s1.close()
+            # 二次打开：水位已命中，_migrate 应直接 return（不抛错即通过）
+            s2 = Store(db)
+            s2.close()
 
 
 class TestMarkdown(unittest.TestCase):
