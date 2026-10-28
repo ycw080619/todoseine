@@ -1602,6 +1602,10 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         visible = items[state["offset"]:state["offset"] + rows_room]
         state["visible"] = visible
 
+        # 横向滚动条共用的量：不管 visible 是不是空都要初始化，否则空态 tab 下访问会 NameError
+        state["_max_body_w"] = 0
+        text_area_w = W - 2 * PAD - 82      # PAD+48 到 W-PAD-34
+
         y = TOP + 14
         if err:
             cv.create_text(PAD, y, text=f"读取失败：{err}", anchor="w", fill="#ff8fab",
@@ -1659,8 +1663,6 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         else:
             from ..core.deadline import label as due_label, parse as due_parse
 
-            state["_max_body_w"] = 0
-            text_area_w = W - 2 * PAD - 82      # PAD+48 到 W-PAD-34
             global_x_off = state.get("x_off", 0)
             rows_from = set(cv.find_all())      # 滚动动画用：记录本次画条目前的已有元素
             for idx, item in enumerate(visible):
