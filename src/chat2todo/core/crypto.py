@@ -100,16 +100,20 @@ def cbc_decrypt_first_block(key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
     return bytes(a ^ b for a, b in zip(decrypt_block(key, ciphertext[:16]), iv[:16]))
 
 
-def derive_key(passphrase: bytes, salt: bytes, iterations: int = 256000,
+def derive_key(passphrase: bytes, salt: bytes, iterations: int = 4000,
                digest: str = "sha512", length: int = 32) -> bytes:
-    """SQLCipher 4 默认派生：PBKDF2-HMAC-SHA512 / 256000 次。"""
+    """QQ 数据库的派生参数：PBKDF2-HMAC-SHA512 / 4000 次。
+
+    注意：这不是 SQLCipher 4 的默认值（256000），QQ 用的是 4000。
+    校验函数 verify_sqlcipher_key 不传 iterations 时走这个默认值。
+    """
     return hashlib.pbkdf2_hmac(digest, passphrase, salt, iterations, length)
 
 
 SQLITE_MAGIC = b"SQLite format 3\x00"
 
 
-def verify_sqlcipher_key(passphrase: str, db_path: str, iterations: int = 256000,
+def verify_sqlcipher_key(passphrase: str, db_path: str, iterations: int = 4000,
                          digest: str = "sha512", header_size: int = 1024) -> bool:
     """校验一个口令能否解开该库的第一页。
 

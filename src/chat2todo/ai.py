@@ -47,7 +47,8 @@ class AI:
         return bool(self.enabled and self.base_url and self.api_key)
 
     # --- 底层调用 -------------------------------------------------
-    def _chat(self, system: str, user: str, max_tokens: int = 256) -> Optional[str]:
+    def _chat(self, system: str, user: str, max_tokens: int = 256,
+              timeout: Optional[int] = None) -> Optional[str]:
         if not self.usable:
             return None
         payload = {
@@ -69,7 +70,7 @@ class AI:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
             self.calls += 1
             return body["choices"][0]["message"]["content"].strip()
@@ -117,7 +118,6 @@ class AI:
         """把截图 OCR 出来的毛边文字整理干净：纠错、去噪、按行保留事实。"""
         if not text.strip():
             return None
-        self.timeout = max(int(self.timeout), 120)   # OCR 文本长，放宽超时
         text = text[:4000]
         out = self._chat(
             "你是 OCR 文本整理器。输入是从截图里识别出来的文字，可能有错别字、"
@@ -127,6 +127,7 @@ class AI:
             "严禁编造原文没有的信息，宁可保留原样。只输出整理后的文本。",
             text,
             max_tokens=600,
+            timeout=max(int(self.timeout), 120),   # OCR 文本长，单次放宽超时
         )
         return out.strip() if out else None
 
