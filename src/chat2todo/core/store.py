@@ -92,14 +92,26 @@ CREATE TABLE IF NOT EXISTS meta (
 
 
 class Store:
+    # bump 这个版本号时，_migrate 会对老库跑一遍结构补齐 + 孤儿解绑；
+    # 当前版本没变就直接跳过，避免看板每 30 秒刷新都跑一次全表 UPDATE。
+    SCHEMA_VERSION = "3"
+
     def __init__(self, path: str = "c2t.db") -> None:
         self.path = path
         # 默认库在 ~/Chat2Todo/ 下，首次使用目录还不存在，先补上再连
         parent = os.path.dirname(os.path.abspath(path))
         if parent:
             os.makedirs(parent, exist_ok=True)
-        self.conn = sqlite3.connect(path)
+        # timeout=5 是 Python 层的 busy 等待；下面 busy_timeout=5000 是 SQLite
+        # 层的，两道一起上。看板 / 控制台同步线程 / 计划任务三路同时打一个库，
+        # 没有 WAL + busy_timeout 会随机抛 "database is locked"，又因为上层
+        # 普遍 except: pass，用户只看到「看板不刷新」「同步没结果」。
+        self.conn = sqlite3.connect(path, timeout=5.0)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=5000")
+        # WAL 模式下 NORMAL 就够：checkpoint 时才刷盘，写入性能和可靠性的平衡点
+        self.conn.execute("PRAGMA synchronous=NORMAL")
         # SQLite 默认不校验外键，必须每条连接显式打开；目前表结构里 feedback
         # 的解绑是显式 _heal_feedback_orphans()，但保留开关，新增关系表时才生效
         self.conn.execute("PRAGMA foreign_keys = ON")
@@ -110,6 +122,10 @@ class Store:
 
     def _migrate(self) -> None:
         """把老库补齐到当前 schema（只加列，不删不改，保证已有数据安全）。"""
+        # 看板每 30 秒新建一个 Store，结构没变就跳过——尤其是里面的
+        # _heal_feedback_orphans() 是全表 UPDATE ... NOT IN 子查询，库大了会卡。
+        if self._meta_get("schema_version") == self.SCHEMA_VERSION:
+            return
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(todos)")}
         if "reviewed" not in cols:
             # AI 复核过的条目置 1，增量复核只挑没复核过的，避免每次全量重跑
@@ -137,6 +153,7 @@ class Store:
         )
         self._rebuild_feedback_nullable()
         self._heal_feedback_orphans()
+        self._meta_set("schema_version", self.SCHEMA_VERSION)
         self.conn.commit()
 
     def _rebuild_feedback_nullable(self) -> None:
@@ -657,7 +674,7 @@ class Store:
             "top_tags": top_tags,
         }
 
-    def explain_todo(self, todo_id: int) -> Optional[dict]:
+    def explain_todo(self, todo_id: int, threshold: Optional[int] = None) -> Optional[dict]:
         """返回某条待办的完整判定报告（dict），CLI 与 dashboard popup 共用。
 
         结构：
@@ -743,7 +760,7 @@ class Store:
             "subtotal": subtotal,
             "calib_delta": calib_delta,
             "final_score": final_score,
-            "threshold": _ex.TODO_THRESHOLD,
+            "threshold": threshold if threshold is not None else _ex.TODO_THRESHOLD,
             "confidence": row["confidence"],
             "status": row["status"],
             "chat_id": chat_id,
