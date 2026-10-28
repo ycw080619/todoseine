@@ -110,7 +110,9 @@ def cmd_import(args) -> int:
     session = args.session or os.path.splitext(os.path.basename(args.file))[0]
     raw = list(adapter.read(src))
     unique = dedupe(raw, strict=bool(cfg.get("strict_dedupe")))
-    todos = extract_todos(unique, session=session)
+    todos = extract_todos(unique, session=session,
+                          todo_threshold=cfg.get("todo_threshold"),
+                          weak_threshold=cfg.get("pending_threshold"))
 
     from .semantic import vector_pass
 
@@ -262,7 +264,8 @@ def cmd_explain(args) -> int:
     """打印某条待办的完整判定报告（规则 / 分数 / 用户校准命中 / 原消息上下文）。"""
     store = Store(_db(args))
     try:
-        report = store.explain_todo(args.todo_id)
+        report = store.explain_todo(args.todo_id,
+                                    threshold=_cfg(args).get("todo_threshold"))
     finally:
         store.close()
     if not report:
@@ -601,7 +604,9 @@ def cmd_db_import(args) -> int:
         logging.getLogger("chat2todo.cli").debug("校准权重加载失败，按默认权重打分：%s", exc)
 
     todos = extract_todos(messages, session=args.session or "qq",
-                          weights_map=weights)
+                          weights_map=weights,
+                          todo_threshold=cfg.get("todo_threshold"),
+                          weak_threshold=cfg.get("pending_threshold"))
 
     from .semantic import vector_pass
 
@@ -796,7 +801,9 @@ def _pipeline(path: str, cfg: dict, encoding: str = "") -> tuple:
         raise C2TError("E1002", f"没有名为 {name} 的适配器")
     raw = list(get_adapter(name).read(src))
     messages = dedupe(raw, strict=bool(cfg.get("strict_dedupe")))
-    todos = extract_todos(messages, session=os.path.splitext(os.path.basename(path))[0])
+    todos = extract_todos(messages, session=os.path.splitext(os.path.basename(path))[0],
+                          todo_threshold=cfg.get("todo_threshold"),
+                          weak_threshold=cfg.get("pending_threshold"))
     ai = AI(cfg)
     if ai.on("review"):
         todos = [t for t in todos if ai.review(t.text) is not False]

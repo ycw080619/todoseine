@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 import threading
@@ -17,6 +18,8 @@ from .geom import (SNAP_PX, _anchor_of, _apply_anchor, _clamp_to_rects,
                    _ease_out_cubic, _monitor_work_areas, _slide_offset,
                    _snap_to_edges)
 from .win32 import _apply_blur, _set_layer, _single_instance, _start_hotkey
+
+logger = logging.getLogger("chat2todo.dashboard")
 
 # ---- 外观参数（改这里就能换皮；参考 DeskBox 的 WinUI 深色卡片风格）----
 KEY = "#010203"        # 透明色键：窗口外圆角区域用这个颜色，Windows 会把它抠透
@@ -298,8 +301,8 @@ def run(db_path: str, interval: int = 30, status: str = "pending",
             if saved.get("last_shown_date") != _today:
                 built[2]["daily_mode"] = True
                 save_pos(x, y, last_shown_date=_today)   # 记录今天已展示，避免下次启动又弹
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 - 看板启动不能因早报逻辑失败而崩
+            logger.debug("每日早报状态更新失败：%s", exc)
     root = built[0]
     root.mainloop()
     return 0
@@ -678,7 +681,10 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         """右键「判定理由」：弹窗展示规则分解 + 校准命中。"""
         st = _store()
         try:
-            report = st.explain_todo(item.todo_id)
+            report = st.explain_todo(
+                item.todo_id,
+                threshold=cfg_data.get("todo_threshold"),
+            )
         finally:
             st.close()
 

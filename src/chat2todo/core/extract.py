@@ -175,14 +175,21 @@ def score_message(msg: Message, weights_map: dict = None) -> tuple:
 
 
 def extract_todos(messages: Iterable[Message], session: str = "",
-                  weights_map: dict = None) -> List[TodoItem]:
-    """从消息流里抽取出待办，返回按时间排序的结果。"""
+                  weights_map: dict = None,
+                  todo_threshold: int = TODO_THRESHOLD,
+                  weak_threshold: int = WEAK_THRESHOLD) -> List[TodoItem]:
+    """从消息流里抽取出待办，返回按时间排序的结果。
+
+    todo_threshold / weak_threshold 默认取模块常量，但调用方（CLI / 看板）
+    应从配置里传 todo_threshold / pending_threshold 进来——否则用户在
+    c2t.toml 里改阈值完全不生效。
+    """
     todos: List[TodoItem] = []
     for msg in messages:
         if classify(msg) == "risk":
             continue
         score, reasons = score_message(msg, weights_map)
-        if score < WEAK_THRESHOLD:
+        if score < weak_threshold:
             continue
         todos.append(
             TodoItem(
@@ -192,7 +199,7 @@ def extract_todos(messages: Iterable[Message], session: str = "",
                 message_ts=msg.timestamp,
                 reason=("★重点 · " if getattr(msg, "star", False) else "") + "; ".join(reasons),
                 confidence=round(min(max(score, 0) / 7.0, 1.0), 2),
-                status="pending" if score >= TODO_THRESHOLD else "unconfirmed",
+                status="pending" if score >= todo_threshold else "unconfirmed",
             )
         )
     todos.sort(key=lambda t: t.message_ts)
