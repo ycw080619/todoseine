@@ -1,4 +1,38 @@
-## [Unreleased] - 2026-10-27
+## [Unreleased] - 2026-10-28
+
+针对一次逐行代码审计出的 11 条硬伤，本次修掉其中 9 条（另 2 条记录为待办技术债）。
+
+### 安全（会真出事的两条）
+
+- **CORS 校验绕过**：`api.py` 的 `_is_local` 原来用 `addr.startswith("127.")`，`Origin: http://127.0.0.1.evil.com` 会被当成回环地址放行 ACAO，任意网页能读走本地待办数据。改为 `ipaddress.ip_address(addr).is_loopback` + 精确匹配 `localhost/::1`，域名一律拒绝
+- **SQLite 外键形同虚设**：`Store.__init__` 现在每条连接执行 `PRAGMA foreign_keys = ON`；`feedback.todo_id` 改为可空并在删待办（`trash_item` / `trash_many` / `purge_chat`）后由 `_heal_feedback_orphans()` 解绑为 NULL，不再留孤儿校准样本
+  - 迁移：老库 `todo_id NOT NULL` 会被 `_rebuild_feedback_nullable()` 自动重建（实测真实库 0 样本无痛升级）
+  - 不用 FK 的取舍：校准档案要跨机器导入，落地时源库 todo_id 在本库不存在，硬约束会让整份档案导入失败；等价语义用显式 SET NULL 实现
+- **手写 AES 收边**：删掉 `core/crypto.py` 里没人用的 `find_passphrase`，模块文档补上「仅服务口令校验、不得用于整库解密」的边界说明。纯 Python AES 保留是因为 `c2t db-key --save` 要在零第三方依赖下校验口令
+
+### 健壮性
+
+- **FTS 增量同步**：`_sync_fts` 从 `NOT IN` 全表 diff 改为 watermark（`meta.fts_last_id`），只补水位之后的新消息；按群清理后走 `_rebuild_fts()` 整表重建。真实库（51966 条）二次打开不重复灌入
+- **极简 TOML 解析器支持数组**：`ignore_groups = []` / `star_groups = ["111", "222"]` 现在能正确解析成列表（示例配置里本来就有数组，之前会存成字符串或报错）
+- **默认库路径与文档对齐**：`config.DEFAULTS["db_path"]` 从相对路径 `c2t.db` 改为 `%USERPROFILE%\Chat2Todo\qq.db`（与控制台/看板同库）；配置项留空即回落默认值，`Store` 自动建父目录。实测在任意 cwd 跑 `c2t stats` 都读同一个库、不会凭空多出空库
+- **异常不再全静默**：`cli.main` 增加 `logging.basicConfig`（默认 WARNING，`C2T_DEBUG=1` 放开 DEBUG）；注册表探测、群名读取、校准权重加载等容错分支改为记 debug 日志并说明后果，FTS5 不可用改为 warning
+
+### 文档
+
+- `项目说明.md` / `分层方案.md`：测试数量从过期的 112 / 103 更正为 202；插件机制状态从「未开放」更正为「已开放（`c2t plugins` + `plugin_manifest.py`）」
+
+### 测试
+
+- 新增 4 条回归：`test_is_local_rejects_prefix_lookalike_hosts`（CORS 伪装域名）、`test_fts_incremental_watermark`、`test_feedback_orphans_not_left_behind`、`test_config_parses_inline_arrays`
+- 真实库副本冒烟：`PRAGMA foreign_keys=ON` 升级、FTS 水位初始化（51966 条不重灌）、删待办解绑全部通过
+- `pytest` 202 passed；`ruff check .` All checks passed；`c2t serve` 实测：`127.0.0.1.evil.com` / `localhost.evil.com` 均无 ACAO，`localhost:5173` 正常放行
+
+### 待办（本次未动）
+
+- `Store` 873 行职责过多，建议按 messages / todos / fts / feedback 拆成多个 mixin 或仓储类
+- `api.py` 每请求新建 `Store`：本地工具并发极低，暂不引入连接池（`ThreadingHTTPServer` 每连接一线程，线程本地缓存反而会漏连接）
+
+## 2026-10-27
 
 ### 工程化：控制台分页拆分与 UI 回归测试
 
