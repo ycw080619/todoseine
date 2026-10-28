@@ -3,12 +3,16 @@
 只做「读」需要的部分：单块解密 + CBC 首块 + PBKDF2 派生。
 性能有限（纯 Python），因此只用于校验密钥和读少量页面；
 整库解密建议交给社区工具。
+
+边界（改动前请先读）：
+- 这里的手写 AES 只服务 ``verify_sqlcipher_key``（比对第一页的 SQLite 幻数），
+  不要拿它做整库解密——那是 ``core/sqlcipher.py`` + ``cryptography`` 的职责；
+- 纯 Python 实现没有常量时间保证，不适合处理需要保密性的明文流。
 """
 
 from __future__ import annotations
 
 import hashlib
-from typing import Optional
 
 SBOX = [
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
@@ -121,15 +125,3 @@ def verify_sqlcipher_key(passphrase: str, db_path: str, iterations: int = 256000
         return False
     key = derive_key(passphrase.encode("utf-8"), salt, iterations, digest)
     return cbc_decrypt_first_block(key, iv, ct) == SQLITE_MAGIC
-
-
-def find_passphrase(candidates, db_path: str, iterations: int = 256000,
-                    digest: str = "sha512") -> Optional[str]:
-    """在一批候选口令里找出能解开首页的那个。"""
-    for cand in candidates:
-        try:
-            if verify_sqlcipher_key(cand, db_path, iterations, digest):
-                return cand
-        except Exception:  # noqa: BLE001 - 单个候选失败不影响其它
-            continue
-    return None
