@@ -32,6 +32,19 @@
 - `Store` 873 行职责过多，建议按 messages / todos / fts / feedback 拆成多个 mixin 或仓储类
 - `api.py` 每请求新建 `Store`：本地工具并发极低，暂不引入连接池（`ThreadingHTTPServer` 每连接一线程，线程本地缓存反而会漏连接）
 
+### 第二轮代码级复查（C1–C6）
+
+逐条对着代码读出来的问题，按严重度：
+
+- **C1 🔴 SQLite 无并发保护**：看板每 30s 新建连接、控制台同步线程写库、计划任务 2 小时一次 db-import，三路并发打同一个库，没有 WAL + busy_timeout 会随机抛 `database is locked`，又被上层 `except: pass` 吞掉，用户只看到「看板不刷新」「同步没结果」。每条连接现在设 `journal_mode=WAL` / `busy_timeout=5000` / `synchronous=NORMAL`，`sqlite3.connect` 也带 `timeout=5`
+- **C2 🔴 `todo_threshold` 是死配置**：`config.py` 定义且 `sample_toml()` 显著标注，但 `extract.py` 硬编码 `TODO_THRESHOLD=4`，用户改 `c2t.toml` 完全不生效。`extract_todos` 新增 `todo_threshold` / `weak_threshold` 形参，CLI 三个调用点和看板 `explain_todo` 都从配置传值；`pending_threshold` 同样接通
+- **C3 🟡 OCR 永久改超时**：`ai.py` 把 `self.timeout = max(self.timeout, 120)` 改成实例属性，调过一次 OCR 后后续所有 AI 调用都被悄悄拉到 120s。改为 `_chat` 接收 `timeout` 参数，OCR 单次传 `max(self.timeout, 120)`
+- **C4 🟡 静默失败**：src/ 里唯一的 broad `except Exception: pass`（看板早报状态更新）改为 `logger.debug`，其余是特定异常类型的有意降级
+- **C5 🟡 每次 Store 都跑全表迁移**：`_migrate` 里 `UPDATE feedback ... NOT IN (SELECT id FROM todos)` 是全表子查询，看板每 30s 跑一次会卡。新增 `SCHEMA_VERSION` 水位，`meta.schema_version` 命中就直接 return
+- **C6 🟡 `verify_sqlcipher_key` 默认迭代数错**：`derive_key` / `verify_sqlcipher_key` 默认 `iterations=256000`（SQLCipher 4 默认），但 QQ 实际是 4000，按默认值调用必 100% 失败。默认值改为 4000 并在文档字符串注明
+
+测试：新增 3 条回归（阈值生效、WAL+busy_timeout、迁移只跑一次），pytest 205 passed、ruff clean；真实库副本迁移通过（WAL、busy_timeout=5000、schema_version=3、0 孤儿、二次打开跳过迁移）
+
 ## 2026-10-27
 
 ### 工程化：控制台分页拆分与 UI 回归测试
