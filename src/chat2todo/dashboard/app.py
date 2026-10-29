@@ -17,7 +17,8 @@ from .files import _extract_filenames, _find_downloaded_file, _fmt_ts
 from .geom import (SNAP_PX, _anchor_of, _apply_anchor, _clamp_to_rects,
                    _ease_out_cubic, _monitor_work_areas, _slide_offset,
                    _snap_to_edges)
-from .win32 import _apply_blur, _set_layer, _single_instance, _start_hotkey
+from .win32 import (_apply_blur, _set_acrylic, _set_layer, _set_round_corners,
+                    _set_system_backdrop, _single_instance, _start_hotkey)
 
 logger = logging.getLogger("chat2todo.dashboard")
 
@@ -43,6 +44,7 @@ BORDER_W = 1           # 面板描边宽度（[ui] border_width，0-4）
 SHOW_CLOCK = True      # 标题栏是否显示时间（[ui] clock）
 ANIM_ON = True         # 唤出淡入 / 尺寸缓动动画（[ui] anim）
 BLUR_ON = False        # Win10+ 毛玻璃（[ui] blur，实验性，与透明色键可能冲突）
+MATERIAL = "off"       # 系统材质：off / acrylic / mica（[ui] material，DeskBox 式质感）
 SNAP_ON = True         # 拖动松手时吸附工作区边缘（[ui] snap）
 HOVER_ON = False       # 迷你胶囊悬停展开 / 离开自动收回（[ui] hover_expand，默认关）
 RESIZE_MARGIN = 6      # 左右边缘多宽的区域算「拖边框改宽度」
@@ -94,13 +96,67 @@ def _rounded(canvas, x1, y1, x2, y2, r, **kw):
     return canvas.create_polygon(pts, smooth=True, **kw)
 
 
+def _surface() -> str:
+    """底板色：材质模式下必须是纯黑（DWM 的 Acrylic 渲染面），否则用透明色键。"""
+    return "black" if MATERIAL != "off" else KEY
+
+
+def _win_alpha(root, value: float) -> None:
+    """设置整窗透明度。
+
+    材质模式下禁用：-alpha 会给窗口挂 WS_EX_LAYERED，而 layered 窗口上
+    Acrylic 不渲染（实测：普通窗口有效、挂了 layered 的窗口是纯黑）。
+    """
+    if MATERIAL != "off":
+        return
+    try:
+        root.attributes("-alpha", value)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _draw_bg(cv, w: int, h: int) -> None:
     """重画面板底（圆角 + 描边）；建窗 / 改尺寸 / 热重载三处共用。"""
     cv.delete("bg")
-    _rounded(cv, 1, 1, w - 1, h - 1, RADIUS, fill=PANEL,
-             outline=BORDER if BORDER_ON else PANEL,
-             width=BORDER_W if BORDER_ON else 0, tags="bg")
+    if MATERIAL != "off":
+        # 材质模式：底板是纯黑 Acrylic 渲染面，圆角由 DWM 原生绘制，只留细描边
+        _rounded(cv, 1, 1, w - 1, h - 1, RADIUS, fill=_surface(),
+                 outline=BORDER if BORDER_ON else _surface(),
+                 width=1 if BORDER_ON else 0, tags="bg")
+    else:
+        _rounded(cv, 1, 1, w - 1, h - 1, RADIUS, fill=PANEL,
+                 outline=BORDER if BORDER_ON else PANEL,
+                 width=BORDER_W if BORDER_ON else 0, tags="bg")
     cv.tag_lower("bg")
+
+
+def _panel_bgr() -> int:
+    """把主题 PANEL 色打包成 Acrylic 叠加底色（0x00BBGGRR）。"""
+    try:
+        r = int(PANEL[1:3], 16)
+        g = int(PANEL[3:5], 16)
+        b = int(PANEL[5:7], 16)
+    except (ValueError, IndexError):
+        r, g, b = 0x21, 0x20, 0x24
+    return (b << 16) | (g << 8) | r
+
+
+def _apply_material(root) -> bool:
+    """应用系统材质：原生圆角 + Acrylic/Mica 背景（DeskBox 式质感）。
+
+    acrylic 走未公开属性 30 + AccentState 3（Win10 1803+，与 pywinstyles 同配方）；
+    mica 走 DWMWA_SYSTEMBACKDROP_TYPE（Win11 22H2+），不支持时退回 acrylic。
+    全部失败返回 False，窗口退回普通不透明面板，不影响功能。
+    """
+    ok = _set_round_corners(root)
+    if MATERIAL == "mica":
+        # 系统材质在部分 Win11 版本/无边框窗口上可能静默不渲染（返回成功但无画面），
+        # 因此同时铺 Acrylic 底色：Mica 生效时它在底下不可见，失效时兜底不露黑
+        ok = _set_system_backdrop(root, 3) or ok
+        _set_acrylic(root, _panel_bgr())
+    else:
+        ok = _set_acrylic(root, _panel_bgr()) or ok
+    return ok
 
 
 def _ui_config() -> dict:
@@ -201,7 +257,7 @@ def _apply_ui_config() -> dict:
     global ACCENT, PANEL, BORDER, TEXT, SUB, LINE, FIELD, ACTIVE
     global DIALOG_INNER, DIALOG_BTN
     global RADIUS, W, BORDER_ON, SHOW_CLOCK, BORDER_W, ANIM_ON, BLUR_ON, SNAP_ON
-    global HOVER_ON
+    global HOVER_ON, MATERIAL
 
     ui = _ui_config()
     theme = str(ui.get("theme") or "dark").lower()
@@ -251,6 +307,12 @@ def _apply_ui_config() -> dict:
     SHOW_CLOCK = str(ui.get("clock", "true")).lower() not in ("false", "0", "no")
     ANIM_ON = str(ui.get("anim", "true")).lower() not in ("false", "0", "no")
     BLUR_ON = str(ui.get("blur", "false")).lower() in ("true", "1", "yes")
+    MATERIAL = str(ui.get("material") or "off").lower()
+    if MATERIAL not in ("off", "acrylic", "mica"):
+        MATERIAL = "off"
+    if MATERIAL != "off":
+        # 材质模式下整窗 -alpha 会让文字一起发虚，不透明度改由 Acrylic 底色控制
+        alpha = 1.0
     SNAP_ON = str(ui.get("snap", "true")).lower() not in ("false", "0", "no")
     HOVER_ON = str(ui.get("hover_expand", "false")).lower() in ("true", "1", "yes")
     return {"alpha": max(0.35, min(1.0, alpha))}
@@ -339,11 +401,13 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     root.overrideredirect(True)          # 无边框
     root.attributes("-topmost", False)   # 默认贴桌面层，点「钉」才置顶
     try:
-        root.attributes("-alpha", alpha)
-        root.attributes("-transparentcolor", KEY)
+        if MATERIAL == "off":
+            root.attributes("-alpha", alpha)
+            root.attributes("-transparentcolor", KEY)
+        # 材质模式：不用 -alpha / 颜色键（两者都会破坏 Acrylic），圆角交给 DWM
     except tk.TclError:
         pass                              # 非 Windows 平台优雅降级为方形
-    root.configure(bg=KEY)
+    root.configure(bg=_surface())
     root.geometry(f"{W}x{H}+{x}+{y}")
 
     import tkinter.font as tkfont
@@ -352,9 +416,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     FONT_ITEM_DONE = tkfont.Font(family="Microsoft YaHei UI", size=9,
                                  weight="bold", overstrike=1)
 
-    holder = tk.Frame(root, bg=KEY)
+    holder = tk.Frame(root, bg=_surface())
     holder.pack(fill="both", expand=True)
-    cv = tk.Canvas(holder, width=W, height=H, bg=KEY, highlightthickness=0)
+    cv = tk.Canvas(holder, width=W, height=H, bg=_surface(), highlightthickness=0)
 
     def _on_hscroll(*args) -> None:
         """横向滚动条：拖动时只偏移待办条目，标题栏/页脚不动。"""
@@ -370,7 +434,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     cv.pack(side="top", fill="both", expand=True)
     hbar.pack(side="bottom", fill="x")
     root.after(150, lambda: _set_layer(root, False))
-    if BLUR_ON:
+    if MATERIAL != "off":
+        root.after(300, lambda: _apply_material(root))
+    elif BLUR_ON:
         root.after(300, lambda: _apply_blur(root, True))
     _draw_bg(cv, W, H)
 
@@ -1057,7 +1123,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             if state.get("fade_gen") != gen:
                 return                       # 被更新的唤出/热重载打断
             try:
-                root.attributes("-alpha", round(
+                _win_alpha(root, round(
                     start + (target - start) * _ease_out_cubic(i / frames), 3))
             except Exception:  # noqa: BLE001
                 return
@@ -1071,10 +1137,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         if state.get("pin"):
             return
         state["fade_gen"] = state.get("fade_gen", 0) + 1   # 打断进行中的沉回淡出
-        try:
-            root.attributes("-alpha", float(state.get("alpha", 0.93)))
-        except Exception:  # noqa: BLE001
-            pass
+        _win_alpha(root, float(state.get("alpha", 0.93)))
         state["reveal_on"] = True
         state["reveal_until"] = time.time() + 15
         _set_layer(root, True)
@@ -1121,7 +1184,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             if state.get("fade_gen") != gen:
                 return                   # 被新的唤出/交互打断，由对方接管透明度
             try:
-                root.attributes("-alpha", round(
+                _win_alpha(root, round(
                     target + (end - target) * _ease_out_cubic(i / frames), 3))
             except Exception:  # noqa: BLE001
                 return
@@ -1129,10 +1192,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 root.after(16, lambda: _step(i + 1))
             else:
                 _set_layer(root, False)
-                try:
-                    root.attributes("-alpha", target)   # 沉到底层后恢复常态透明度
-                except Exception:  # noqa: BLE001
-                    pass
+                _win_alpha(root, target)   # 沉到底层后恢复常态透明度
 
         _step(0)
 
@@ -1199,6 +1259,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         cv_h = max(1, h - HBAR_H)
         cv.config(width=w, height=cv_h)
         _draw_bg(cv, w, cv_h)
+        if MATERIAL != "off":
+            # 改尺寸会重置 DWM 玻璃帧扩展，Acrylic 表面随之丢失 → 每次重设尺寸后回刷
+            _apply_material(root)
 
     def _resize(h: int, w: int = W) -> None:
         if h == state["h"] and w == state["w"]:
@@ -1265,14 +1328,14 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             if not first:
                 ui = _apply_ui_config()
                 W = state.get("w", W)    # 热重载不覆盖用户拖出来的宽度
-                try:
-                    root.attributes("-alpha", ui["alpha"])
-                except Exception:  # noqa: BLE001
-                    pass
+                _win_alpha(root, ui["alpha"])
                 state["alpha"] = ui["alpha"]
                 state["fade_gen"] = state.get("fade_gen", 0) + 1   # 打断进行中的淡入
                 _draw_bg(cv, W, state.get("h", H))
-                _apply_blur(root, BLUR_ON)
+                if MATERIAL != "off":
+                    _apply_material(root)
+                else:
+                    _apply_blur(root, BLUR_ON)
                 render()
         # 唤出状态到期 → 收起；平时贴桌面层，被点浮上来也会被压回去
         if state.get("reveal_on") and time.time() >= state.get("reveal_until", 0):
@@ -1441,7 +1504,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         _rounded(cv, PAD, 14, W - PAD, 54, 12, fill=ACCENT, outline="", tags="body")
         cv.create_text(PAD + 10, 34,
                        text=time.strftime("%m月%d日", tick)
-                       + f" 周{'日一二三四五六'[tick.tm_wday]}",
+                       + f" 周{'一二三四五六日'[tick.tm_wday]}",
                        anchor="w", fill="#0b1a22",
                        font=("Microsoft YaHei UI", 10, "bold"), tags="body")
         cv.create_text(W - PAD - 10, 34,
@@ -1997,6 +2060,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         return "break"
 
     def on_ctrl_wheel(e) -> str:
+        if MATERIAL != "off":
+            return "break"          # 材质模式不支持整窗透明度（会破坏 Acrylic）
         cur = float(root.attributes("-alpha"))
         nxt = min(1.0, max(0.35, cur + (0.05 if e.delta > 0 else -0.05)))
         root.attributes("-alpha", round(nxt, 2))

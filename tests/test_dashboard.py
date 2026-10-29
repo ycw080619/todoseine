@@ -405,5 +405,69 @@ class TestItemMenu(unittest.TestCase):
         self.assertEqual(muted, [(7, "kind"), (7, "sender"), (7, "source")])
 
 
+class TestMaterialConfig(unittest.TestCase):
+    """[ui] material 配置：off/acrylic/mica 三态，非法值回退 off。
+
+    材质模式的两条铁律（都来自实测，改回去 Acrylic 就会失效）：
+      1. 不能用 -transparentcolor 颜色键；
+      2. 不能用 -alpha（会挂 WS_EX_LAYERED），所以 alpha 强制 1.0。
+    """
+
+    def setUp(self) -> None:
+        from chat2todo.dashboard import app
+        self.app = app
+        self._old_home = os.environ.get("USERPROFILE")
+
+    def tearDown(self) -> None:
+        if self._old_home is None:
+            os.environ.pop("USERPROFILE", None)
+        else:
+            os.environ["USERPROFILE"] = self._old_home
+        self.app.MATERIAL = "off"
+
+    def _apply(self, toml_text: str) -> dict:
+        import pathlib
+
+        d = tempfile.mkdtemp()
+        p = pathlib.Path(d) / "Chat2Todo"
+        p.mkdir()
+        (p / "c2t.toml").write_text(toml_text, encoding="utf-8")
+        os.environ["USERPROFILE"] = d
+        return self.app._apply_ui_config()
+
+    def test_default_is_off(self) -> None:
+        ui = self._apply("[ui]\n")
+        self.assertEqual(self.app.MATERIAL, "off")
+        self.assertEqual(ui["alpha"], 0.93)     # 默认透明度不受材质影响
+
+    def test_acrylic_forces_opaque(self) -> None:
+        ui = self._apply('[ui]\nmaterial = "acrylic"\nopacity = 0.5\n')
+        self.assertEqual(self.app.MATERIAL, "acrylic")
+        self.assertEqual(ui["alpha"], 1.0)      # 材质模式禁用整窗半透明
+
+    def test_mica_accepted(self) -> None:
+        self._apply('[ui]\nmaterial = "mica"\n')
+        self.assertEqual(self.app.MATERIAL, "mica")
+
+    def test_invalid_value_falls_back_to_off(self) -> None:
+        self._apply('[ui]\nmaterial = "glass"\n')
+        self.assertEqual(self.app.MATERIAL, "off")
+
+    def test_win_alpha_noop_in_material_mode(self) -> None:
+        calls = []
+
+        class _FakeRoot:
+            def attributes(self, *a):
+                calls.append(a)
+
+        root = _FakeRoot()
+        self.app.MATERIAL = "acrylic"
+        self.app._win_alpha(root, 0.5)
+        self.assertEqual(calls, [])             # 材质模式：绝不能挂 layered
+        self.app.MATERIAL = "off"
+        self.app._win_alpha(root, 0.5)
+        self.assertEqual(calls, [("-alpha", 0.5)])
+
+
 if __name__ == "__main__":
     unittest.main()

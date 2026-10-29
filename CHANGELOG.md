@@ -1,3 +1,23 @@
+## [Unreleased] - 2026-10-29
+
+看板「DeskBox 式系统材质」上线（默认关，不影响现有行为）。
+
+### 新增
+
+- **`[ui] material = "acrylic" | "mica" | "off"`**：看板可选系统材质——DWM 原生圆角（替代 canvas 手绘圆角的锯齿）+ Acrylic 亚克力磨砂背景（`mica` 在系统材质不渲染时自动垫 Acrylic 兜底）。纯 ctypes 直调 DWM，零第三方依赖，与「纯标准库」约束不冲突
+  - 配方对齐开源库 pywinstyles 并实测验证：窗口背景涂纯黑 + 未公开属性 30/AccentState 3 + `DwmExtendFrameIntoClientArea(-1)`
+  - 两条实测出来的互斥铁律（违反则材质静默失效，窗口变纯黑/全透明）：
+    1. 不能用 `-transparentcolor` 颜色键
+    2. 不能用 `-alpha`（会挂 WS_EX_LAYERED）——材质模式下整窗透明度全部经 `_win_alpha()` 守卫变为空操作，不透明度改由 Acrylic 底色承担；唤出淡入/沉底淡出动画在材质模式下自动退化为直接显隐
+  - 改尺寸会重置 DWM 玻璃帧扩展 → `_set_size` 每次落地后回刷材质
+  - 修复连带遗留：早报空态卡片一处星期索引仍是 `日一二三四五六`（tm_wday 周一=0，会错一天），统一为 `一二三四五六日`
+
+### 测试
+
+- 新增 `TestMaterialConfig` 5 条：默认 off、acrylic 强制 alpha=1.0、mica 三态、非法值回退、材质模式 `_win_alpha` 空操作
+- 实测验证：acrylic 模式与 pywinstyles 对照窗口逐像素一致（(84,84,84) 磨砂表面）；mica 模式在本机回退 acrylic 正常；默认 off 模式面板色逐像素回归（#212024 分毫不差）
+- `pytest` 288 passed, 11 subtests passed
+
 ## [Unreleased] - 2026-10-28
 
 针对一次逐行代码审计出的 11 条硬伤，本次修掉其中 9 条（另 2 条记录为待办技术债）。
