@@ -1350,11 +1350,68 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     date_id = cv.create_text(W // 2, 104, text="", fill=SUB,
                              font=("Microsoft YaHei UI", 9), tags="clock")
 
+    def _clock_jump() -> None:
+        """分钟跳变时给时钟文字做一次 font-size 弹簧（DeskBox 时钟跳动感）。"""
+        # 标题栏 hclock：Consolas 10 → 13 → 11 → 10
+        for tag, base_font in (("hclock", ("Consolas", 10)),
+                               ("clock", ("Consolas", 30, "bold"))):
+            items = cv.find_withtag(tag)
+            if not items:
+                continue
+            iid = items[0]
+            base_sz = base_font[1]
+            # 3 帧过冲：base → base+3 → base-2 → base（每帧 35ms）
+            stages = [base_sz + 3, base_sz - 2, base_sz]
+            def _step(fidx, tag_=tag):
+                if fidx >= len(stages):
+                    return
+                sz = stages[fidx]
+                try:
+                    cv.itemconfig(iid, font=(*base_font[:1], sz, *base_font[2:]))
+                except Exception:
+                    return
+                cv.after(35, lambda: _step(fidx + 1, tag_=tag_))
+            _step(0)
+
+    def _welcome_breath() -> None:
+        """空态 👋 呼吸：每 3s 做一次 scale 过冲（只在 welcome-wave 存在时生效）。"""
+        items = cv.find_withtag("welcome-wave")
+        if not items:
+            return
+        iid = items[0]
+        base_sz = 28
+        # 3 帧：28 → 32 → 26 → 28
+        stages = [32, 26, 28]
+        def _step(fidx):
+            if fidx >= len(stages):
+                return
+            sz = stages[fidx]
+            try:
+                cv.itemconfig(iid, font=("Segoe UI Emoji", sz))
+            except Exception:
+                return
+            cv.after(60, lambda: _step(fidx + 1))
+        _step(0)
+
     def tick() -> None:
         global W
 
         now = time.localtime()
         week = "一二三四五六日"[now.tm_wday]
+
+        # ---- 时钟跳动：分钟跳变时给时钟做一次 font-size 弹簧 ----
+        last_min = state.get("_last_minute")
+        if last_min is not None and now.tm_min != last_min:
+            _clock_jump()
+        state["_last_minute"] = now.tm_min
+
+        # ---- 空态呼吸：每 3 秒给 👋 做一次 scale 过冲（只在 welcome-wave 元素存在时）----
+        now_ts = time.time()
+        last_breath = state.get("_last_breath", 0)
+        if now_ts - last_breath >= 3.0:
+            state["_last_breath"] = now_ts
+            _welcome_breath()
+
         try:
             cv.itemconfig("hclock", text=time.strftime("%H:%M", now))
         except Exception:  # noqa: BLE001 - 标题栏不在（收起态）时忽略
@@ -1948,7 +2005,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     empty = "第一次使用 Chat2Todo"
                     hint = "按 Ctrl+Shift+C 打开控制台\n→ 填 QQ 口令\n→ 点「立即同步」"
                     cv.create_text(W / 2, y + 10, text="👋", anchor="center",
-                                   fill=SUB, font=("Segoe UI Emoji", 28), tags="body")
+                                   fill=SUB, font=("Segoe UI Emoji", 28),
+                                   tags=("body", "welcome-wave"))
                     cv.create_text(W / 2, y + 54, text=empty, anchor="center",
                                    fill=TEXT, font=("Microsoft YaHei UI", 11, "bold"),
                                    tags="body")
