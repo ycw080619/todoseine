@@ -19,7 +19,8 @@ import os
 from ctypes import wintypes
 from typing import Optional
 
-from PySide6.QtCore import QPoint, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import (QEasingCurve, QEvent, QPoint, QPropertyAnimation,
+                            QRect, QRectF, Qt, QTimer, Signal)
 from PySide6.QtGui import QColor, QGuiApplication, QMouseEvent, QPainter
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -51,6 +52,10 @@ _COMPACT_W = 560       # 窄于这个宽度就藏掉标题文字，把空间让�
 
 _MINI_W = 300
 _MINI_H = 96
+
+# 贴边自动收起后仍留在屏幕内的像素宽度（鼠标移上去再滑出）
+_AUTO_HIDE_PX = 6
+_AUTO_HIDE_DELAY = 450
 
 # (页签文字, 页索引)
 _PAGES = (("待办", 0), ("回收站", 1), ("统计", 2), ("设置", 3), ("关于", 4))
@@ -93,6 +98,19 @@ class FramelessMainWindow(QMainWindow):
         self._geo_timer.setInterval(600)
         self._geo_timer.timeout.connect(self._save_geometry)
 
+        # ---------- 贴边自动收起 / 不抢焦点 ----------
+        self._snap_side = ""              # "left" / "right" / ""
+        self._hidden_edge = ""            # 已收起时停在哪个边
+        self._visible_pos: Optional[QPoint] = None
+        self._noactivate_off = False      # 用户点输入框时临时让出焦点
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.setInterval(_AUTO_HIDE_DELAY)
+        self._hide_timer.timeout.connect(self._auto_hide)
+        self._slide_anim = QPropertyAnimation(self, b"pos", self)
+        self._slide_anim.setDuration(180)
+        self._slide_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
         # ---------- 中心 Widget ----------
         central = QWidget(self)
         self.setCentralWidget(central)
@@ -121,10 +139,13 @@ class FramelessMainWindow(QMainWindow):
         root.addWidget(self._stack, 1)
 
         self._dashboard.settings_requested.connect(lambda: self._switch_page(3))
+        self._dashboard.activation_requested.connect(self._allow_focus)
         self._settings.config_saved.connect(self._on_config_saved)
         self._trash.changed.connect(lambda: self._dashboard.reload(force=True))
         self._switch_page(0)
         self._restore_geometry(cfg)
+        self._snap_side = ""
+        self._snap_to_edges()
 
     # ------------------------------------------------------------------
     # 标题栏
@@ -274,6 +295,7 @@ class FramelessMainWindow(QMainWindow):
             page.set_db_path(str(cfg.get("db_path") or ""))
         self._sync_lock_button()
         self._apply_title_visibility()
+        self._apply_no_activate()
         self.update()
 
     # ------------------------------------------------------------------
@@ -337,10 +359,13 @@ class FramelessMainWindow(QMainWindow):
         geo = self.geometry()
         x, y = geo.x(), geo.y()
 
+        self._snap_side = ""
         if abs(x - area.left()) <= _SNAP_PX:
             x = area.left()
+            self._snap_side = "left"
         elif abs(area.right() - (x + geo.width())) <= _SNAP_PX:
             x = area.right() - geo.width() + 1
+            self._snap_side = "right"
         if abs(y - area.top()) <= _SNAP_PX:
             y = area.top()
         elif abs(area.bottom() - (y + geo.height())) <= _SNAP_PX:
@@ -420,11 +445,100 @@ class FramelessMainWindow(QMainWindow):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(33, 32, 36, 150 if self._material_applied else 242))
+        try:
+            opacity = float(self._dash_cfg.get("opacity") or 0.94)
+        except (TypeError, ValueError):
+            opacity = 0.94
+        opacity = max(0.5, min(1.0, opacity))
+        alpha = 150 if self._material_applied else int(255 * opacity)
+        painter.setBrush(QColor(33, 32, 36, alpha))
         radius = float(self._dash_cfg.get("radius") or 12)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         painter.drawRoundedRect(rect, radius, radius)
         painter.end()
+
+    # ---------- 不抢焦点 ----------
+
+    def _apply_no_activate(self) -> None:
+        """点击 / 拖拽 / 勾选时不激活窗口，不把前台窗口顶走。"""
+        hwnd = dwm.hwnd_of(self)
+        if not hwnd:
+            return
+        enabled = bool(self._dash_cfg.get("no_activate", True))
+        if dwm.set_no_activate(hwnd, enabled):
+            self._noactivate_off = False
+
+    def _allow_focus(self) -> None:
+        """用户点输入框：临时取消 NOACTIVATE 并激活，失焦后再恢复。"""
+        if not self._dash_cfg.get("no_activate", True):
+            return
+        hwnd = dwm.hwnd_of(self)
+        if hwnd and dwm.set_no_activate(hwnd, False):
+            self._noactivate_off = True
+        self.activateWindow()
+        self.raise_()
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        super().changeEvent(event)
+        if (event.type() == QEvent.Type.ActivationChange
+                and self._noactivate_off and not self.isActiveWindow()):
+            self._apply_no_activate()
+
+    # ---------- 贴边自动收起 ----------
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._hide_timer.stop()
+        if self._hidden_edge:
+            self._slide_back()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        super().leaveEvent(event)
+        if (self._hidden_edge or not self._snap_side
+                or self._mini or self._dash_cfg.get("lock")
+                or not self._dash_cfg.get("auto_hide", True)):
+            return
+        self._hide_timer.start()
+
+    def _auto_hide(self) -> None:
+        if (self._hidden_edge or not self._snap_side or self._mini
+                or self._dash_cfg.get("lock")
+                or not self._dash_cfg.get("auto_hide", True)):
+            return
+        if self.underMouse():
+            return
+        screen = QGuiApplication.screenAt(self.frameGeometry().center()) \
+            or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        self._visible_pos = self.pos()
+        self._hidden_edge = self._snap_side
+        target = QPoint(self._visible_pos)
+        if self._hidden_edge == "left":
+            target.setX(area.left() - self.width() + _AUTO_HIDE_PX)
+        else:
+            target.setX(area.right() - _AUTO_HIDE_PX + 1)
+        self._slide_to(target)
+
+    def reveal(self) -> None:
+        """热键唤出时若正收在屏幕边缘，先滑回来。"""
+        if self._hidden_edge:
+            self._slide_back()
+
+    def _slide_back(self) -> None:
+        if self._visible_pos is None:
+            self._hidden_edge = ""
+            return
+        self._slide_to(self._visible_pos)
+        self._visible_pos = None
+        self._hidden_edge = ""
+
+    def _slide_to(self, target: QPoint) -> None:
+        self._slide_anim.stop()
+        self._slide_anim.setStartValue(self.pos())
+        self._slide_anim.setEndValue(target)
+        self._slide_anim.start()
 
     # ---------- 首次显示时应用 DWM 材质 ----------
 
@@ -434,6 +548,7 @@ class FramelessMainWindow(QMainWindow):
             self._apply_material()
             self._material_tried = True
             self.update()
+        self._apply_no_activate()
 
     def _apply_material(self) -> None:
         if not self._dash_cfg.get("material", True):

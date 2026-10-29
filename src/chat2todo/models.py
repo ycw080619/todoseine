@@ -68,6 +68,8 @@ class Message:
     msg_id: Optional[str] = None
     star: bool = False            # 来自「特别关心」群/对象的消息，抽取时标为重点
     chat_id: str = ""             # 来源群 / 会话号；用于按群过滤与清理历史
+    confidence: float = 1.0       # OCR 置信度（1.0 表示非 OCR 通道 / 无评估）
+    low_conf: bool = False        # OCR 置信度低于阈值：默认不写事实源、不参与抽取
 
     @property
     def content_hash(self) -> str:

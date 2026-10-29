@@ -18,7 +18,7 @@ import subprocess
 import time
 from typing import List, Optional
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QMenu, QMessageBox, QPushButton, QScrollArea,
@@ -28,6 +28,7 @@ from .. import config as c2t_config
 from ..core import Store
 from ..core.deadline import label as due_label
 from ..core.deadline import parse as due_parse
+from ..core.privacy import redact_for_display
 from ..dashboard.data import _is_today_due, filter_items, load_items
 from ..dashboard.files import _extract_filenames, _find_downloaded_file, _fmt_ts
 from ..models import TodoItem
@@ -118,9 +119,12 @@ class TodoRow(RoundedCard):
 
     HEIGHT = 62
 
-    def __init__(self, item: TodoItem, index: int, parent: QWidget | None = None):
+    def __init__(self, item: TodoItem, index: int, parent: QWidget | None = None,
+                 display_text: Optional[str] = None):
         super().__init__(parent, radius=14)
         self.item = item
+        # 列表里显示的是脱敏文本；item.text 仍是原文，留给编辑 / 看原文时用
+        self.display_text = (item.text or "") if display_text is None else display_text
         self.setFixedHeight(self.HEIGHT)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -143,7 +147,7 @@ class TodoRow(RoundedCard):
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(3)
 
-        title = ElidedLabel(("★ " if star else "") + (item.text or ""))
+        title = ElidedLabel(("★ " if star else "") + self.display_text)
         title_font = QFont(theme.FONT_FAMILY)
         title_font.setPixelSize(13)
         if item.status == "done":
@@ -251,6 +255,8 @@ class Dashboard(QWidget):
     """看板主界面。"""
 
     settings_requested = Signal()
+    activation_requested = Signal()   # 用户点输入框：需要主窗口临时让出前台焦点
+    data_changed = Signal()           # 看板写库成功：桌面联动 / Obsidian 据此防抖导出
 
     REFRESH_MS = 3000
 
@@ -259,6 +265,7 @@ class Dashboard(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         cfg = c2t_config.load()
+        self._cfg = cfg                      # 隐私脱敏要读 privacy 段，缓存一份
         self._db_path = db_path or cfg.get("db_path") or ""
         dash = cfg.get("dash") or {}
         try:
@@ -342,6 +349,10 @@ class Dashboard(QWidget):
         )
         root.addWidget(input_card)
 
+        # 看板默认不抢焦点（WS_EX_NOACTIVATE），点输入框时才临时让出前台
+        for edit in (self._add_edit, self._search_edit):
+            edit.installEventFilter(self)
+
         # ---- 分段筛选 ----
         self._tabs = PillTabs(TABS, self)
         self._tabs.changed.connect(self._on_tab_changed)
@@ -395,6 +406,15 @@ class Dashboard(QWidget):
         QShortcut(QKeySequence.StandardKey.Find, self,
                   activated=self._search_edit.setFocus)
 
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        """点输入框时请求主窗口临时取消 NOACTIVATE，否则打不了字。"""
+        if event.type() == QEvent.Type.MouseButtonPress and obj in (
+                self._add_edit, self._search_edit):
+            self.activation_requested.emit()
+            edit = obj
+            QTimer.singleShot(0, edit.setFocus)
+        return super().eventFilter(obj, event)
+
     def _start_timers(self) -> None:
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(self.REFRESH_MS)
@@ -421,6 +441,7 @@ class Dashboard(QWidget):
     def reload_config(self) -> None:
         """设置页保存后调用：数据库路径 / 显示条数可能变了，重新读取。"""
         cfg = c2t_config.load()
+        self._cfg = cfg
         new_path = cfg.get("db_path") or self._db_path
         if new_path != self._db_path:
             self._db_path = new_path
@@ -439,7 +460,8 @@ class Dashboard(QWidget):
         self.reload(force=True)
         if not items:
             return
-        first = (items[0].text or "").replace("\n", " ")
+        first = redact_for_display((items[0].text or "").replace("\n", " "),
+                                   self._cfg, items[0].session or "")
         text = (f"新增 {len(items)} 条待办：{first[:40]}"
                 if len(items) > 1 else f"新待办：{first[:48]}")
         Toast.show_toast(self, text, "查看", self._focus_todo_tab, 4000)
@@ -454,7 +476,8 @@ class Dashboard(QWidget):
         if not pairs:
             return
         item, due_ts = pairs[0]
-        text = (item.text or "").replace("\n", " ")
+        text = redact_for_display((item.text or "").replace("\n", " "),
+                                  self._cfg, item.session or "")
         if len(pairs) == 1:
             msg = f"⏰ {due_label(due_ts) or '即将到期'}：{text[:40]}"
         else:
@@ -552,7 +575,8 @@ class Dashboard(QWidget):
             self._list_layout.insertWidget(0, self._empty_label(*self._empty_text()))
         else:
             for index, item in enumerate(items):
-                row = TodoRow(item, index, self._list_host)
+                shown = redact_for_display(item.text or "", self._cfg, item.session or "")
+                row = TodoRow(item, index, self._list_host, display_text=shown)
                 row.toggled.connect(self._toggle)
                 row.edited.connect(self._edit)
                 row.detail_requested.connect(self._show_detail)
@@ -667,8 +691,10 @@ class Dashboard(QWidget):
         self._render()
 
     def _show_detail(self, item: TodoItem) -> None:
+        # 详情里的原文与附近消息同样走展示脱敏，避免「列表打了码、弹窗漏原文」
+        shown = redact_for_display(item.text or "", self._cfg, item.session or "")
         lines = [
-            f"内容：{item.text}",
+            f"内容：{shown}",
             f"来源：{item.session or '—'} / {item.sender or '—'}",
             f"时间：{_fmt_ts(item.message_ts)}",
             f"状态：{item.status}",
@@ -684,7 +710,9 @@ class Dashboard(QWidget):
                 lines.append("")
                 lines.append("附近原文：")
                 for msg in nearby:
-                    lines.append(f"[{_fmt_ts(msg['ts'])}] {msg['sender_name']}：{msg['content']}")
+                    content = redact_for_display(msg["content"] or "", self._cfg,
+                                                 msg.get("session") or item.session or "")
+                    lines.append(f"[{_fmt_ts(msg['ts'])}] {msg['sender_name']}：{content}")
         except Exception:  # noqa: BLE001
             pass
         box = QMessageBox(self)
@@ -865,6 +893,7 @@ class Dashboard(QWidget):
             Toast.show_toast(self, f"操作失败：{exc}")
             return None
         self.reload(force=True)
+        self.data_changed.emit()
         return result
 
     def keyPressEvent(self, event) -> None:  # noqa: N802

@@ -14,14 +14,16 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -45,6 +47,26 @@ _LINE_STYLE = (
     " border: 1px solid rgba(255,255,255,30); border-radius: 6px;"
     " padding: 6px 10px; font-size: 12px; }"
 )
+
+
+class _ProbeWorker(QThread):
+    """连接测试放后台跑，避免 15 秒超时把界面冻住。"""
+
+    done = Signal(bool, str)
+
+    def __init__(self, base_url: str, api_key: str, model: str, timeout: int,
+                 temperature: float, top_p: float, parent=None):
+        super().__init__(parent)
+        self._args = (base_url, api_key, model, timeout, temperature, top_p)
+
+    def run(self) -> None:  # noqa: D401 - QThread 入口
+        from ..ai import probe
+
+        try:
+            ok, msg = probe(*self._args)
+        except Exception as exc:  # noqa: BLE001 - 测试失败也要回话
+            ok, msg = False, f"测试异常：{type(exc).__name__}: {exc}"
+        self.done.emit(ok, msg)
 
 
 def _group(title: str) -> tuple:
@@ -123,6 +145,8 @@ class SettingsPanel(QWidget):
 
     config_saved = Signal(dict)
     sync_requested = Signal()
+    wipe_requested = Signal()      # 一键清空：由主程序停掉采集线程后执行
+    hermes_rotated = Signal()      # Hermes token 已轮换：主程序据此重建服务
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -154,6 +178,9 @@ class SettingsPanel(QWidget):
         self._tabs.addTab(self._build_basic_tab(), "基础")
         self._tabs.addTab(self._build_monitor_tab(), "监听")
         self._tabs.addTab(self._build_ai_tab(), "AI")
+        self._tabs.addTab(self._build_archive_tab(), "归档")
+        self._tabs.addTab(self._build_link_tab(), "联动")
+        self._tabs.addTab(self._build_privacy_tab(), "隐私")
         self._tabs.addTab(self._build_appearance_tab(), "外观")
         root.addWidget(self._tabs, 1)
 
@@ -274,11 +301,17 @@ class SettingsPanel(QWidget):
         cap_box, cap_form = _group("采集")
         self._uia_enabled = _check(uia.get("enabled", True))
         cap_form.addRow("启用实时监听:", self._uia_enabled)
-        self._interval = _spin(int(uia.get("interval") or 5), 1, 600, " 秒")
+        self._interval = _spin(int(uia.get("interval") or 2), 1, 600, " 秒")
         cap_form.addRow("抓取间隔:", self._interval)
         self._session_name = _line(str(uia.get("session") or "QQ实时"),
                                    "OCR 通道读不到群名，用这个名字记录来源")
         cap_form.addRow("来源名称:", self._session_name)
+        self._ocr_min = _spin(int(round(float(uia.get("ocr_min_confidence") or 0.5) * 100)),
+                              0, 100, " %")
+        cap_form.addRow("OCR 置信度阈值:", self._ocr_min)
+        self._keep_low = _check(uia.get("keep_low_confidence", False),
+                                "勾选后低置信度结果仍会入库并标注「OCR低置信度，仅供参考」")
+        cap_form.addRow("保留低置信度:", self._keep_low)
         sync_row = QHBoxLayout()
         sync_btn = QPushButton("立即同步一次")
         sync_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -341,6 +374,25 @@ class SettingsPanel(QWidget):
         lay.addWidget(box)
 
         api_box, api_form = _group("接口")
+        self._ai_preset = QComboBox()
+        self._ai_preset.addItem("自定义", userData="自定义")
+        for name in ("豆包", "ChatGPT", "DeepSeek", "通义千问", "Ollama"):
+            self._ai_preset.addItem(name, userData=name)
+        self._ai_preset.currentIndexChanged.connect(self._on_preset_changed)
+        api_form.addRow("预设模板:", self._ai_preset)
+
+        self._ai_profile = QComboBox()
+        api_form.addRow("配置档案:", self._ai_profile)
+
+        row = QHBoxLayout()
+        self._profile_new_btn = QPushButton("新建档案")
+        self._profile_new_btn.clicked.connect(self._on_profile_new)
+        self._profile_del_btn = QPushButton("删除档案")
+        self._profile_del_btn.clicked.connect(self._on_profile_delete)
+        row.addWidget(self._profile_new_btn)
+        row.addWidget(self._profile_del_btn)
+        api_form.addRow("", row)
+
         self._ai_base = _line(str(ai.get("base_url") or ""),
                               "https://api.openai.com/v1")
         api_form.addRow("Base URL:", self._ai_base)
@@ -349,11 +401,462 @@ class SettingsPanel(QWidget):
         self._ai_key = _line(str(ai.get("api_key") or ""), "也可用环境变量 C2T_AI_KEY")
         self._ai_key.setEchoMode(QLineEdit.EchoMode.Password)
         api_form.addRow("API Key:", self._ai_key)
+
+        self._ai_temp = QDoubleSpinBox()
+        self._ai_temp.setRange(0.0, 2.0)
+        self._ai_temp.setSingleStep(0.1)
+        self._ai_temp.setDecimals(2)
+        self._ai_temp.setValue(float(ai.get("temperature") or 0.0))
+        self._ai_temp.setStyleSheet(_LINE_STYLE.replace("QLineEdit", "QDoubleSpinBox"))
+        api_form.addRow("温度:", self._ai_temp)
+
+        self._ai_top_p = QDoubleSpinBox()
+        self._ai_top_p.setRange(0.0, 1.0)
+        self._ai_top_p.setSingleStep(0.05)
+        self._ai_top_p.setDecimals(2)
+        self._ai_top_p.setValue(float(ai.get("top_p") or 1.0))
+        self._ai_top_p.setStyleSheet(_LINE_STYLE.replace("QLineEdit", "QDoubleSpinBox"))
+        api_form.addRow("Top_p:", self._ai_top_p)
+
+        self._ai_max_tokens = _spin(int(ai.get("max_tokens") or 600), 16, 100000, " tokens")
+        api_form.addRow("最大 token:", self._ai_max_tokens)
+        self._ai_stream = _check(ai.get("stream", False),
+                                 "预留开关：当前版本仍走一次性返回")
+        api_form.addRow("流式输出:", self._ai_stream)
         self._ai_timeout = _spin(int(ai.get("timeout") or 15), 3, 120, " 秒")
         api_form.addRow("超时:", self._ai_timeout)
+
+        self._ai_quota = _spin(int(ai.get("tokens_per_day") or 0), 0, 10000000, " tokens/天")
+        self._ai_quota.setSpecialValueText("不限")
+        api_form.addRow("每日额度:", self._ai_quota)
+
+        test_row = QHBoxLayout()
+        self._ai_test_btn = QPushButton("测试连接")
+        self._ai_test_btn.clicked.connect(self._on_test_connection)
+        self._ai_test_result = QLabel("")
+        self._ai_test_result.setStyleSheet(f"color: {theme.SUB.name()}; font-size: 11px;")
+        test_row.addWidget(self._ai_test_btn)
+        test_row.addWidget(self._ai_test_result, 1)
+        api_form.addRow("", test_row)
+        api_form.addRow("", _hint(
+            "只兼容标准 OpenAI /v1/chat/completions 接口；云端调用前会强制脱敏，"
+            "敏感群建议改用本地 Ollama。"))
         lay.addWidget(api_box)
+        self._ai_profile.currentIndexChanged.connect(self._on_profile_changed)
+        self._refresh_profile_combo(str(ai.get("profile") or "default"))
+
+        usage = ai.get("_usage") if isinstance(ai.get("_usage"), dict) else None
+        if usage:
+            lay.addWidget(_hint(
+                f"本进程已用 {usage.get('tokens', 0)} tokens / "
+                f"{usage.get('calls', 0)} 次调用"))
         lay.addStretch(1)
         return page
+
+    # ---------- AI 档案与预设 ----------
+
+    def _profile_names(self) -> list:
+        profiles = (self._cfg.get("ai") or {}).get("profiles") or {}
+        return sorted(k for k in profiles if isinstance(profiles.get(k), dict))
+
+    def _refresh_profile_combo(self, select: str = "") -> None:
+        current = select or self._ai_profile.currentText() or "default"
+        self._ai_profile.blockSignals(True)
+        self._ai_profile.clear()
+        self._ai_profile.addItem("default", userData="default")
+        for name in self._profile_names():
+            self._ai_profile.addItem(name, userData=name)
+        index = self._ai_profile.findData(current)
+        self._ai_profile.setCurrentIndex(max(0, index))
+        self._ai_profile.blockSignals(False)
+
+    def _apply_profile(self, name: str) -> None:
+        """把某套档案的值灌进控件；default 用 ai 段的当前值。"""
+        ai = self._cfg.get("ai") or {}
+        data = dict(ai) if name == "default" else dict(
+            (ai.get("profiles") or {}).get(name) or {})
+        if name != "default" and not data:
+            return
+        self._ai_base.setText(str(data.get("base_url") or ""))
+        self._ai_model.setText(str(data.get("model") or "gpt-4o-mini"))
+        self._ai_key.setText(str(data.get("api_key") or ""))
+        self._ai_temp.setValue(float(data.get("temperature") or 0.0))
+        self._ai_top_p.setValue(float(data.get("top_p") or 1.0))
+        self._ai_max_tokens.setValue(int(data.get("max_tokens") or 600))
+        self._ai_stream.setChecked(bool(data.get("stream", False)))
+        self._ai_timeout.setValue(int(data.get("timeout") or 15))
+        self._ai_quota.setValue(int(data.get("tokens_per_day") or 0))
+
+    def _profile_payload(self) -> dict:
+        return {
+            "base_url": self._ai_base.text().strip(),
+            "model": self._ai_model.text().strip() or "gpt-4o-mini",
+            "api_key": self._ai_key.text().strip(),
+            "temperature": round(self._ai_temp.value(), 2),
+            "top_p": round(self._ai_top_p.value(), 2),
+            "max_tokens": self._ai_max_tokens.value(),
+            "stream": self._ai_stream.isChecked(),
+            "timeout": self._ai_timeout.value(),
+            "tokens_per_day": self._ai_quota.value(),
+        }
+
+    def _on_profile_changed(self, _index: int) -> None:
+        self._apply_profile(str(self._ai_profile.currentData() or "default"))
+
+    def _on_profile_new(self) -> None:
+        name, ok = QInputDialog.getText(self, "新建 AI 档案", "档案名称（如：工作 / 本地）:")
+        name = (name or "").strip()
+        if not ok or not name or name == "default":
+            return
+        ai = self._cfg.setdefault("ai", {})
+        profiles = ai.setdefault("profiles", {})
+        if not isinstance(profiles, dict):
+            profiles = {}
+            ai["profiles"] = profiles
+        profiles[name] = self._profile_payload()
+        self._refresh_profile_combo(name)
+        self._apply_profile(name)
+
+    def _on_profile_delete(self) -> None:
+        name = str(self._ai_profile.currentData() or "")
+        if not name or name == "default":
+            return
+        if QMessageBox.question(
+                self, "删除档案", f"确定删除档案「{name}」？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        (self._cfg.setdefault("ai", {}).setdefault("profiles", {})).pop(name, None)
+        self._refresh_profile_combo("default")
+        self._apply_profile("default")
+
+    def _on_preset_changed(self, _index: int) -> None:
+        from ..ai import PRESETS
+
+        name = str(self._ai_preset.currentData() or "自定义")
+        preset = PRESETS.get(name) or {}
+        if preset.get("base_url"):
+            self._ai_base.setText(preset["base_url"])
+        if preset.get("model"):
+            self._ai_model.setText(preset["model"])
+
+    def _on_test_connection(self) -> None:
+        if getattr(self, "_probe_worker", None) is not None:
+            return
+        self._ai_test_btn.setEnabled(False)
+        self._ai_test_result.setText("正在测试…")
+        self._probe_worker = _ProbeWorker(
+            self._ai_base.text().strip(), self._ai_key.text().strip(),
+            self._ai_model.text().strip(), self._ai_timeout.value(),
+            self._ai_temp.value(), self._ai_top_p.value(), self)
+        self._probe_worker.done.connect(self._on_test_done)
+        self._probe_worker.finished.connect(self._on_probe_finished)
+        self._probe_worker.start()
+
+    def _on_test_done(self, ok: bool, message: str) -> None:
+        color = "#22c55e" if ok else "#ef4444"
+        self._ai_test_result.setStyleSheet(f"color: {color}; font-size: 11px;")
+        self._ai_test_result.setText(message)
+
+    def _on_probe_finished(self) -> None:
+        worker = getattr(self, "_probe_worker", None)
+        self._probe_worker = None
+        if worker is not None:
+            worker.deleteLater()
+        self._ai_test_btn.setEnabled(True)
+
+    # ---------- 归档 / Obsidian / 备份 ----------
+
+    def _build_archive_tab(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(16, 12, 16, 12)
+        lay.setSpacing(12)
+        archive = self._cfg.get("archive") or {}
+        backup = self._cfg.get("backup") or {}
+
+        box, form = _group("消息归档")
+        self._ar_enabled = _check(archive.get("enabled", True),
+                                  "关闭后不再写 Markdown 消息归档（数据库不受影响）")
+        form.addRow("启用归档:", self._ar_enabled)
+        self._ar_dir = _line(str(archive.get("dir") or ""),
+                             "留空 = 数据库同目录下的 archive/")
+        form.addRow("归档目录:", self._ar_dir)
+        self._ar_shot = _check(archive.get("screenshots", False),
+                               "截图归档默认关闭；开启后单独目录存储")
+        form.addRow("截图归档:", self._ar_shot)
+        self._ar_shot_days = _spin(int(archive.get("screenshot_days") or 7), 1, 365, " 天")
+        form.addRow("截图保留期:", self._ar_shot_days)
+        form.addRow("", _hint("按「群名/年/月/日.md」追加写入，manifest.json 记录已归档的消息 ID"))
+        lay.addWidget(box)
+
+        ob_box, ob_form = _group("Obsidian 双向同步（实验特性）")
+        self._ob_vault = _line(str(self._cfg.get("obsidian_vault") or ""),
+                               "Obsidian 库根目录，例如 D:\\Notes\\MyVault")
+        ob_form.addRow("库路径:", self._ob_vault)
+        ob_form.addRow("", _hint(
+            "只读写 <库>/Chat2Todo/ 下的镜像笔记，不会改动库里其他内容。"
+            "默认本地 → Obsidian 单向镜像；在 Obsidian 勾选完成会回写数据库，"
+            "删除任务只删镜像。冲突内容另存 .conflict.bak。"))
+        lay.addWidget(ob_box)
+
+        bk_box, bk_form = _group("备份")
+        self._bk_enabled = _check(backup.get("enabled", True), "每日自动备份一次全量数据库")
+        bk_form.addRow("启用备份:", self._bk_enabled)
+        self._bk_dir = _line(str(backup.get("dir") or ""),
+                             "留空 = 数据库同目录下的 backups/")
+        bk_form.addRow("备份目录:", self._bk_dir)
+        self._bk_keep = _spin(int(backup.get("keep") or 7), 1, 365, " 份")
+        bk_form.addRow("保留份数:", self._bk_keep)
+        self._bk_encrypt = _check(backup.get("encrypt", True),
+                                  "用 Windows DPAPI 按当前用户加密；换机后无法解密")
+        bk_form.addRow("加密备份:", self._bk_encrypt)
+        lay.addWidget(bk_box)
+        lay.addStretch(1)
+        return page
+
+    # ---------- 桌面美化联动 ----------
+
+    def _link_folder(self) -> str:
+        """联动输出目录：优先取界面上的值，构建期也能安全调用。"""
+        from ..core.desktop_link import out_dir
+
+        cfg = dict(self._cfg)
+        desktop = dict(cfg.get("desktop") or {})
+        dir_widget = getattr(self, "_dk_dir", None)
+        if dir_widget is not None:
+            desktop["dir"] = dir_widget.text().strip()
+        cfg["desktop"] = desktop
+        db_widget = getattr(self, "_db_path", None)
+        db_path = db_widget.text().strip() if db_widget is not None else ""
+        return out_dir(cfg, db_path or str(cfg.get("db_path") or "") or "qq.db")
+
+    def _link_token(self) -> str:
+        """读当前 token；文件不存在时给一句「保存后生成」的说明。"""
+        from ..core.desktop_link import load_token
+
+        return load_token(self._link_folder()) or "（保存并重启后自动生成）"
+
+    def _build_link_tab(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(16, 12, 16, 12)
+        lay.setSpacing(12)
+        desktop = self._cfg.get("desktop") or {}
+
+        box, form = _group("桌面美化联动（DeskBox 等小组件）")
+        self._dk_enabled = _check(desktop.get("enabled", False),
+                                  "开启后输出脱敏待办文件，并启动仅本机可访问的回写接口")
+        form.addRow("启用联动:", self._dk_enabled)
+        self._dk_dir = _line(str(desktop.get("dir") or ""),
+                             "留空 = 数据库同目录下的 desktop/")
+        form.addRow("输出目录:", self._dk_dir)
+        self._dk_json = _check(desktop.get("json", True), "输出 todos.json 供小组件读取")
+        form.addRow("输出 JSON:", self._dk_json)
+        self._dk_ics = _check(desktop.get("ics", True),
+                              "输出 todos.ics，可被日历类小组件订阅")
+        form.addRow("输出 ICS:", self._dk_ics)
+        self._dk_port = _spin(int(desktop.get("port") or 0), 0, 65535)
+        form.addRow("本地端口:", self._dk_port)
+        form.addRow("", _hint(
+            "0 = 随机端口。服务只监听 127.0.0.1，并校验 Host / Origin；"
+            "小组件勾选、编辑、删除都会带 token 请求本地接口回写数据库。"
+            "输出内容默认脱敏，白名单群与归档口径一致。"))
+        lay.addWidget(box)
+
+        tk_box, tk_form = _group("回写令牌")
+        token_row = QHBoxLayout()
+        self._dk_token = _line("", "")
+        self._dk_token.setReadOnly(True)
+        self._dk_token.setText(self._link_token())
+        token_row.addWidget(self._dk_token, 1)
+        copy_btn = QPushButton("复制")
+        copy_btn.clicked.connect(self._on_copy_token)
+        token_row.addWidget(copy_btn)
+        rotate_btn = QPushButton("轮换")
+        rotate_btn.setToolTip("立即生成新 token，旧 token 立刻失效")
+        rotate_btn.clicked.connect(self._on_rotate_token)
+        token_row.addWidget(rotate_btn)
+        tk_form.addRow("当前 token:", token_row)
+        tk_form.addRow("", _hint(
+            "token 写在输出目录的 token.txt（Windows 上用 icacls 只授予当前用户）。"
+            "复制给美化工具完成鉴权；怀疑泄露时点「轮换」。"))
+        lay.addWidget(tk_box)
+
+        hm_box, hm_form = _group("Hermes 运维服务")
+        hermes = self._cfg.get("hermes") or {}
+        self._hm_enabled = _check(hermes.get("enabled", True),
+                                  "开启后提供本机 token 鉴权的状态查询 / 巡检 / 指令接口")
+        hm_form.addRow("启用服务:", self._hm_enabled)
+        self._hm_url = _line("", "")
+        self._hm_url.setReadOnly(True)
+        self._hm_url.setPlaceholderText("服务启动后显示地址")
+        hm_form.addRow("服务地址:", self._hm_url)
+        hm_token_row = QHBoxLayout()
+        self._hm_token = _line("", "")
+        self._hm_token.setReadOnly(True)
+        self._hm_token.setText(self._hermes_token())
+        hm_token_row.addWidget(self._hm_token, 1)
+        hm_copy = QPushButton("复制")
+        hm_copy.clicked.connect(self._on_hermes_copy)
+        hm_token_row.addWidget(hm_copy)
+        hm_rotate = QPushButton("轮换")
+        hm_rotate.setToolTip("生成新 token；主程序会自动重启服务让旧 token 立即失效")
+        hm_rotate.clicked.connect(self._on_hermes_rotate)
+        hm_token_row.addWidget(hm_rotate)
+        hm_form.addRow("服务 token:", hm_token_row)
+        hm_form.addRow("", _hint(
+            "token 用 Windows DPAPI 加密保存在 ~/.chat2todo/hermes/token.bin，"
+            "只对当前 Windows 用户可解密。服务只监听 127.0.0.1，错误 token 一律 401。"))
+        lay.addWidget(hm_box)
+
+        fw_box, fw_form = _group("半自动转发（高风险）")
+        self._fw_enabled = _check((self._cfg.get("forward") or {}).get("enabled", False))
+        self._fw_enabled.toggled.connect(self._on_forward_toggled)
+        fw_form.addRow("启用转发:", self._fw_enabled)
+        fw_form.addRow("", _hint(
+            "转发会向 QQ 群发送消息，存在发错群 / 发错人的风险，默认关闭。"
+            "当前版本只提供开关与接口占位，不实现自动发送；插件未启用时接口返回「功能未启用」。"))
+        lay.addWidget(fw_box)
+        lay.addStretch(1)
+        return page
+
+    # ---------- Hermes ----------
+
+    def _hermes_token(self) -> str:
+        from ..core.hermes import load_token
+
+        return load_token() or "（保存并重启后自动生成）"
+
+    def set_hermes_url(self, url: str) -> None:
+        """主程序启动服务后回填地址。"""
+        self._hm_url.setText(url)
+        if url:
+            self._hm_token.setText(self._hermes_token())
+
+    def _on_hermes_copy(self) -> None:
+        token = self._hermes_token()
+        if token.startswith("（"):
+            QMessageBox.information(self, "Hermes token",
+                                    "先保存配置并重启程序，token 才会生成。")
+            return
+        QApplication.clipboard().setText(token)
+        QMessageBox.information(self, "Hermes token", "已复制到剪贴板。")
+
+    def _on_hermes_rotate(self) -> None:
+        from ..core.hermes import ensure_token
+
+        try:
+            token = ensure_token(rotate=True)
+        except OSError as exc:
+            QMessageBox.critical(self, "Hermes token", f"轮换失败：{exc}")
+            return
+        self._hm_token.setText(token)
+        self.hermes_rotated.emit()
+        QMessageBox.information(self, "Hermes token",
+                                "新 token 已生成，服务已按新 token 重启；旧 token 立即失效。")
+
+    def _on_forward_toggled(self, checked: bool) -> None:
+        if not checked:
+            return
+        answer = QMessageBox.warning(
+            self, "启用半自动转发",
+            "转发会向 QQ 群发送消息，可能发错群或发给不该看的人。\n\n"
+            "确认要继续吗？（当前版本仅提供开关，不会自动发送任何消息）",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self._fw_enabled.setChecked(False)
+
+    def _on_copy_token(self) -> None:
+        token = self._link_token()
+        if token.startswith("（"):
+            QMessageBox.information(self, "回写令牌", "先保存配置并重启程序，token 才会生成。")
+            return
+        QApplication.clipboard().setText(token)
+        QMessageBox.information(self, "回写令牌", "已复制到剪贴板。")
+
+    def _on_rotate_token(self) -> None:
+        from ..core.desktop_link import ensure_token
+
+        try:
+            token = ensure_token(self._link_folder(), rotate=True)
+        except OSError as exc:
+            QMessageBox.critical(self, "回写令牌", f"轮换失败：{exc}")
+            return
+        self._dk_token.setText(token)
+        QMessageBox.information(self, "回写令牌",
+                                "新 token 已生成并写入 token.txt，旧 token 立即失效。"
+                                "重启程序后本地接口才会使用新 token。")
+
+    # ---------- 隐私 ----------
+
+    def _build_privacy_tab(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(16, 12, 16, 12)
+        lay.setSpacing(12)
+        privacy = self._cfg.get("privacy") or {}
+
+        base_box, base_form = _group("脱敏")
+        self._pr_enabled = _check(privacy.get("enabled", True),
+                                  "关闭后手机号 / 身份证等不再打码，仅建议在离线调试时关闭")
+        base_form.addRow("启用脱敏:", self._pr_enabled)
+        self._pr_logs = _check(privacy.get("mask_logs", True),
+                               "日志中的手机号 / 身份证 / 邮箱自动打码")
+        base_form.addRow("日志脱敏:", self._pr_logs)
+        self._pr_show_original = _check(privacy.get("board_show_original", False),
+                                        "关闭时看板列表 / 详情 / 提醒都显示打码后的文本")
+        base_form.addRow("看板显示原文:", self._pr_show_original)
+        self._pr_raw_ai = _check(privacy.get("allow_raw_ai", False),
+                                 "开启后 AI 请求不再打码；默认关闭，开启需要二次确认")
+        self._pr_raw_ai.toggled.connect(self._on_raw_ai_toggled)
+        base_form.addRow("AI 明文:", self._pr_raw_ai)
+        self._pr_raw_groups = _line(_comma_list(privacy.get("raw_ai_groups")),
+                                   "群号，逗号分隔；留空 = 开启后所有来源都发明文")
+        base_form.addRow("明文群号:", self._pr_raw_groups)
+        base_form.addRow("", _hint(
+            "数据库仍保存原文（本地不外发）；归档、日志、看板和云端 AI 请求都使用脱敏文本。"
+            "云端 AI 请求前一律强制脱敏，白名单群也不例外；只有显式打开「AI 明文」"
+            "（可再按群号收窄）才会发送原文。"))
+        lay.addWidget(base_box)
+
+        wl_box, wl_form = _group("白名单与自定义规则")
+        self._pr_whitelist = _line(_comma_list(privacy.get("whitelist_groups")),
+                                   "群名，逗号分隔；这些群在归档 / 看板中不打码")
+        wl_form.addRow("白名单群:", self._pr_whitelist)
+        self._pr_rules = QPlainTextEdit()
+        self._pr_rules.setPlaceholderText(
+            "每行一条：名称::正则\n例如：\n工号::\\b[A-Z]{2}\\d{6}\\b")
+        self._pr_rules.setPlainText("\n".join(
+            str(x) for x in (privacy.get("custom_rules") or [])))
+        self._pr_rules.setStyleSheet(
+            "QPlainTextEdit { background: rgba(0,0,0,40); color: #cbd5e1;"
+            " border: 1px solid rgba(255,255,255,20); border-radius: 6px;"
+            " font-family: Consolas, monospace; font-size: 12px; }"
+        )
+        self._pr_rules.setFixedHeight(110)
+        wl_form.addRow("自定义规则:", self._pr_rules)
+        wl_form.addRow("", _hint("内置规则：身份证 / 银行卡 / 手机号 / 邮箱；写错的正则会被自动跳过"))
+        lay.addWidget(wl_box)
+        lay.addStretch(1)
+        return page
+
+    def _on_raw_ai_toggled(self, checked: bool) -> None:
+        """AI 明文是例外通道：打开必须二次确认，取消就立刻勾回去。"""
+        if not checked:
+            return
+        answer = QMessageBox.warning(
+            self, "AI 明文",
+            "开启后，待办原文会直接发往云端 AI 接口，可能包含手机号、身份证、"
+            "银行卡、邮箱等个人信息，且不再打码。\n\n"
+            "建议只在离线本机模型或明确可信的群里使用。确认要开启吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self._pr_raw_ai.setChecked(False)
 
     # ---------- 外观 ----------
 
@@ -379,6 +882,15 @@ class SettingsPanel(QWidget):
         view_form.addRow("边缘吸附:", self._snap_cb)
         self._lock_cb = _check(dash.get("lock", False))
         view_form.addRow("锁定位置:", self._lock_cb)
+        self._opacity = _spin(int(round(float(dash.get("opacity") or 0.94) * 100)),
+                              50, 100, " %")
+        view_form.addRow("不透明度:", self._opacity)
+        self._no_activate_cb = _check(dash.get("no_activate", True),
+                                     "点击 / 拖拽 / 勾选不抢占前台窗口焦点；点输入框时临时恢复")
+        view_form.addRow("不抢焦点:", self._no_activate_cb)
+        self._auto_hide_cb = _check(dash.get("auto_hide", True),
+                                   "贴左 / 右边缘时，鼠标离开自动收起只留一条边")
+        view_form.addRow("贴边自动收起:", self._auto_hide_cb)
         view_form.addRow("", _hint("位置与尺寸会自动记住；改圆角/材质后重开窗口生效"))
         lay.addWidget(view_box)
 
@@ -415,6 +927,20 @@ class SettingsPanel(QWidget):
             " padding: 5px 10px; font-size: 12px; }"
         )
         store_form.addRow("日志级别:", self._log_level)
+
+        wipe_btn = QPushButton("一键清空程序数据…")
+        wipe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        wipe_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: #ef4444;"
+            f" border: 1px solid {theme.CARD_BORDER.name()}; border-radius: 6px;"
+            " padding: 6px 14px; font-size: 12px; }"
+            f"QPushButton:hover {{ border-color: #ef4444; }}"
+        )
+        wipe_btn.clicked.connect(self._on_wipe_clicked)
+        store_form.addRow("危险操作:", wipe_btn)
+        store_form.addRow("", _hint(
+            "清空范围：数据库、消息归档、备份、回收站、日志、缓存、插件配置；"
+            "不会删除插件本体，也不会动 Obsidian 库里的其他笔记。"))
         lay.addWidget(store_box)
         lay.addStretch(1)
         return page
@@ -428,18 +954,27 @@ class SettingsPanel(QWidget):
         wins = tray.enum_qq_windows()
         if not wins:
             self._qq_combo.addItem("（未发现运行中的 QQ 主窗口）", userData=0)
-            self._qq_status.setText("请启动 QQ 后点「刷新」")
+            self._qq_status.setText("QQ 未启动：请先打开 QQ 并登录，再点「刷新」")
             return
+        from ..sources.uia import qq_window_info
+
         saved = int((self._cfg.get("uia") or {}).get("hwnd") or 0)
+        checks: list = []
         for i, (hwnd, title, pid) in enumerate(wins):
-            self._qq_combo.addItem(f"PID {pid} — {title} (hwnd={hwnd})", userData=hwnd)
+            info = qq_window_info(hwnd)
+            version = info.get("version") or "版本未知"
+            self._qq_combo.addItem(
+                f"PID {pid} — {title} · QQ {version} (hwnd={hwnd})", userData=hwnd)
+            checks.append(version)
             if hwnd == saved:
                 self._qq_combo.setCurrentIndex(i)
         if saved == 0:
             self._qq_combo.setCurrentIndex(0)
         self._qq_hwnd = int(self._qq_combo.currentData() or 0)
         self._qq_combo.currentIndexChanged.connect(self._on_qq_changed)
-        self._qq_status.setText(f"已选择 hwnd={self._qq_hwnd}")
+        self._qq_status.setText(
+            f"已选择 hwnd={self._qq_hwnd} · {len(wins)} 个窗口 · "
+            f"QQ {checks[0] if checks else '版本未知'}")
 
     def _on_qq_changed(self, _index: int) -> None:
         self._qq_hwnd = int(self._qq_combo.currentData() or 0)
@@ -503,6 +1038,8 @@ class SettingsPanel(QWidget):
             "session": self._session_name.text().strip() or "QQ实时",
             "hwnd": self._qq_hwnd,
             "ocr_enabled": True,
+            "ocr_min_confidence": self._ocr_min.value() / 100.0,
+            "keep_low_confidence": self._keep_low.isChecked(),
         }
         cfg["notify"] = {
             "new_todo": self._notify_new.isChecked(),
@@ -514,16 +1051,69 @@ class SettingsPanel(QWidget):
             "star_groups": _parse_list(self._star_groups.text()),
             "star_senders": list((self._cfg.get("filter") or {}).get("star_senders") or []),
         }
+        profile_name = str(self._ai_profile.currentData() or "default")
+        profiles = dict((self._cfg.get("ai") or {}).get("profiles") or {})
+        if profile_name != "default":
+            profiles[profile_name] = self._profile_payload()   # 当前编辑内容写回该档案
+        payload = self._profile_payload()
         cfg["ai"] = {
             "enabled": self._ai_enabled.isChecked(),
             "review": self._ai_review.isChecked(),
             "merge": self._ai_merge.isChecked(),
             "intent": self._ai_intent.isChecked(),
             "rewrite": self._ai_rewrite.isChecked(),
-            "base_url": self._ai_base.text().strip(),
-            "model": self._ai_model.text().strip() or "gpt-4o-mini",
-            "api_key": self._ai_key.text().strip(),
-            "timeout": self._ai_timeout.value(),
+            "base_url": payload["base_url"],
+            "model": payload["model"],
+            "api_key": payload["api_key"],
+            "temperature": payload["temperature"],
+            "top_p": payload["top_p"],
+            "max_tokens": payload["max_tokens"],
+            "stream": payload["stream"],
+            "timeout": payload["timeout"],
+            "tokens_per_day": payload["tokens_per_day"],
+            "profile": profile_name,
+            "profiles": profiles,
+        }
+        cfg["archive"] = {
+            "enabled": self._ar_enabled.isChecked(),
+            "dir": self._ar_dir.text().strip(),
+            "screenshots": self._ar_shot.isChecked(),
+            "screenshot_days": self._ar_shot_days.value(),
+        }
+        cfg["backup"] = {
+            "enabled": self._bk_enabled.isChecked(),
+            "dir": self._bk_dir.text().strip(),
+            "keep": self._bk_keep.value(),
+            "encrypt": self._bk_encrypt.isChecked(),
+        }
+        cfg["obsidian_vault"] = self._ob_vault.text().strip()
+        cfg["desktop"] = {
+            "enabled": self._dk_enabled.isChecked(),
+            "dir": self._dk_dir.text().strip(),
+            "json": self._dk_json.isChecked(),
+            "ics": self._dk_ics.isChecked(),
+            "port": self._dk_port.value(),
+            "debounce_ms": int((self._cfg.get("desktop") or {}).get("debounce_ms") or 1500),
+        }
+        cfg["hermes"] = {
+            "enabled": self._hm_enabled.isChecked(),
+            "port": int((self._cfg.get("hermes") or {}).get("port") or 0),
+            "auto_restart": bool((self._cfg.get("hermes") or {}).get("auto_restart", True)),
+            "daily_summary": bool((self._cfg.get("hermes") or {}).get("daily_summary", True)),
+            "summary_time": (self._cfg.get("hermes") or {}).get("summary_time", "21:30"),
+        }
+        cfg["forward"] = {"enabled": self._fw_enabled.isChecked()}
+        cfg["privacy"] = {
+            "enabled": self._pr_enabled.isChecked(),
+            "mask_logs": self._pr_logs.isChecked(),
+            "board_show_original": self._pr_show_original.isChecked(),
+            "whitelist_groups": _parse_list(self._pr_whitelist.text()),
+            "allow_raw_ai": self._pr_raw_ai.isChecked(),
+            "raw_ai_groups": _parse_list(self._pr_raw_groups.text()),
+            "custom_rules": [
+                ln.strip() for ln in self._pr_rules.toPlainText().splitlines()
+                if "::" in ln
+            ],
         }
         dash = dict(self._cfg.get("dash") or {})
         dash.update({
@@ -534,6 +1124,9 @@ class SettingsPanel(QWidget):
             "material": self._material_cb.isChecked(),
             "snap": self._snap_cb.isChecked(),
             "lock": self._lock_cb.isChecked(),
+            "opacity": self._opacity.value() / 100.0,
+            "no_activate": self._no_activate_cb.isChecked(),
+            "auto_hide": self._auto_hide_cb.isChecked(),
         })
         cfg["dash"] = dash
         cfg["hotkey"] = {
@@ -558,6 +1151,25 @@ class SettingsPanel(QWidget):
         QTimer.singleShot(2500, lambda: self._status.setText(""))
         self.config_saved.emit(dict(cfg))
 
+    def _on_wipe_clicked(self) -> None:
+        """两道确认：先讲清范围，再要求明确同意不可恢复。"""
+        first = QMessageBox.question(
+            self, "一键清空",
+            "将删除所有程序生成的数据：数据库、消息归档、备份、回收站、日志、缓存、插件配置。\n\n"
+            "不会删除插件本体，也不会修改 Obsidian 库中的其他笔记。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel)
+        if first != QMessageBox.StandardButton.Yes:
+            return
+        second = QMessageBox.warning(
+            self, "确认清空",
+            "此操作不可恢复，清空后程序将退出。确定继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel)
+        if second != QMessageBox.StandardButton.Yes:
+            return
+        self.wipe_requested.emit()
+
     def _reload(self) -> None:
         """从磁盘重新读一遍，把控件值刷成最新。"""
         cfg = c2t_config.load()
@@ -577,10 +1189,57 @@ class SettingsPanel(QWidget):
         self._ai_base.setText(str(ai.get("base_url") or ""))
         self._ai_model.setText(str(ai.get("model") or "gpt-4o-mini"))
         self._ai_key.setText(str(ai.get("api_key") or ""))
+        self._ai_temp.setValue(float(ai.get("temperature") or 0.0))
+        self._ai_top_p.setValue(float(ai.get("top_p") or 1.0))
+        self._ai_max_tokens.setValue(int(ai.get("max_tokens") or 600))
+        self._ai_stream.setChecked(bool(ai.get("stream", False)))
         self._ai_timeout.setValue(int(ai.get("timeout") or 15))
+        self._ai_quota.setValue(int(ai.get("tokens_per_day") or 0))
+        self._refresh_profile_combo(str(ai.get("profile") or "default"))
+
+        archive = cfg.get("archive") or {}
+        backup = cfg.get("backup") or {}
+        self._ar_enabled.setChecked(bool(archive.get("enabled", True)))
+        self._ar_dir.setText(str(archive.get("dir") or ""))
+        self._ar_shot.setChecked(bool(archive.get("screenshots", False)))
+        self._ar_shot_days.setValue(int(archive.get("screenshot_days") or 7))
+        self._bk_enabled.setChecked(bool(backup.get("enabled", True)))
+        self._bk_dir.setText(str(backup.get("dir") or ""))
+        self._bk_keep.setValue(int(backup.get("keep") or 7))
+        self._bk_encrypt.setChecked(bool(backup.get("encrypt", True)))
+        self._ob_vault.setText(str(cfg.get("obsidian_vault") or ""))
+
+        desktop = cfg.get("desktop") or {}
+        self._dk_enabled.setChecked(bool(desktop.get("enabled", False)))
+        self._dk_dir.setText(str(desktop.get("dir") or ""))
+        self._dk_json.setChecked(bool(desktop.get("json", True)))
+        self._dk_ics.setChecked(bool(desktop.get("ics", True)))
+        self._dk_port.setValue(int(desktop.get("port") or 0))
+        self._dk_token.setText(self._link_token())
+
+        hermes = cfg.get("hermes") or {}
+        self._hm_enabled.setChecked(bool(hermes.get("enabled", True)))
+        self._hm_token.setText(self._hermes_token())
+        self._fw_enabled.blockSignals(True)   # 载入配置时不该弹二次确认
+        self._fw_enabled.setChecked(bool((cfg.get("forward") or {}).get("enabled", False)))
+        self._fw_enabled.blockSignals(False)
+
+        privacy = cfg.get("privacy") or {}
+        self._pr_enabled.setChecked(bool(privacy.get("enabled", True)))
+        self._pr_logs.setChecked(bool(privacy.get("mask_logs", True)))
+        self._pr_show_original.setChecked(bool(privacy.get("board_show_original", False)))
+        self._pr_whitelist.setText(_comma_list(privacy.get("whitelist_groups")))
+        self._pr_raw_ai.blockSignals(True)   # 载入配置时不该弹二次确认
+        self._pr_raw_ai.setChecked(bool(privacy.get("allow_raw_ai", False)))
+        self._pr_raw_ai.blockSignals(False)
+        self._pr_raw_groups.setText(_comma_list(privacy.get("raw_ai_groups")))
+        self._pr_rules.setPlainText("\n".join(
+            str(x) for x in (privacy.get("custom_rules") or [])))
 
         self._uia_enabled.setChecked(bool(uia.get("enabled", True)))
-        self._interval.setValue(int(uia.get("interval") or 5))
+        self._interval.setValue(int(uia.get("interval") or 2))
+        self._ocr_min.setValue(int(round(float(uia.get("ocr_min_confidence") or 0.5) * 100)))
+        self._keep_low.setChecked(bool(uia.get("keep_low_confidence", False)))
         self._session_name.setText(str(uia.get("session") or "QQ实时"))
 
         self._notify_new.setChecked(bool(notify.get("new_todo", True)))
@@ -596,6 +1255,9 @@ class SettingsPanel(QWidget):
         self._material_cb.setChecked(bool(dash.get("material", True)))
         self._snap_cb.setChecked(bool(dash.get("snap", True)))
         self._lock_cb.setChecked(bool(dash.get("lock")))
+        self._opacity.setValue(int(round(float(dash.get("opacity") or 0.94) * 100)))
+        self._no_activate_cb.setChecked(bool(dash.get("no_activate", True)))
+        self._auto_hide_cb.setChecked(bool(dash.get("auto_hide", True)))
         self._hk_enabled.setChecked(bool(hk.get("enabled", True)))
         self._hk_show.setText(str(hk.get("show") or "ctrl+alt+d"))
         self._hk_snap.setText(str(hk.get("snap") or "ctrl+shift+s"))

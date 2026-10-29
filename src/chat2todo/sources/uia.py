@@ -30,7 +30,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..errors import C2TError
 from ..models import Message
@@ -745,6 +745,88 @@ def enum_qq_hwnds() -> List[Tuple[int, int]]:
     return found
 
 
+def qq_window_info(hwnd: int) -> Dict[str, Any]:
+    """拿到 QQ 窗口的 PID / 标题 / 可执行文件版本，用于「识别对应控件规则」。
+
+    版本号取 QQ.exe 的 FileVersion（QQ NT 的 9.x 与旧版 8.x 控件树不同），
+    取不到时返回空串——上层据此提示用户「无法确认 QQ 版本」而不是瞎猜。
+    """
+    if os.name != "nt" or not hwnd:
+        return {"hwnd": int(hwnd or 0), "pid": 0, "version": "", "path": ""}
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    pid = wintypes.DWORD(0)
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    info = {"hwnd": int(hwnd), "pid": int(pid.value), "version": "", "path": ""}
+    handle = kernel32.OpenProcess(0x1000, False, pid.value)   # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return info
+    try:
+        size = wintypes.DWORD(1024)
+        buf = ctypes.create_unicode_buffer(1024)
+        if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            info["path"] = buf.value
+    finally:
+        kernel32.CloseHandle(handle)
+
+    path = info["path"]
+    if not path:
+        return info
+    try:
+        ver = ctypes.windll.version
+        size = ver.GetFileVersionInfoSizeW(path, None)
+        if not size:
+            return info
+        data = ctypes.create_string_buffer(size)
+        if not ver.GetFileVersionInfoW(path, 0, size, data):
+            return info
+        ptr = ctypes.c_void_p()
+        length = wintypes.UINT()
+        if ver.VerQueryValueW(data, "\\", ctypes.byref(ptr), ctypes.byref(length)) and ptr.value:
+            fixed = ctypes.cast(ptr, ctypes.POINTER(ctypes.c_uint32 * 4)).contents
+            ms, ls = fixed[2], fixed[3]
+            info["version"] = "%d.%d.%d.%d" % (
+                ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF)
+    except Exception:  # noqa: BLE001 - 版本信息读不到不影响采集
+        pass
+    return info
+
+
+#: OCR 低置信度阈值默认值（可在 config 的 uia.ocr_min_confidence 调整）
+DEFAULT_MIN_CONFIDENCE = 0.5
+
+
+def ocr_confidence(text: str) -> float:
+    """粗略估计 OCR 结果可信度（0~1）。
+
+    Windows.Media.Ocr 不给逐词置信度，这里用「文本像不像正常聊天记录」来判断：
+      * 可读字符（汉字 / 字母 / 数字 / 常用标点 / 空白）占比；
+      * 乱码符号（私用区、替换符、方块、控制字符）占比；
+      * 极短结果直接压低（零星几个字最容易是误识别）。
+    低于阈值的结果按文档要求不写入事实源、不参与待办提取。
+    """
+    if not text or not text.strip():
+        return 0.0
+    total = len(text)
+    readable = sum(1 for ch in text if ch.isalnum() or ch.isspace()
+                   or ch in "，。！？；：、“”‘’（）《》【】—…·,.!?;:\"'()[]{}<>/-+%&@#*=_~|")
+    junk = total - readable
+    score = readable / total
+    if junk:
+        score -= min(0.4, junk / total * 1.5)
+
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    if cjk < 6 and len(text.strip()) < 16:
+        score -= 0.25              # 太短的碎片，多半是时间戳 / 按钮文字
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if lines and sum(len(ln.strip()) for ln in lines) / len(lines) < 2.5:
+        score -= 0.15              # 大量单字行，通常是图标 / 头像被误识
+    return max(0.0, min(1.0, score))
+
+
 def _client_rect(hwnd: int) -> Optional[Tuple[int, int, int, int]]:
     """窗口客户区在屏幕上的物理像素矩形 (left, top, right, bottom)。"""
     if os.name != "nt" or not hwnd:
@@ -1009,7 +1091,9 @@ def _is_foreground(hwnd: int) -> bool:
 
 
 def fetch_messages(hwnd: int = 0, chat_id: str = "",
-                   deduper_path: str = "") -> List[Message]:
+                   deduper_path: str = "",
+                   min_confidence: float = DEFAULT_MIN_CONFIDENCE,
+                   keep_low_confidence: bool = False) -> List[Message]:
     """抓取 QQ 当前聊天窗口里「上次之后新出现」的消息。
 
     只走截图 + Win11 OCR 这一条路：
@@ -1017,7 +1101,9 @@ def fetch_messages(hwnd: int = 0, chat_id: str = "",
         而且需要额外安装，这里不再依赖它；
       - 截图优先用 PrintWindow 渲染窗口自身，QQ 在后台也能读；
         最小化（渲染成全黑）才回落到前台抓屏；
-      - 读到文字后会先把汉字之间的空格压掉，再做跨轮次去重。
+      - 读到文字后会先把汉字之间的空格压掉，再做跨轮次去重；
+      - 置信度低于阈值的结果标记 low_conf（默认不写事实源、不参与抽取），
+        用户显式选择保留时追加「OCR低置信度，仅供参考」标注。
     """
     if os.name != "nt":
         return []
@@ -1038,10 +1124,21 @@ def fetch_messages(hwnd: int = 0, chat_id: str = "",
     if not text:
         return []
     text = normalize_cjk_spaces(text)
+    conf = ocr_confidence(text)
+    low = conf < max(0.0, min(1.0, float(min_confidence or 0)))
     path = deduper_path or os.path.expanduser("~/.chat2todo/uia_seen.jsonl")
     deduper = TripleDeduper.load(persist_path=path)
     messages = UIASourceBackend._ocr_text_to_messages(text, deduper, chat_id)
     deduper.persist()
+    for msg in messages:
+        msg.confidence = conf
+        if low:
+            msg.low_conf = True
+            if keep_low_confidence:
+                msg.content = (msg.content or "") + "（OCR低置信度，仅供参考）"
+    if low:
+        log.warning("OCR 置信度偏低 %.2f（阈值 %.2f），本轮 %d 条按低置信度处理",
+                    conf, min_confidence, len(messages))
     return messages
 
 

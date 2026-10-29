@@ -152,6 +152,41 @@ def set_blur_behind(hwnd: int) -> bool:
     return bool(user32.SetWindowCompositionAttribute(hwnd, ctypes.byref(data)))
 
 
+# ---------- 窗口扩展样式 ----------
+
+_GWL_EXSTYLE = -20
+_WS_EX_NOACTIVATE = 0x08000000
+
+
+def set_no_activate(hwnd: int, enabled: bool = True) -> bool:
+    """设置 / 清除 WS_EX_NOACTIVATE：窗口被点击时不抢前台焦点。
+
+    看板要求点击、拖拽、勾选都不激活窗口，否则会把用户正在打字的
+    前台窗口顶到后面去。需要输入文字时由调用方临时清除。
+    """
+    user32 = _user32()
+    if not user32 or not hwnd:
+        return False
+    try:
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            getter = user32.GetWindowLongPtrW
+            setter = user32.SetWindowLongPtrW
+            getter.restype = ctypes.c_longlong
+            getter.argtypes = [ctypes.c_void_p, ctypes.c_int]
+            setter.restype = ctypes.c_longlong
+            setter.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_longlong]
+        else:
+            getter = user32.GetWindowLongW
+            setter = user32.SetWindowLongW
+        style = int(getter(hwnd, _GWL_EXSTYLE))
+    except Exception:  # noqa: BLE001 - 极老的系统没有 *Ptr 版本
+        return False
+    new_style = (style | _WS_EX_NOACTIVATE) if enabled else (style & ~_WS_EX_NOACTIVATE)
+    if new_style != style:
+        setter(hwnd, _GWL_EXSTYLE, new_style)
+    return True
+
+
 # ---------- 辅助：从 QWidget 拿 hwnd ----------
 
 def hwnd_of(widget) -> int:

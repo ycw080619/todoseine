@@ -14,12 +14,11 @@
 from __future__ import annotations
 
 import logging
-import os
-import tempfile
 import time
 from typing import Callable, List, Optional
 
-from PySide6.QtCore import QObject, QPoint, QRect, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import (QBuffer, QIODevice, QObject, QPoint, QRect, Qt,
+                            QThread, QTimer, Signal)
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QPlainTextEdit,
                                QPushButton, QVBoxLayout, QWidget)
@@ -54,29 +53,28 @@ class _OcrWorker(QThread):
     done = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, path: str, parent: Optional[QObject] = None):
+    def __init__(self, image_bytes: bytes, parent: Optional[QObject] = None):
         super().__init__(parent)
-        self._path = path
+        self._image_bytes = image_bytes
 
     def run(self) -> None:
         try:
+            import io
+
             from PIL import Image
 
             from ..sources.uia import UIASourceBackend
 
-            with Image.open(self._path) as img:
+            # 全程内存解码：截图 OCR 不落盘，避免敏感画面留在磁盘上
+            with Image.open(io.BytesIO(self._image_bytes)) as img:
                 text = UIASourceBackend._try_win11_ocr(img.convert("RGB"))
             if not text:
-                text = UIASourceBackend._try_tesseract(Image.open(self._path))
+                with Image.open(io.BytesIO(self._image_bytes)) as img2:
+                    text = UIASourceBackend._try_tesseract(img2.convert("RGB"))
             self.done.emit(_normalize(text or ""))
         except Exception as exc:  # noqa: BLE001 - OCR 失败要能告诉用户
             logger.warning("截图 OCR 失败：%s", exc)
             self.failed.emit(f"{type(exc).__name__}: {exc}")
-        finally:
-            try:
-                os.unlink(self._path)
-            except OSError:
-                pass
 
 
 # ---------------------------------------------------------------------------
@@ -292,17 +290,16 @@ class SnapController(QObject):
             self.failed.emit("截图失败")
             return
 
-        fd, tmp = tempfile.mkstemp(suffix=".png", prefix="c2t_snap_")
-        os.close(fd)
-        if not pixmap.save(tmp, "PNG"):
-            try:
-                os.unlink(tmp)          # 存不下就别留垃圾文件
-            except OSError:
-                pass
-            self.failed.emit("截图保存失败")
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        if not pixmap.save(buffer, "PNG"):
+            buffer.close()
+            self.failed.emit("截图编码失败")
             return
+        png_bytes = bytes(buffer.data())
+        buffer.close()
 
-        worker = _OcrWorker(tmp, self)
+        worker = _OcrWorker(png_bytes, self)
         worker.done.connect(self._on_text)
         worker.failed.connect(self.failed.emit)
         worker.finished.connect(worker.deleteLater)

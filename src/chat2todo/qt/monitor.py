@@ -23,10 +23,11 @@ from PySide6.QtCore import QObject, QThread, Signal
 
 from .. import config as c2t_config
 from ..core import Store
+from ..core.archive import Archiver as Archive
 from ..core.events import merge_events
 from ..core.extract import extract_todos
 from ..models import Message, TodoItem
-from ..sources.uia import fetch_messages
+from ..sources.uia import enum_qq_hwnds, fetch_messages
 
 logger = logging.getLogger("chat2todo.qt.monitor")
 
@@ -90,6 +91,7 @@ class _Worker(QThread):
         self._pause_evt = threading.Event()
         self._wake_evt = threading.Event()
         self._fails = 0
+        self._last_no_qq = 0.0
 
     # ---- 外部命令（都只置事件，线程安全） ----
 
@@ -138,8 +140,21 @@ class _Worker(QThread):
         uia = self._cfg.get("uia") or {}
         session = str(uia.get("session") or "QQ实时")
         started = time.time()
+        if not enum_qq_hwnds():
+            # 没找到 QQ 窗口时每 5 分钟提示一次，避免每轮都弹
+            now = time.time()
+            if now - self._last_no_qq > 300:
+                self._last_no_qq = now
+                self.failed.emit("未找到 QQ 窗口，请先打开 QQ 并登录后重试")
+            self.ticked.emit({"messages": 0, "todos": 0, "low_conf": 0,
+                              "error": "", "at": now, "elapsed": now - started})
+            return
         try:
-            msgs = fetch_messages(hwnd=int(uia.get("hwnd") or 0))
+            raw = fetch_messages(
+                hwnd=int(uia.get("hwnd") or 0),
+                min_confidence=float(uia.get("ocr_min_confidence") or 0.5),
+                keep_low_confidence=bool(uia.get("keep_low_confidence", False)),
+            )
         except Exception as exc:  # noqa: BLE001 - 采集失败不能弄死线程
             self._fails += 1
             logger.debug("抓取失败：%s", exc)
@@ -148,10 +163,15 @@ class _Worker(QThread):
                               "at": time.time(), "elapsed": time.time() - started})
             return
 
+        keep_low = bool(uia.get("keep_low_confidence", False))
+        low_n = sum(1 for m in raw if m.low_conf)
+        msgs = raw if keep_low else [m for m in raw if not m.low_conf]
+
         if not msgs:
             self._fails = 0
-            self.ticked.emit({"messages": 0, "todos": 0, "error": "",
-                              "at": time.time(), "elapsed": time.time() - started})
+            self.ticked.emit({"messages": 0, "todos": 0, "low_conf": low_n,
+                              "error": "", "at": time.time(),
+                              "elapsed": time.time() - started})
             return
 
         if not self._db_path:
@@ -165,6 +185,8 @@ class _Worker(QThread):
             store = Store(self._db_path)
             try:
                 added = store.add_messages(msgs, session=session)
+                # 消息 Markdown 归档：群名/年/月/日.md + manifest.json 去重
+                Archive(self._cfg, self._db_path).write(msgs, session=session)
                 max_id = store.conn.execute(
                     "SELECT COALESCE(MAX(id), 0) FROM todos").fetchone()[0]
                 todos, decisions = extract_batch(
@@ -189,8 +211,8 @@ class _Worker(QThread):
 
         if new_items:
             self.new_todos.emit(new_items)
-        self.ticked.emit({"messages": added, "todos": len(new_items), "error": "",
-                          "at": time.time(), "elapsed": time.time() - started})
+        self.ticked.emit({"messages": added, "todos": len(new_items), "low_conf": low_n,
+                          "error": "", "at": time.time(), "elapsed": time.time() - started})
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +233,7 @@ class Monitor(QObject):
         self._cfg = cfg or c2t_config.load()
         self._db_path = db_path or str(self._cfg.get("db_path") or "")
         uia = self._cfg.get("uia") or {}
-        self._interval = max(1, int(uia.get("interval") or 5))
+        self._interval = max(1, int(uia.get("interval") or 2))
         self._worker: Optional[_Worker] = None
         self._paused = False
         self._stopping = False
@@ -225,6 +247,14 @@ class Monitor(QObject):
 
     def status(self) -> str:
         return self._status
+
+    def running(self) -> bool:
+        """采集线程是否仍在跑（Hermes 巡检据此判断要不要自动重启）。"""
+        return bool(self._worker is not None and self._worker.isRunning())
+
+    def stopping(self) -> bool:
+        """是否处于「已请求停止、线程尚未退出」的中间态。"""
+        return bool(self._stopping)
 
     def start(self) -> None:
         if self._worker is not None:
@@ -299,7 +329,7 @@ class Monitor(QObject):
         self._cfg = cfg
         self._db_path = str(cfg.get("db_path") or self._db_path)
         uia = cfg.get("uia") or {}
-        self._interval = max(1, int(uia.get("interval") or 5))
+        self._interval = max(1, int(uia.get("interval") or 2))
         if self._worker is not None:
             self._worker.update(cfg, self._db_path, self._interval)
 
@@ -318,7 +348,10 @@ class Monitor(QObject):
             self._set_status("异常 · 稍后重试")
             return
         stamp = time.strftime("%H:%M:%S", time.localtime(info.get("at") or time.time()))
-        if info.get("todos"):
+        if info.get("low_conf"):
+            self._set_status(
+                f"监听中 · {stamp} {info['low_conf']} 条 OCR 置信度偏低，已跳过入库")
+        elif info.get("todos"):
             self._set_status(f"监听中 · {stamp} 新增 {info['todos']} 条")
         elif info.get("messages"):
             self._set_status(f"监听中 · {stamp} 读到 {info['messages']} 条消息")

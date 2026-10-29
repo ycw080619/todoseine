@@ -638,11 +638,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
             from ..config import load as _load_cfg
 
-            days = 30
+            days = 7
             try:
                 cfg_path = Path.home() / "Chat2Todo" / "c2t.toml"
                 cfg_data = _load_cfg(str(cfg_path)) if cfg_path.exists() else _load_cfg()
-                days = int((cfg_data.get("ui") or {}).get("trash_days", 30))
+                days = int((cfg_data.get("ui") or {}).get("trash_days", 7))
             except Exception:  # noqa: BLE001
                 pass
             st = Store(db_path)
