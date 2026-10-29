@@ -245,6 +245,59 @@ def test_monitor_stop_is_clean(cfg_file, qapp, monkeypatch):
     assert monitor.status() == "已停止"
 
 
+def test_crop_drops_sidebar_and_member_panel():
+    """左会话列表 + 聊天区 + 右侧群成员面板，裁完只剩聊天区。
+
+    群成员面板展开时，如果拿「最右一列」当聊天区底色，左边分界会认错，
+    成员名单会被当成消息 OCR 进库。这里用合成图钉住三条边界。
+    """
+    from PIL import Image, ImageDraw
+
+    from chat2todo.sources import uia
+
+    img = Image.new("RGB", (1000, 400), (44, 44, 44))       # 聊天区底色
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, 259, 399], fill=(56, 56, 56))        # 会话列表
+    d.rectangle([780, 0, 999, 399], fill=(36, 36, 36))      # 群成员面板
+    for y in range(80, 340, 40):                            # 几条消息气泡
+        d.rectangle([300, y, 520, y + 24], fill=(64, 64, 64))
+
+    assert 775 <= uia._detect_chat_right(0, img) <= 790
+    assert 250 <= uia._detect_chat_left(0, img) <= 275
+
+    cropped = uia._cut_sidebar(0, img)
+    assert 400 < cropped.width < 560        # 列表与面板都被切掉，只剩聊天区
+    assert cropped.width == 780 - 250 or abs(cropped.width - 526) < 40
+
+
+def test_crop_keeps_full_width_without_panel():
+    """没开面板时不能把右边也裁掉。"""
+    from PIL import Image, ImageDraw
+
+    from chat2todo.sources import uia
+
+    img = Image.new("RGB", (900, 300), (44, 44, 44))
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, 239, 299], fill=(56, 56, 56))
+    assert uia._detect_chat_right(0, img) == 900
+
+
+def test_locate_worker_runs_off_main_thread(qapp, monkeypatch):
+    """定位下载文件走子线程：run() 只调扫描函数并把结果发回来。"""
+    import chat2todo.qt.dashboard as dash
+
+    monkeypatch.setattr(dash, "_find_downloaded_file",
+                        lambda names: rf"C:\Downloads\{names[0]}")
+    got: list = []
+    worker = dash._LocateWorker(["报告.zip"])
+    worker.found.connect(got.append)
+    try:
+        worker.run()
+        assert got == [r"C:\Downloads\报告.zip"]
+    finally:
+        worker.deleteLater()
+
+
 def test_normalize_cjk_spaces():
     from chat2todo.sources.uia import normalize_cjk_spaces
 

@@ -6,7 +6,7 @@ Tk 版看板（`dashboard/`）不动，新增可选的 `chat2todo.qt` 层：托�
 
 - **实时监听管线**（`qt/monitor.py`）：QThread 定时抓 QQ 窗口 → 截屏 → Win11 OCR → 抽取 → 入库 → 通知看板。失败指数退避（最长 60s），支持暂停/恢复/立即同步，配置改了热生效（不重启线程）
 - **只读截图通道重写**（`sources/uia.py`）：放弃模糊匹配的 uiautomation，改用 `EnumWindows` 精确匹配（标题=QQ 且类名=Chrome_WidgetWin_1）+ `PrintWindow(PW_RENDERFULLCONTENT)`，QQ 在后台也能抓；全黑判定失败后回落前台抓屏
-- **裁剪自适应**：会话列表宽度可拖动，`_detect_chat_left()` 按「整列众数底色」从右往左扫分界（容忍 4 列被气泡打断），不再把会话列表的时间戳 OCR 进库
+- **裁剪自适应**：会话列表宽度可拖动，`_detect_chat_left()` 找「列主色第一次变成聊天区底色」的位置当分界；`_detect_chat_right()` 再从右往左找回来，群成员/公告面板展开时也只剩聊天区；聊天区底色取「列主色众数」，正中正好是气泡也不会认错
 - **托盘**（`qt/tray_icon.py`）：QPainter 现画多尺寸图标，菜单含显示主窗口/立即同步/暂停监听/开机自启/打开数据目录/退出；窗口可见时不弹气泡，交给看板 Toast
 - **通知三通道**：新待办托盘气泡、看板 Toast（可点「查看」跳转）、到期提醒（`due_remindable` + 60s 扫描，同一批不重复提醒）
 - **看板交互**（`qt/main_window.py` / `dashboard.py`）：位置记忆（600ms 防抖）、贴边吸附、拖左右边改宽、迷你胶囊、锁定、右键（判定理由 / 此类不再提醒 / 定位下载文件 / 移入回收站）、撤销
@@ -18,13 +18,15 @@ Tk 版看板（`dashboard/`）不动，新增可选的 `chat2todo.qt` 层：托�
 ### 修复
 
 - OCR 汉字间空格：`normalize_cjk_spaces()` 追加「全角标点两侧空格一律删」，「19 ： 04」不再带着空格入库（「明天 10:30」仍保留空格）
+- 右键「定位下载文件」改为后台线程扫下载目录，不再冻界面几秒；同时只允许一个扫描在跑
+- 静音命中已有规则时不给「撤销」，避免误删用户以前设的规则
 - 入库消息 `session` 为空的问题：`Monitor._run_once` 补传 `session`
 - PyInstaller 以 `__main__` 执行 `qt/main.py` 导致相对导入失败、双击即退：入口改为 `tools/qt_launcher.py`
 
 ### 测试
 
-- 新增 `tests/test_qt_smoke.py` 13 条：热键解析、图标生成、批抽取、设置回填、离屏渲染五页、回收站往返、截图入库、裁剪兜底
-- `pytest` 296 passed / 1 skipped / 11 subtests；`ruff` 全绿
+- `tests/test_qt_smoke.py` 20 条：热键解析、图标生成、批抽取、设置回填、离屏渲染五页、回收站往返、还原保留状态、截图入库、裁剪三边界、后台定位、监听启停幂等、配置往返
+- `pytest` 303 passed / 1 skipped / 11 subtests；`ruff` 全绿
 
 ## [Unreleased] - 2026-10-29
 

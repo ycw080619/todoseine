@@ -866,19 +866,17 @@ def _grab_chat_image(hwnd: int):
     return _cut_sidebar(hwnd, img)
 
 
-def _detect_chat_left(hwnd: int, img) -> int:
-    """找出会话列表与聊天区的分界线。
+def _column_modes(img, quant: int = 8):
+    """按列取「众数底色」：返回 (列坐标列表, 每列的主色)。
 
-    QQ NT 把会话列表整块画成一种底色（比聊天区略亮），聊天区底色单一。
-    所以从最右一列往左扫，相邻列的「众数底色」不变就继续，变了就是分界。
-    允许连续几列被气泡/图片打断（容忍 4 列），避免提前刹在消息气泡里。
-    底色完全一致（自定义主题）时按比例退到 30%。
+    用众数而不是均值，是为了忽略整列里占少数的气泡、头像和文字，
+    只留下这一列占比最高的背景色 —— 判断「这列属于哪个面板」靠的就是它。
     """
     width, height = img.size
     step_x = max(2, width // 400)
     step_y = max(1, height // 120)
     px = img.convert("RGB").load()
-    quant = 8               # 把颜色量化成 8 级，避免渐变/抗锯齿抖动
+    cols = list(range(0, width, step_x))
 
     def mode_color(c: int) -> Tuple[int, int, int]:
         cnt: Dict[Tuple[int, int, int], int] = {}
@@ -888,29 +886,81 @@ def _detect_chat_left(hwnd: int, img) -> int:
             cnt[key] = cnt.get(key, 0) + 1
         return max(cnt.items(), key=lambda kv: kv[1])[0]
 
-    cols = list(range(0, width, step_x))
-    modes = [mode_color(c) for c in cols]
-    chat_bg = modes[-1]              # 最右一列必然落在聊天区
+    return cols, [mode_color(c) for c in cols]
 
-    i, gap = len(cols) - 1, 0
-    while i > 0:
-        if modes[i - 1] == chat_bg:
-            gap, i = 0, i - 1
-        elif gap < 4:                # 气泡/头像打断几列不算分界
-            gap, i = gap + 1, i - 1
-        else:
+
+def _chat_bg(modes) -> Tuple[int, int, int]:
+    """聊天区底色 = 所有列主色里出现次数最多的那个。
+
+    会话列表和右侧群成员面板各占一块，聊天区最宽，它的底色在列主色里占比最高。
+    早先取「最右一列」，群成员面板一展开就把它当成聊天区；
+    后来改取正中一列，正中正好落在消息气泡上时同样会错。
+    """
+    cnt: Dict[Tuple[int, int, int], int] = {}
+    for m in modes:
+        cnt[m] = cnt.get(m, 0) + 1
+    return max(cnt.items(), key=lambda kv: kv[1])[0]
+
+
+def _detect_chat_left(hwnd: int, img) -> int:
+    """找出会话列表与聊天区的分界线。
+
+    会话列表是一种底色、聊天区是另一种，所以从左往右找「第一个底色变成聊天区」的位置
+    就是分界 —— 列表是从第 0 列开始的一整块，这个转变只会出现一次。
+    消息气泡、图片在列主色里显示为别的颜色，只会出现在分界之后，不会把分界拉偏。
+    自定义主题里两者同色时退化成按比例取 30%。
+    """
+    width, _ = img.size
+    cols, modes = _column_modes(img)
+    bg = _chat_bg(modes)
+    if modes[0] == bg:                        # 列表与聊天区同色，无从判断
+        return min(width - 120, int(width * 0.30))
+
+    divider = -1
+    for i in range(1, len(modes)):
+        if modes[i] == bg and modes[i - 1] != bg:
+            divider = cols[i]
             break
 
-    divider = cols[i]
     lo, hi = int(width * 0.08), int(width * 0.60)
-    if lo <= divider <= hi:
+    if divider > 0 and lo <= divider <= hi:
         return divider
     return min(width - 120, int(width * 0.30))
 
 
+def _detect_chat_right(hwnd: int, img) -> int:
+    """找出聊天区与右侧群成员/公告面板的分界；没开面板时返回整幅宽度。
+
+    聊天区每一列的众数都是聊天区底色，面板那几列是另一种底色，
+    所以从最右往左找到第一列「底色回到聊天区」的位置就是分界。
+    """
+    width, _ = img.size
+    cols, modes = _column_modes(img)
+    bg = _chat_bg(modes)
+    right = width
+    for i in range(len(cols) - 1, -1, -1):
+        if modes[i] == bg:
+            right = cols[i]
+            break
+    if right >= width or width - right <= 24:
+        return width               # 只差滚动条/边距那几像素，不算面板
+    if right < int(width * 0.45):
+        return width               # 边界跑到画面左半边说明认错了，宁可不裁
+    return min(width, right + 4)
+
+
+def _trim_right_panel(hwnd: int, img):
+    """切掉右侧面板。"""
+    right = _detect_chat_right(hwnd, img)
+    if right >= img.width:
+        return img
+    return img.crop((0, 0, right, img.height))
+
+
 def _cut_sidebar(hwnd: int, img):
-    """去掉左侧会话列表与顶部工具条，只留聊天区。"""
+    """去掉左侧会话列表、右侧群成员面板与顶部工具条，只留聊天区。"""
     scale = _dpi_scale(hwnd)
+    img = _trim_right_panel(hwnd, img)   # 先切右边：左边分界以「最右一列」为基准
     x0 = _detect_chat_left(hwnd, img)
     y0 = min(img.height - 120, int(50 * scale))
     return img.crop((max(0, x0), max(0, y0), img.width, img.height))

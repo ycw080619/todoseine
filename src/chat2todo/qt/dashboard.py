@@ -18,7 +18,7 @@ import subprocess
 import time
 from typing import List, Optional
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QRectF, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QMenu, QMessageBox, QPushButton, QScrollArea,
@@ -43,6 +43,26 @@ TABS = [("todo", "全部"), ("star", "重点"), ("today", "今日"),
         ("maybe", "待定"), ("done", "完成")]
 
 _NO_DB_HINT = "还没有数据：先在「设置」里检查数据库路径，或运行一次同步"
+
+
+class _LocateWorker(QThread):
+    """在后台扫下载目录找文件，避免右键一下界面冻住几秒。
+
+    不挂 parent：交给看板自己持有引用，finished 时 deleteLater 收尾。
+    """
+
+    found = Signal(str)
+
+    def __init__(self, names: List[str]):
+        super().__init__()
+        self._names = names
+
+    def run(self) -> None:  # noqa: D401 - QThread 约定的入口
+        try:
+            self.found.emit(_find_downloaded_file(self._names) or "")
+        except Exception as exc:  # noqa: BLE001 - 扫目录失败按「没找到」处理
+            logger.debug("定位下载文件失败：%s", exc)
+            self.found.emit("")
 
 
 def _flat_button(text: str, width: int = 0) -> QPushButton:
@@ -254,6 +274,7 @@ class Dashboard(QWidget):
         self._mtime: Optional[float] = None
         self._day = time.strftime("%Y-%m-%d")
         self._error = ""
+        self._locate_worker: Optional[_LocateWorker] = None
 
         self._build()
         self._start_timers()
@@ -788,7 +809,14 @@ class Dashboard(QWidget):
         box.exec()
 
     def _locate_file(self, item: TodoItem) -> None:
-        """在资源管理器里选中与这条待办相关的下载文件。"""
+        """在资源管理器里选中与这条待办相关的下载文件。
+
+        扫下载目录是几万次 stat，放主线程会把界面冻住几秒，所以丢给后台线程；
+        同一时刻只允许一个扫描（连点右键不会堆线程）。
+        """
+        if self._locate_worker is not None:
+            Toast.show_toast(self, "上一个文件还在找，稍等一下")
+            return
         texts = [item.text or ""]
         try:
             store = Store(self._db_path)
@@ -799,7 +827,20 @@ class Dashboard(QWidget):
                 store.close()
         except Exception:  # noqa: BLE001 - 找不到原文不影响按待办文本找
             pass
-        path = _find_downloaded_file(_extract_filenames(texts))
+        names = _extract_filenames(texts)
+        if not names:
+            Toast.show_toast(self, "这条待办里没有可定位的文件名")
+            return
+
+        worker = _LocateWorker(names)
+        worker.found.connect(self._on_located)
+        worker.finished.connect(worker.deleteLater)
+        self._locate_worker = worker
+        Toast.show_toast(self, "正在下载目录里查找…")
+        worker.start()
+
+    def _on_located(self, path: str) -> None:
+        self._locate_worker = None
         if not path:
             Toast.show_toast(self, "下载目录里没找到相关文件")
             return
