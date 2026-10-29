@@ -45,6 +45,45 @@ FILTER_DEFAULTS = {
     "star_senders": [],       # 特别关心（旧写法）：这些 QQ 号发的消息标记为重点
 }
 
+# 实时监听（qt 看板常驻采集）
+UIA_DEFAULTS: Dict[str, Any] = {
+    "enabled": True,
+    "interval": 5,            # 两轮抓取之间的间隔（秒）
+    "ocr_enabled": True,
+    "session": "QQ实时",      # OCR 通道读不出群名，统一用这个来源名
+    "hwnd": 0,                # 0 = 自动取面积最大的 QQ 主窗口
+}
+
+# 看板外观 / 位置记忆
+DASH_DEFAULTS: Dict[str, Any] = {
+    "top_n": 5,
+    "width": 560,
+    "height": 700,
+    "x": None,
+    "y": None,
+    "radius": 14,
+    "border": True,
+    "clock": True,
+    "anim": True,
+    "material": True,
+    "snap": True,
+    "lock": False,
+}
+
+# 全局热键
+HOTKEY_DEFAULTS: Dict[str, Any] = {
+    "enabled": True,
+    "show": "ctrl+alt+d",     # 唤出 / 收起看板
+    "snap": "ctrl+shift+s",   # 截图建待办
+}
+
+# 通知
+NOTIFY_DEFAULTS: Dict[str, Any] = {
+    "new_todo": True,
+    "due": True,
+    "due_within": 3600,       # 提前多少秒提醒到期项
+}
+
 AI_DEFAULTS: Dict[str, Any] = {    "enabled": False,
     "review": False,
     "merge": False,
@@ -168,13 +207,18 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
     cfg["db"] = dict(DB_DEFAULTS)
     cfg["vector"] = dict(VECTOR_DEFAULTS)
     cfg["filter"] = dict(FILTER_DEFAULTS)
+    cfg["uia"] = dict(UIA_DEFAULTS)
+    cfg["dash"] = dict(DASH_DEFAULTS)
+    cfg["hotkey"] = dict(HOTKEY_DEFAULTS)
+    cfg["notify"] = dict(NOTIFY_DEFAULTS)
 
     real = find_file(path)
     if real:
         raw = _read(real)
         cfg["config_file"] = real
         for key, value in raw.items():
-            if key in ("ai", "db", "vector") and isinstance(value, dict):
+            if key in ("ai", "db", "vector", "filter", "uia", "dash",
+                       "hotkey", "notify") and isinstance(value, dict):
                 cfg[key].update(value)
             else:
                 cfg[key] = value
@@ -204,6 +248,57 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
         if section in cfg and "enabled" in cfg[section]:
             cfg[section]["enabled"] = _as_bool(cfg[section]["enabled"], False)
     return cfg
+
+
+def save(cfg: Dict[str, Any], path: Optional[str] = None) -> str:
+    """把整份配置写回 TOML（默认 ~/.config/chat2todo/config.toml）。
+
+    只写已知段落，`config_file` 这类运行期字段不落盘；None 直接跳过，
+    读回时自然回落到默认值。返回实际写入的路径。
+    """
+    target = path or _HOME_CONFIG
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+
+    sections = ("ai", "vector", "db", "filter", "uia", "dash", "hotkey", "notify")
+    lines = ["# Chat2Todo 配置（由设置面板写入，可手工编辑）"]
+
+    def emit(prefix: str, key: str, value: Any) -> str:
+        k = f"{prefix}{key}"
+        if isinstance(value, bool):
+            return f"{k} = {'true' if value else 'false'}"
+        if isinstance(value, (int, float)):
+            return f"{k} = {value}"
+        if isinstance(value, (list, tuple)):
+            inner = ", ".join(_quote(str(v)) for v in value)
+            return f"{k} = [{inner}]"
+        return f"{k} = {_quote(str(value))}"
+
+    for key, value in cfg.items():
+        if key in sections or value is None or key == "config_file":
+            continue
+        if isinstance(value, dict):
+            continue
+        lines.append(emit("", key, value))
+
+    for section in sections:
+        data = cfg.get(section)
+        if not isinstance(data, dict):
+            continue
+        lines.append("")
+        lines.append(f"[{section}]")
+        for key, value in data.items():
+            if value is None:
+                continue
+            lines.append(emit("", key, value))
+
+    with open(target, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return target
+
+
+def _quote(text: str) -> str:
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+    return f'"{escaped}"'
 
 
 _FALSE_WORDS = ("", "0", "false", "no", "off", "none", "null")

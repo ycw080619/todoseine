@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import logging
@@ -660,6 +661,338 @@ class UIASourceBackend:
                     chat_id=str(chat_id or ""),
                 ))
         return messages
+
+
+# ---------------------------------------------------------------------------
+# 不依赖 uiautomation 的 OCR 直采通道
+# ---------------------------------------------------------------------------
+
+_DPI_TRIED = False
+
+
+_CJK_PUNCT = "：，。、？！；．…—·（）【】《》〈〉「」『』“”‘’"
+
+
+def normalize_cjk_spaces(text: str) -> str:
+    """WinRT OCR 会在汉字之间插空格（「记 得 明 天」），这里压回去。
+
+    只删「汉字 ↔ 汉字」之间的空白，中英混排、数字与单位之间的空格保留
+    （「明天 10:30」不能变成「明天10:30」）；但全角标点两侧的空格一律删，
+    否则「19 ： 04」这种时间戳会一直带着空格入库。
+    """
+    import re
+
+    cjk = (
+        r"(?<=[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])\s+"
+        r"(?=[\u4e00-\u9fff])"
+    )
+    punct = r"[ \t]*([" + _CJK_PUNCT + r"])[ \t]*"
+    lines = []
+    for line in (text or "").splitlines():
+        line = re.sub(cjk, "", line)
+        line = re.sub(punct, r"\1", line)
+        line = re.sub(r"[ \t]{2,}", " ", line).strip()
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _ensure_dpi_aware() -> None:
+    """截图前确保进程是 PerMonitorV2，否则 150% 缩放下截出来的区域会错位。"""
+    global _DPI_TRIED
+    if _DPI_TRIED or os.name != "nt":
+        return
+    _DPI_TRIED = True
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:  # noqa: BLE001 - 已设置过 / 老系统没有 shcore
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def enum_qq_hwnds() -> List[Tuple[int, int]]:
+    """枚举 QQ 主窗口 [(hwnd, 面积)]，按面积倒序；不依赖 uiautomation。"""
+    if os.name != "nt":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    found: List[Tuple[int, int]] = []
+
+    def cb(hwnd, _):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        title = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, title, 256)
+        if title.value.strip() != "QQ":
+            return True
+        cls = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, cls, 256)
+        if cls.value != "Chrome_WidgetWin_1":
+            return True
+        rect = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        area = max(0, rect.right - rect.left) * max(0, rect.bottom - rect.top)
+        found.append((int(hwnd), area))
+        return True
+
+    user32.EnumWindows(proc(cb), 0)
+    found.sort(key=lambda x: x[1], reverse=True)
+    return found
+
+
+def _client_rect(hwnd: int) -> Optional[Tuple[int, int, int, int]]:
+    """窗口客户区在屏幕上的物理像素矩形 (left, top, right, bottom)。"""
+    if os.name != "nt" or not hwnd:
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    rect = wintypes.RECT()
+    if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+        return None
+    origin = wintypes.POINT(0, 0)
+    user32.ClientToScreen(hwnd, ctypes.byref(origin))
+    left, top = origin.x, origin.y
+    right, bottom = left + rect.right, top + rect.bottom
+    if right - left < 80 or bottom - top < 80:
+        return None            # 最小化 / 被折叠
+    return left, top, right, bottom
+
+
+def _dpi_scale(hwnd: int) -> float:
+    """窗口所在显示器的缩放比例（150% → 1.5）。"""
+    if os.name != "nt":
+        return 1.0
+    try:
+        import ctypes
+
+        dpi = int(ctypes.windll.user32.GetDpiForWindow(hwnd))
+        return max(1.0, dpi / 96.0) if dpi else 1.0
+    except Exception:  # noqa: BLE001 - Win10 早期版本没有这个 API
+        return 1.0
+
+
+class _BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [
+        ("biSize", ctypes.c_uint32),
+        ("biWidth", ctypes.c_int32),
+        ("biHeight", ctypes.c_int32),
+        ("biPlanes", ctypes.c_uint16),
+        ("biBitCount", ctypes.c_uint16),
+        ("biCompression", ctypes.c_uint32),
+        ("biSizeImage", ctypes.c_uint32),
+        ("biXPelsPerMeter", ctypes.c_int32),
+        ("biYPelsPerMeter", ctypes.c_int32),
+        ("biClrUsed", ctypes.c_uint32),
+        ("biClrImportant", ctypes.c_uint32),
+    ]
+
+
+def _print_window_image(hwnd: int):
+    """用 PrintWindow 直接渲染窗口自身，被别的窗口挡住也能拿到内容。
+
+    QQ NT（Chromium）支持 PW_RENDERFULLCONTENT(=2)；窗口最小化时返回全黑，
+    这种情况返回 None，交给前台截图兜底。
+    """
+    if os.name != "nt" or not hwnd:
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    from PIL import Image  # type: ignore[import-not-found]
+
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    width, height = rect.right - rect.left, rect.bottom - rect.top
+    if width < 120 or height < 120:
+        return None
+
+    hdc = user32.GetWindowDC(hwnd)
+    if not hdc:
+        return None
+    mem_dc = gdi32.CreateCompatibleDC(hdc)
+    bitmap = gdi32.CreateCompatibleBitmap(hdc, width, height)
+    old = gdi32.SelectObject(mem_dc, bitmap)
+    img = None
+    try:
+        # flag 2 = PW_RENDERFULLCONTENT，Chromium 窗口必须用这个才能出画面
+        if not user32.PrintWindow(hwnd, mem_dc, 2):
+            return None
+        header = _BITMAPINFOHEADER()
+        header.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
+        header.biWidth = width
+        header.biHeight = -height          # 负数 = 自上而下
+        header.biPlanes = 1
+        header.biBitCount = 32
+        header.biCompression = 0
+        buf = ctypes.create_string_buffer(width * height * 4)
+        copied = gdi32.GetDIBits(mem_dc, bitmap, 0, height, buf,
+                                 ctypes.byref(header), 0)
+        if not copied:
+            return None
+        img = Image.frombuffer("RGBA", (width, height), buf,
+                               "raw", "BGRA", 0, 1).convert("RGB")
+        # 最小化 / 全黑 → 视为失败
+        extrema = img.convert("L").getextrema()
+        if extrema[1] < 8:
+            return None
+    finally:
+        gdi32.SelectObject(mem_dc, old)
+        gdi32.DeleteObject(bitmap)
+        gdi32.DeleteDC(mem_dc)
+        user32.ReleaseDC(hwnd, hdc)
+    return img
+
+
+def _grab_chat_image(hwnd: int):
+    """截 QQ 客户区的聊天区域（去掉左侧会话列表和顶部工具条）。"""
+    rect = _client_rect(hwnd)
+    if rect is None:
+        return None
+    _ensure_dpi_aware()
+    from PIL import ImageGrab  # type: ignore[import-not-found]
+
+    left, top, right, bottom = rect
+    img = ImageGrab.grab(bbox=(left, top, right, bottom))
+    return _cut_sidebar(hwnd, img)
+
+
+def _detect_chat_left(hwnd: int, img) -> int:
+    """找出会话列表与聊天区的分界线。
+
+    QQ NT 把会话列表整块画成一种底色（比聊天区略亮），聊天区底色单一。
+    所以从最右一列往左扫，相邻列的「众数底色」不变就继续，变了就是分界。
+    允许连续几列被气泡/图片打断（容忍 4 列），避免提前刹在消息气泡里。
+    底色完全一致（自定义主题）时按比例退到 30%。
+    """
+    width, height = img.size
+    step_x = max(2, width // 400)
+    step_y = max(1, height // 120)
+    px = img.convert("RGB").load()
+    quant = 8               # 把颜色量化成 8 级，避免渐变/抗锯齿抖动
+
+    def mode_color(c: int) -> Tuple[int, int, int]:
+        cnt: Dict[Tuple[int, int, int], int] = {}
+        for r in range(0, height, step_y):
+            p = px[c, r]
+            key = (p[0] // quant, p[1] // quant, p[2] // quant)
+            cnt[key] = cnt.get(key, 0) + 1
+        return max(cnt.items(), key=lambda kv: kv[1])[0]
+
+    cols = list(range(0, width, step_x))
+    modes = [mode_color(c) for c in cols]
+    chat_bg = modes[-1]              # 最右一列必然落在聊天区
+
+    i, gap = len(cols) - 1, 0
+    while i > 0:
+        if modes[i - 1] == chat_bg:
+            gap, i = 0, i - 1
+        elif gap < 4:                # 气泡/头像打断几列不算分界
+            gap, i = gap + 1, i - 1
+        else:
+            break
+
+    divider = cols[i]
+    lo, hi = int(width * 0.08), int(width * 0.60)
+    if lo <= divider <= hi:
+        return divider
+    return min(width - 120, int(width * 0.30))
+
+
+def _cut_sidebar(hwnd: int, img):
+    """去掉左侧会话列表与顶部工具条，只留聊天区。"""
+    scale = _dpi_scale(hwnd)
+    x0 = _detect_chat_left(hwnd, img)
+    y0 = min(img.height - 120, int(50 * scale))
+    return img.crop((max(0, x0), max(0, y0), img.width, img.height))
+
+
+def _crop_chat_area(hwnd: int, img):
+    """从整窗图片里裁出聊天区：先扣掉标题栏/边框，再去掉左侧列表和顶部工具条。"""
+    if img is None:
+        return None
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    win_rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(win_rect))
+    client = wintypes.RECT()
+    user32.GetClientRect(hwnd, ctypes.byref(client))
+    origin = wintypes.POINT(0, 0)
+    user32.ClientToScreen(hwnd, ctypes.byref(origin))
+
+    left = origin.x - win_rect.left
+    top = origin.y - win_rect.top
+    right = left + client.right
+    bottom = top + client.bottom
+    img = img.crop((max(0, left), max(0, top),
+                    min(img.width, right), min(img.height, bottom)))
+    return _cut_sidebar(hwnd, img)
+
+
+def _capture_chat(hwnd: int):
+    """拿聊天区截图：优先 PrintWindow（后台也能抓），失败才前台抓屏。"""
+    img = _crop_chat_area(hwnd, _print_window_image(hwnd))
+    if img is not None:
+        return img
+    if _is_foreground(hwnd):
+        return _grab_chat_image(hwnd)
+    return None
+
+
+def _is_foreground(hwnd: int) -> bool:
+    """目标窗口是否在前台。被别的窗口挡住时截到的是别人的画面，不能认。"""
+    if os.name != "nt" or not hwnd:
+        return False
+    import ctypes
+
+    return int(ctypes.windll.user32.GetForegroundWindow()) == int(hwnd)
+
+
+def fetch_messages(hwnd: int = 0, chat_id: str = "",
+                   deduper_path: str = "") -> List[Message]:
+    """抓取 QQ 当前聊天窗口里「上次之后新出现」的消息。
+
+    只走截图 + Win11 OCR 这一条路：
+      - uiautomation 的窗口匹配是模糊的（会把「QQ 待办项目 - TRAE」当成 QQ），
+        而且需要额外安装，这里不再依赖它；
+      - 截图优先用 PrintWindow 渲染窗口自身，QQ 在后台也能读；
+        最小化（渲染成全黑）才回落到前台抓屏；
+      - 读到文字后会先把汉字之间的空格压掉，再做跨轮次去重。
+    """
+    if os.name != "nt":
+        return []
+    target = int(hwnd or 0)
+    if not target:
+        wins = enum_qq_hwnds()
+        if not wins:
+            return []
+        target = wins[0][0]
+
+    img = _capture_chat(target)
+    if img is None:
+        log.debug("QQ 窗口暂时抓不到画面（最小化或被挡住），跳过本轮")
+        return []
+    text = UIASourceBackend._try_win11_ocr(img)
+    if not text:
+        text = UIASourceBackend._try_tesseract(img)
+    if not text:
+        return []
+    text = normalize_cjk_spaces(text)
+    path = deduper_path or os.path.expanduser("~/.chat2todo/uia_seen.jsonl")
+    deduper = TripleDeduper.load(persist_path=path)
+    messages = UIASourceBackend._ocr_text_to_messages(text, deduper, chat_id)
+    deduper.persist()
+    return messages
 
 
 # ---------------------------------------------------------------------------

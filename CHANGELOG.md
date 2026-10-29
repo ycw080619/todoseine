@@ -1,3 +1,31 @@
+## [Unreleased] - 2026-10-29 · PySide6 版看板（Qt 里程碑）
+
+Tk 版看板（`dashboard/`）不动，新增可选的 `chat2todo.qt` 层：托盘常驻、玻璃质感看板、实时监听。
+
+### 新增
+
+- **实时监听管线**（`qt/monitor.py`）：QThread 定时抓 QQ 窗口 → 截屏 → Win11 OCR → 抽取 → 入库 → 通知看板。失败指数退避（最长 60s），支持暂停/恢复/立即同步，配置改了热生效（不重启线程）
+- **只读截图通道重写**（`sources/uia.py`）：放弃模糊匹配的 uiautomation，改用 `EnumWindows` 精确匹配（标题=QQ 且类名=Chrome_WidgetWin_1）+ `PrintWindow(PW_RENDERFULLCONTENT)`，QQ 在后台也能抓；全黑判定失败后回落前台抓屏
+- **裁剪自适应**：会话列表宽度可拖动，`_detect_chat_left()` 按「整列众数底色」从右往左扫分界（容忍 4 列被气泡打断），不再把会话列表的时间戳 OCR 进库
+- **托盘**（`qt/tray_icon.py`）：QPainter 现画多尺寸图标，菜单含显示主窗口/立即同步/暂停监听/开机自启/打开数据目录/退出；窗口可见时不弹气泡，交给看板 Toast
+- **通知三通道**：新待办托盘气泡、看板 Toast（可点「查看」跳转）、到期提醒（`due_remindable` + 60s 扫描，同一批不重复提醒）
+- **看板交互**（`qt/main_window.py` / `dashboard.py`）：位置记忆（600ms 防抖）、贴边吸附、拖左右边改宽、迷你胶囊、锁定、右键（判定理由 / 此类不再提醒 / 定位下载文件 / 移入回收站）、撤销
+- **截图建待办**（`qt/snap.py`）：`Ctrl+Shift+S` 全屏遮罩拖框 → OCR → 可编辑确认框 → 入库
+- **五页看板**：待办 / 回收站（还原·彻底删除·清空）/ 统计（总览·近 7 天·判定校准）/ 设置（基础·监听·AI·外观四页签，写回 TOML）/ 关于
+- **设置落盘**：`config.save()` 手写 TOML（不引入 tomli-w，守住核心零依赖），新增 `[uia]` `[dash]` `[hotkey]` `[notify]` 四段默认值
+- **打包**：`chat2todo_qt.spec` + `tools/qt_launcher.py` 入口 + DLL/插件白名单，产物 103.4 MB → 51.4 MB，`console=False` + 图标 + 版本资源
+
+### 修复
+
+- OCR 汉字间空格：`normalize_cjk_spaces()` 追加「全角标点两侧空格一律删」，「19 ： 04」不再带着空格入库（「明天 10:30」仍保留空格）
+- 入库消息 `session` 为空的问题：`Monitor._run_once` 补传 `session`
+- PyInstaller 以 `__main__` 执行 `qt/main.py` 导致相对导入失败、双击即退：入口改为 `tools/qt_launcher.py`
+
+### 测试
+
+- 新增 `tests/test_qt_smoke.py` 13 条：热键解析、图标生成、批抽取、设置回填、离屏渲染五页、回收站往返、截图入库、裁剪兜底
+- `pytest` 296 passed / 1 skipped / 11 subtests；`ruff` 全绿
+
 ## [Unreleased] - 2026-10-29
 
 看板「DeskBox 式系统材质」上线（默认关，不影响现有行为）。

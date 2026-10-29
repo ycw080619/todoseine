@@ -29,27 +29,40 @@ python dist/c2t.pyz --help
 
 > 装 Python，把 `c2t.pyz` 放到任意目录，运行 `python c2t.pyz import 聊天记录.txt`。
 
-## 方式三：独立 exe（可选，需额外工具）
-
-如果目标用户连 Python 都没有，可以用 PyInstaller 打包成 exe：
+## 方式三：Qt 看板 exe（当前主推）
 
 ```bash
-python -m pip install pyinstaller
-pyinstaller --onefile --name c2t -p src src/chat2todo/__main__.py
+python -m pip install -e ".[qt]" pyinstaller
+python -m PyInstaller --noconfirm --clean chat2todo_qt.spec
 ```
 
-注意三点，写在这里是为了不误伤“零依赖”的承诺：
+产物是 `dist/chat2todo_qt.exe`（当前约 51 MB，Windows 11 x64）：
 
-1. PyInstaller 是**构建期**工具，不进运行时依赖；
-2. 产物体积约 8–12 MB（onedir 更小，启动更快）；
-3. 未签名的 exe 会被部分杀毒软件误报，这是 Windows 的普遍现象，与本项目行为无关。
+- 双击即用，不需要 Python；启动后常驻托盘，看板可随时唤出；
+- 入口是 `tools/qt_launcher.py`。不能把 `qt/main.py` 直接当入口——PyInstaller
+  会以 `__main__` 执行它，包内相对导入会失败；
+- `console=False`：不弹黑框，日志写 `%USERPROFILE%\.chat2todo\app.log`；
+- 图标 `assets/chat2todo.ico` 与版本资源 `tools/version_info.txt`；
+- spec 里的 Qt DLL 是**白名单**（Core / Gui / Widgets / Network / Svg / OpenGL），
+  PySide6 自带的 Quick、Qml、3D、Designer 一共 80 MB+，不白名单化会直接翻倍。
+
+两个容易踩的点：
+
+1. Qt6 的 DLL 直接放在 `PySide6` 根目录，spec 必须把它们收进去；
+2. onefile 解压到 `_MEIPASS` 后要 `os.add_dll_directory`，
+   这一步在 `tools/runtime_hook_qt.py` 里做。
+
+未签名的 exe 会被部分杀毒软件误报，这是 Windows 的普遍现象，与本项目行为无关。
 
 ## 桌面看板
 
-`c2t dash` 使用 Python 标准库的 tkinter。绝大多数官方 Python 安装包自带它，
-但少数精简发行版（如某些 Linux 的 `python3-minimal`）需要单独安
-`python3-tk`。`c2t doctor` 不检查这一项，因为看板是可选能力，
-缺失时只影响 `dash` 命令，其余功能不受影响。
+看板是 PySide6 写的（`src/chat2todo/qt/`），只支持 Windows 11：
+
+- 无边框 + DWM 圆角 / Mica，位置尺寸自动记忆，拖边改宽、贴边吸附；
+- 托盘常驻，托盘菜单可暂停监听、立即同步、开关自启；
+- 全局热键：`Ctrl+Alt+D` 唤出/收起看板，`Ctrl+Shift+S` 框选截图建待办；
+- 旧的 tkinter 看板（`dashboard/app.py`）保留在仓库里做功能对照，
+  `c2t dash` 仍可用，但它不再接收实时监听的数据。
 
 ## 版本与数据迁移
 

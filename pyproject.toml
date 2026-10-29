@@ -26,6 +26,11 @@ dev = ["pytest>=7", "ruff>=0.17,<0.18"]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
 db = ["sqlcipher3>=0.6.2"]
 snap = ["winsdk>=1.0.0b10"]   # 截图待办的快速 OCR（不装则回退 PowerShell，慢 2~3 秒）
+# Qt 桌面看板（Windows 11）：PySide6 + 截图用的 Pillow + Win11 系统 OCR 绑定
+qt = ["PySide6>=6.6", "pillow>=10", "winrt-runtime>=2.0", "winrt-Windows.Media.Ocr>=2.0",
+      "winrt-Windows.Graphics.Imaging>=2.0", "winrt-Windows.Storage.Streams>=2.0",
+      "winrt-Windows.Foundation>=2.0", "winrt-Windows.Foundation.Collections>=2.0",
+      "winrt-Windows.Globalization>=2.0"]
 
 [project.scripts]
 c2t = "chat2todo.cli:main"
