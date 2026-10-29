@@ -1555,6 +1555,16 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     def tick() -> None:
         global W
 
+        try:
+            _tick_inner()
+        except Exception:  # noqa: BLE001 - tick 循环不能停，任何异常吞掉后继续
+            import traceback
+            traceback.print_exc()
+        finally:
+            root.after(1000, tick)   # 无论如何都续上，防一次性异常断循环
+
+    def _tick_inner() -> None:
+        global W
         now = time.localtime()
         week = "一二三四五六日"[now.tm_wday]
 
@@ -1620,7 +1630,6 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 focused = None
             if focused not in (entry,):
                 _set_layer(root, False)
-        root.after(1000, tick)
 
     def render() -> None:
         if state["busy"]:
