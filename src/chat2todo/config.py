@@ -65,7 +65,8 @@ DASH_DEFAULTS: Dict[str, Any] = {
     "x": None,
     "y": None,
     "radius": 14,
-    "border": True,
+    "border": 1,            # 窗口边框宽度（像素，0=无边框，范围 0~6）
+    "border_color": "",     # 空字符串=用主题边框色，否则填 #RRGGBB
     "clock": True,
     "anim": True,
     "material": True,
@@ -75,6 +76,7 @@ DASH_DEFAULTS: Dict[str, Any] = {
     "no_activate": True,    # WS_EX_NOACTIVATE：点击/拖拽/勾选都不抢前台焦点
     "auto_hide": True,      # 贴左/右边缘时鼠标离开自动收起，只留一条边
     "show_on_start": True,  # 启动时是否直接显示看板（首次引导里可关掉）
+    "exclude_from_capture": False,  # 截屏/录屏时隐藏窗口（隐私保护）
 }
 
 # 全局热键

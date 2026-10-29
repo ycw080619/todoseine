@@ -65,6 +65,13 @@ class RoundedCard(QWidget):
             return theme.mix(self.bg, self.hover_color, self._state)
         return theme.mix(self.hover_color, self.pressed_color, self._state - 1.0)
 
+    def border_pen_color(self) -> QColor:
+        """hover 时边框微微发亮，Fluent 风格反馈。"""
+        # state 0~1 从默认边框过渡到强调色的低饱和版
+        t = min(1.0, self._state)
+        bright = theme.mix(self.border_color, theme.ACCENT, 0.35 * t)
+        return bright
+
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -72,7 +79,7 @@ class RoundedCard(QWidget):
         path = QPainterPath()
         path.addRoundedRect(rect, self.radius, self.radius)
         p.fillPath(path, self.card_color())
-        p.setPen(QPen(self.border_color, 1))
+        p.setPen(QPen(self.border_pen_color(), 1))
         p.drawPath(path)
         self.paint_extra(p)
         p.end()

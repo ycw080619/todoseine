@@ -18,7 +18,8 @@ import subprocess
 import time
 from typing import List, Optional
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import (QEasingCurve, QEvent, QPoint, QPropertyAnimation,
+                            QRectF, Qt, QThread, QTimer, Signal)
 from PySide6.QtGui import QAction, QColor, QFont, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QMenu, QMessageBox, QPushButton, QScrollArea,
@@ -44,6 +45,40 @@ TABS = [("todo", "全部"), ("star", "重点"), ("today", "今日"),
         ("maybe", "待定"), ("done", "完成")]
 
 _NO_DB_HINT = "还没有数据：先在「设置」里检查数据库路径，或运行一次同步"
+
+
+class SmoothScrollArea(QScrollArea):
+    """滚轮滚动用 OutCubic 缓动平滑到目标值，连续滚动打断上一段。
+
+    `anim_enabled=False` 时退化为默认瞬时滚动，保证性能敏感场景不受影响。
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._anim = QPropertyAnimation(
+            self.verticalScrollBar(), b"value", self)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.setDuration(180)
+        self._anim.finished.connect(self._on_anim_finished)
+        self._target = 0
+        self.anim_enabled = True
+
+    def _on_anim_finished(self) -> None:
+        self._target = self.verticalScrollBar().value()
+
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        if not self.anim_enabled:
+            super().wheelEvent(event)
+            return
+        bar = self.verticalScrollBar()
+        # 累计到目标值：动画进行中也续上，避免连续滚动丢步
+        delta = event.angleDelta().y()
+        self._target -= int(delta * bar.singleStep() / 120)
+        self._target = max(bar.minimum(), min(bar.maximum(), self._target))
+        self._anim.stop()
+        self._anim.setStartValue(bar.value())
+        self._anim.setEndValue(self._target)
+        self._anim.start()
 
 
 class _LocateWorker(QThread):
@@ -284,6 +319,7 @@ class Dashboard(QWidget):
         self._locate_worker: Optional[_LocateWorker] = None
 
         self._build()
+        self._scroll.anim_enabled = bool(dash.get("anim", True))
         self._start_timers()
         self.reload(force=True)
 
@@ -359,7 +395,7 @@ class Dashboard(QWidget):
         root.addWidget(self._tabs)
 
         # ---- 列表 ----
-        self._scroll = QScrollArea(self)
+        self._scroll = SmoothScrollArea(self)
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -453,6 +489,7 @@ class Dashboard(QWidget):
             pass
         self._clock_timer.blockSignals(not bool(dash.get("clock", True)))
         self._clock.setVisible(bool(dash.get("clock", True)))
+        self._scroll.anim_enabled = bool(dash.get("anim", True))
         self.reload(force=True)
 
     def notify_new_todos(self, items: List[TodoItem]) -> None:

@@ -152,6 +152,47 @@ def set_blur_behind(hwnd: int) -> bool:
     return bool(user32.SetWindowCompositionAttribute(hwnd, ctypes.byref(data)))
 
 
+# ---------- 截屏排除（隐私） ----------
+
+# WDA_NONE = 0, WDA_MONITOR = 1, WDA_EXCLUDEFROMCAPTURE = 0x11
+_WDA_EXCLUDEFROMCAPTURE = 0x00000011
+
+
+def set_exclude_from_capture(hwnd: int, exclude: bool = True) -> bool:
+    """让窗口不出现在截屏 / 录屏 / 远程桌面里（Win10 2004+）。
+
+    看板含敏感待办时开启，截图工具只能看到一块黑。
+    旧系统调用失败返回 False，不影响正常使用。
+    """
+    user32 = _user32()
+    if not user32 or not hwnd:
+        return False
+    affinity = _WDA_EXCLUDEFROMCAPTURE if exclude else 0
+    return bool(user32.SetWindowDisplayAffinity(hwnd, affinity))
+
+
+# ---------- DWM 阴影 ----------
+
+# DWMWA_NCRENDERING_POLICY = 2, DWMNCRP_ENABLED = 2
+_DWMNCRP_ENABLED = 2
+
+
+def enable_shadow(hwnd: int, enable: bool = True) -> bool:
+    """启用 / 禁用 DWM 非客户区渲染（无边框窗口的系统阴影）。
+
+    无边框窗口默认没有阴影，开启后系统会在窗口四周画投影。
+    配合 WM_NCCALCSIZE 保留 1px 非客户区才能看到效果。
+    """
+    dll = _dwmapi()
+    if not dll or not hwnd:
+        return False
+    val = ctypes.c_int(_DWMNCRP_ENABLED if enable else 0)
+    r = dll.DwmSetWindowAttribute(
+        hwnd, _DWMWA_NCRENDERING, ctypes.byref(val), ctypes.sizeof(val)
+    )
+    return r == 0
+
+
 # ---------- 窗口扩展样式 ----------
 
 _GWL_EXSTYLE = -20

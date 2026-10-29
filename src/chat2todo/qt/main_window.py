@@ -21,7 +21,7 @@ from typing import Optional
 
 from PySide6.QtCore import (QEasingCurve, QEvent, QPoint, QPropertyAnimation,
                             QRect, QRectF, Qt, QTimer, Signal)
-from PySide6.QtGui import QColor, QGuiApplication, QMouseEvent, QPainter
+from PySide6.QtGui import QColor, QGuiApplication, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -39,6 +39,10 @@ from .widgets import theme
 # ---------- Win32 常量 ----------
 
 _WM_NCCALCSIZE = 0x0083
+_WM_NCHITTEST = 0x0084
+_HTMAXBUTTON = 9
+_HTCLIENT = 1
+_HTNOWHERE = 0
 
 # ---------- 尺寸阈值 ----------
 
@@ -110,6 +114,11 @@ class FramelessMainWindow(QMainWindow):
         self._slide_anim = QPropertyAnimation(self, b"pos", self)
         self._slide_anim.setDuration(180)
         self._slide_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        # 迷你 ↔ 展开时尺寸同步过渡（和位置动画并行）
+        self._size_anim = QPropertyAnimation(self, b"size", self)
+        self._size_anim.setDuration(220)
+        self._size_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._size_anim.finished.connect(self._on_size_anim_finished)
 
         # ---------- 中心 Widget ----------
         central = QWidget(self)
@@ -219,6 +228,8 @@ class FramelessMainWindow(QMainWindow):
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self._style_window_button(btn)
             btn.clicked.connect(slot)
+            if text == "□":
+                self._max_btn = btn
             layout.addWidget(btn)
 
         self._sync_lock_button()
@@ -296,6 +307,7 @@ class FramelessMainWindow(QMainWindow):
         self._sync_lock_button()
         self._apply_title_visibility()
         self._apply_no_activate()
+        self._apply_exclude_capture()
         self.update()
 
     # ------------------------------------------------------------------
@@ -309,9 +321,22 @@ class FramelessMainWindow(QMainWindow):
         width = max(_MIN_WIDTH, min(_MAX_WIDTH, width))
 
         x, y = dash.get("x"), dash.get("y")
+        screen_idx = dash.get("screen")
+        screens = QGuiApplication.screens()
+
         rect = QRect(int(x), int(y), width, height) if x is not None and y is not None \
             else QRect(0, 0, width, height)
-        if x is None or not self._intersects_any_screen(rect):
+
+        # 优先按记忆的屏索引归位：副屏曾断开又重连时，把窗口搬回那块屏
+        placed = False
+        if (isinstance(screen_idx, int) and 0 <= screen_idx < len(screens)
+                and not self._intersects_any_screen(rect)):
+            area = screens[screen_idx].availableGeometry()
+            rect = QRect(area.right() - width - 24, area.top() + 60,
+                         width, min(height, area.height() - 80))
+            placed = True
+
+        if not placed and (x is None or not self._intersects_any_screen(rect)):
             screen = QGuiApplication.primaryScreen()
             area = screen.availableGeometry() if screen else QRect(0, 0, 1280, 800)
             rect = QRect(area.right() - width - 24, area.top() + 60, width,
@@ -334,8 +359,13 @@ class FramelessMainWindow(QMainWindow):
             return
         dash = dict(cfg.get("dash") or {})
         geo = self.geometry()
+        # 记下窗口当前所在的屏索引，下次启动可归位到同一块屏
+        screens = QGuiApplication.screens()
+        cur = QGuiApplication.screenAt(geo.center())
+        screen_idx = screens.index(cur) if cur in screens else -1
         dash.update({"x": geo.x(), "y": geo.y(),
-                     "width": geo.width(), "height": geo.height()})
+                     "width": geo.width(), "height": geo.height(),
+                     "screen": screen_idx})
         cfg["dash"] = dash
         try:
             c2t_config.save(cfg, cfg.get("config_file") or None)
@@ -381,11 +411,18 @@ class FramelessMainWindow(QMainWindow):
         return self._mini
 
     def toggle_mini(self) -> None:
+        anim = bool(self._dash_cfg.get("anim", True))
         if self._mini:
             self._mini = False
-            self.setMinimumSize(_MIN_WIDTH, _MIN_HEIGHT)
             if self._mini_saved is not None:
-                self.setGeometry(self._mini_saved)
+                target = self._mini_saved
+                if anim:
+                    # 展开动画期间临时放开最小尺寸，避免起始值被最小宽度钳住跳变
+                    self.setMinimumSize(0, 0)
+                    self._animate_to_geometry(target)
+                else:
+                    self.setMinimumSize(_MIN_WIDTH, _MIN_HEIGHT)
+                    self.setGeometry(target)
             self._apply_title_visibility()
             self._title_label.setText("Chat2Todo")
             self._nav_box.setVisible(True)
@@ -399,14 +436,36 @@ class FramelessMainWindow(QMainWindow):
             self._mini = True
             self.setMinimumSize(_MINI_W, _MINI_H)
             self._mini_panel.setVisible(True)
-            self.resize(_MINI_W, _MINI_H)
             self._title_label.setText("Chat2Todo · 胶囊")
             self._nav_box.setVisible(False)
             self._lock_btn.setVisible(False)
             self._mini_btn.setText("⇱")
             self._mini_btn.setToolTip("展开看板")
             self._stack.setCurrentIndex(5)
+            target = QRect(self.pos().x(), self.pos().y(), _MINI_W, _MINI_H)
+            if anim:
+                self._animate_to_geometry(target)
+            else:
+                self.setGeometry(target)
         self._geo_timer.start()
+
+    def _on_size_anim_finished(self) -> None:
+        """迷你 ↔ 展开动画结束：按当前状态恢复最小尺寸约束。"""
+        if self._mini:
+            self.setMinimumSize(_MINI_W, _MINI_H)
+        else:
+            self.setMinimumSize(_MIN_WIDTH, _MIN_HEIGHT)
+
+    def _animate_to_geometry(self, target: QRect) -> None:
+        """位置 + 尺寸并行动画（anim 关闭时退化为直接 set）。"""
+        self._slide_anim.stop()
+        self._size_anim.stop()
+        self._slide_anim.setStartValue(self.pos())
+        self._slide_anim.setEndValue(target.topLeft())
+        self._size_anim.setStartValue(self.size())
+        self._size_anim.setEndValue(target.size())
+        self._slide_anim.start()
+        self._size_anim.start()
 
     def set_mini_summary(self, text: str) -> None:
         """监听状态回写胶囊文字（由 main.py 调用）。"""
@@ -453,8 +512,28 @@ class FramelessMainWindow(QMainWindow):
         alpha = 150 if self._material_applied else int(255 * opacity)
         painter.setBrush(QColor(33, 32, 36, alpha))
         radius = float(self._dash_cfg.get("radius") or 12)
+        # 边框宽度/颜色可在设置面板调整；宽度为 0 时不画
+        try:
+            border_w = int(self._dash_cfg.get("border") or 1)
+        except (TypeError, ValueError):
+            border_w = 1
+        border_w = max(0, min(6, border_w))
+        border_color = str(self._dash_cfg.get("border_color") or "").strip()
+        if not border_color:
+            border_color = theme.BORDER.name()
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         painter.drawRoundedRect(rect, radius, radius)
+        if border_w > 0:
+            pen = QPen(QColor(border_color))
+            pen.setWidth(border_w)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            # 边框画在圆角矩形的内沿，避免被窗口边缘裁掉一半
+            inner = rect.adjusted(border_w / 2.0, border_w / 2.0,
+                                  -border_w / 2.0, -border_w / 2.0)
+            painter.drawRoundedRect(inner, max(0.0, radius - border_w / 2.0),
+                                    max(0.0, radius - border_w / 2.0))
         painter.end()
 
     # ---------- 不抢焦点 ----------
@@ -535,6 +614,9 @@ class FramelessMainWindow(QMainWindow):
         self._hidden_edge = ""
 
     def _slide_to(self, target: QPoint) -> None:
+        if not bool(self._dash_cfg.get("anim", True)):
+            self.move(target)
+            return
         self._slide_anim.stop()
         self._slide_anim.setStartValue(self.pos())
         self._slide_anim.setEndValue(target)
@@ -549,6 +631,7 @@ class FramelessMainWindow(QMainWindow):
             self._material_tried = True
             self.update()
         self._apply_no_activate()
+        self._apply_exclude_capture()
 
     def _apply_material(self) -> None:
         if not self._dash_cfg.get("material", True):
@@ -559,10 +642,20 @@ class FramelessMainWindow(QMainWindow):
             return
         dwm.set_round_corners(hwnd)
         dwm.set_immersive_dark(hwnd, True)
+        # 无边框窗口默认没有系统阴影，开启 NC 渲染让 DWM 画投影
+        dwm.enable_shadow(hwnd, True)
         ok = dwm.set_system_backdrop(hwnd, kind=3)
         if not ok:
             ok = dwm.set_acrylic(hwnd, tint_bgr=0x80292929)
         self._material_applied = ok
+
+    def _apply_exclude_capture(self) -> None:
+        """按配置决定是否把窗口从截屏 / 录屏里排除（隐私保护）。"""
+        hwnd = dwm.hwnd_of(self)
+        if not hwnd:
+            return
+        exclude = bool(self._dash_cfg.get("exclude_from_capture", False))
+        dwm.set_exclude_from_capture(hwnd, exclude)
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -608,7 +701,43 @@ class FramelessMainWindow(QMainWindow):
                     pass
                 return True, 0
 
+            if msg.message == _WM_NCHITTEST:
+                # 让最大化按钮区域返回 HTMAXBUTTON，触发 Win11 吸附布局菜单
+                result = self._hit_test_max_button(msg.lParam)
+                if result is not None:
+                    return True, result
+
         return super().nativeEvent(event_type, message)
+
+    def _hit_test_max_button(self, lparam) -> Optional[int]:
+        """判断鼠标是否在最大化按钮上，是则返回 HTMAXBUTTON。
+
+        lParam 低字是屏幕 x，高字是屏幕 y。需要转成客户区坐标再和
+        最大化按钮的几何比对。命中返回 _HTMAXBUTTON，未命中返回 None
+        （交给默认处理）。
+        """
+        if not hasattr(self, "_max_btn") or self._max_btn is None:
+            return None
+        x = lparam & 0xFFFF
+        y = (lparam >> 16) & 0xFFFF
+        if x >= 0x8000:
+            x -= 0x10000
+        if y >= 0x8000:
+            y -= 0x10000
+        pos = self.mapFromGlobal(QPoint(x, y))
+        # 最大化按钮在标题栏里，先判断是否落在标题栏高度内
+        if pos.y() < 0 or pos.y() > _TITLE_BAR_H:
+            return None
+        btn = self._max_btn
+        # btn.geometry() 是相对于父（标题栏）的坐标，标题栏在窗口顶部 y=0
+        btn_rect = btn.geometry()
+        # 标题栏本身可能有 margins，用 btn 的 mapTo 转换到窗口坐标
+        top_left = btn.mapTo(self, QPoint(0, 0))
+        btn_rect_in_window = QRect(top_left.x(), top_left.y(),
+                                   btn_rect.width(), btn_rect.height())
+        if btn_rect_in_window.contains(pos):
+            return _HTMAXBUTTON
+        return None
 
     # ------------------------------------------------------------------
     # 拖拽移动 / 拖边改宽

@@ -872,6 +872,11 @@ class SettingsPanel(QWidget):
         view_form.addRow("默认显示条数:", self._top_n)
         self._radius = _spin(int(dash.get("radius") or 14), 0, 32, " px")
         view_form.addRow("窗口圆角:", self._radius)
+        self._border = _spin(int(dash.get("border") or 1), 0, 6, " px")
+        view_form.addRow("边框宽度:", self._border)
+        self._border_color = _line(str(dash.get("border_color") or ""),
+                                   "#RRGGBB，留空用主题色")
+        view_form.addRow("边框颜色:", self._border_color)
         self._clock_cb = _check(dash.get("clock", True))
         view_form.addRow("显示时钟:", self._clock_cb)
         self._anim_cb = _check(dash.get("anim", True))
@@ -891,7 +896,11 @@ class SettingsPanel(QWidget):
         self._auto_hide_cb = _check(dash.get("auto_hide", True),
                                    "贴左 / 右边缘时，鼠标离开自动收起只留一条边")
         view_form.addRow("贴边自动收起:", self._auto_hide_cb)
-        view_form.addRow("", _hint("位置与尺寸会自动记住；改圆角/材质后重开窗口生效"))
+        self._exclude_capture_cb = _check(
+            dash.get("exclude_from_capture", False),
+            "截屏 / 录屏 / 远程桌面时隐藏本窗口（含敏感待办时建议开启）")
+        view_form.addRow("截屏隐藏:", self._exclude_capture_cb)
+        view_form.addRow("", _hint("位置与尺寸会自动记住；圆角 / 边框 / 不透明度保存后即时生效，材质需重开窗口"))
         lay.addWidget(view_box)
 
         hk = self._cfg.get("hotkey") or {}
@@ -1119,6 +1128,8 @@ class SettingsPanel(QWidget):
         dash.update({
             "top_n": self._top_n.value(),
             "radius": self._radius.value(),
+            "border": self._border.value(),
+            "border_color": self._border_color.text().strip(),
             "clock": self._clock_cb.isChecked(),
             "anim": self._anim_cb.isChecked(),
             "material": self._material_cb.isChecked(),
@@ -1127,6 +1138,7 @@ class SettingsPanel(QWidget):
             "opacity": self._opacity.value() / 100.0,
             "no_activate": self._no_activate_cb.isChecked(),
             "auto_hide": self._auto_hide_cb.isChecked(),
+            "exclude_from_capture": self._exclude_capture_cb.isChecked(),
         })
         cfg["dash"] = dash
         cfg["hotkey"] = {
@@ -1250,6 +1262,8 @@ class SettingsPanel(QWidget):
 
         self._top_n.setValue(int(dash.get("top_n") or 5))
         self._radius.setValue(int(dash.get("radius") or 14))
+        self._border.setValue(int(dash.get("border") or 1))
+        self._border_color.setText(str(dash.get("border_color") or ""))
         self._clock_cb.setChecked(bool(dash.get("clock", True)))
         self._anim_cb.setChecked(bool(dash.get("anim", True)))
         self._material_cb.setChecked(bool(dash.get("material", True)))
@@ -1258,6 +1272,8 @@ class SettingsPanel(QWidget):
         self._opacity.setValue(int(round(float(dash.get("opacity") or 0.94) * 100)))
         self._no_activate_cb.setChecked(bool(dash.get("no_activate", True)))
         self._auto_hide_cb.setChecked(bool(dash.get("auto_hide", True)))
+        self._exclude_capture_cb.setChecked(
+            bool(dash.get("exclude_from_capture", False)))
         self._hk_enabled.setChecked(bool(hk.get("enabled", True)))
         self._hk_show.setText(str(hk.get("show") or "ctrl+alt+d"))
         self._hk_snap.setText(str(hk.get("snap") or "ctrl+shift+s"))
