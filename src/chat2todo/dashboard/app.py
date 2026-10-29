@@ -206,9 +206,20 @@ def _deskbox_button(parent, x1: int, y1: int, x2: int, y2: int,
                     text: str, command, *, tag_prefix: str = "btn",
                     fill: str = DIALOG_BTN, hover_fill: str = CARD_HOVER,
                     text_fill: str = TEXT, accent: bool = False) -> None:
-    """DeskBox 风格 Canvas 胶囊按钮。tag_prefix 用于区分同一 Canvas 上多个按钮。"""
+    """DeskBox 风格 Canvas 胶囊按钮（PyQt-Fluent-Widgets 三态视觉）。
+
+    非强调按钮 normal → hover → pressed 逐级加深（SubtleFill 三档）
+    强调按钮 normal=ACCENT 实色底，hover/pressed 逐步向 PANEL 插值加深
+    """
     if accent:
-        fill, hover_fill, text_fill = ACCENT, ACCENT, ACCENT_TEXT
+        # PrimaryPushButton 三态：实色 ACCENT → 向 PANEL 插值 15% → 插值 30%
+        fill = ACCENT
+        hover_fill = _interp_color(ACCENT, PANEL, 0.15)
+        pressed_fill = _interp_color(ACCENT, PANEL, 0.30)
+        text_fill = ACCENT_TEXT
+    else:
+        # TransparentPushButton 三态：DIALOG_BTN → CARD_HOVER → CARD_PRESSED
+        pressed_fill = CARD_PRESSED
     bg_tag = f"{tag_prefix}_bg"
     txt_tag = f"{tag_prefix}_txt"
     _rounded(parent, x1, y1, x2, y2, 10, fill=fill, outline="",
@@ -216,18 +227,24 @@ def _deskbox_button(parent, x1: int, y1: int, x2: int, y2: int,
     cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
     parent.create_text(cx, cy, text=text, fill=text_fill,
                        font=("Microsoft YaHei UI", 9), tags=(tag_prefix, txt_tag))
+
     def _enter(_e):
         parent.itemconfig(bg_tag, fill=hover_fill)
     def _leave(_e):
         parent.itemconfig(bg_tag, fill=fill)
-    def _click(_e):
+    def _press(_e):
+        parent.itemconfig(bg_tag, fill=pressed_fill)
+    def _release(_e):
+        parent.itemconfig(bg_tag, fill=hover_fill)   # 按住松开到 hover 色
         command()
     parent.tag_bind(bg_tag, "<Enter>", _enter)
     parent.tag_bind(bg_tag, "<Leave>", _leave)
-    parent.tag_bind(bg_tag, "<Button-1>", _click)
+    parent.tag_bind(bg_tag, "<ButtonPress-1>", _press)
+    parent.tag_bind(bg_tag, "<ButtonRelease-1>", _release)
     parent.tag_bind(txt_tag, "<Enter>", _enter)
     parent.tag_bind(txt_tag, "<Leave>", _leave)
-    parent.tag_bind(txt_tag, "<Button-1>", _click)
+    parent.tag_bind(txt_tag, "<ButtonPress-1>", _press)
+    parent.tag_bind(txt_tag, "<ButtonRelease-1>", _release)
 
 
 def _win_alpha(root, value: float) -> None:
@@ -1439,7 +1456,6 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             return
         state["tab"] = key
         state["offset"] = 0
-        state["_old_tab_cx"] = state.get("_tab_cx")   # 传递给 render 后滑动动画
         render()
 
     # ---- 尺寸与列表 ----
@@ -1744,12 +1760,33 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     state["hover_gen_" + t] = gen
                     _ease_color(t, s, d, gen)
                     _play_scale(t, enter=True, gen=gen)
+                    # WinUI ListView 风格 Accent 指示条：卡片左边 3px ACCENT 竖条
+                    try:
+                        items = cv.find_withtag(t)
+                        poly = next((iid for iid in items
+                                     if cv.type(iid) == "polygon"), None)
+                        if poly is not None:
+                            coords = cv.coords(poly)
+                            left_x = min(coords[0::2])
+                            top_y = min(coords[1::2])
+                            bot_y = max(coords[1::2])
+                            cv.create_line(left_x + 2, top_y + 8,
+                                           left_x + 2, bot_y - 8,
+                                           fill=ACCENT, width=3, capstyle="round",
+                                           tags=("body", t, t + "_bar"))
+                    except Exception:
+                        pass
 
                 def _on_leave(_e, t=tag, s=hover_fill, d=base_fill):
                     gen = state.setdefault("hover_gen_" + t, 0) + 1
                     state["hover_gen_" + t] = gen
                     _ease_color(t, s, d, gen)
                     _play_scale(t, enter=False, gen=gen)
+                    # 去掉 Accent 指示条
+                    try:
+                        cv.delete(t + "_bar")
+                    except Exception:
+                        pass
 
                 # ⚠️ tag_bind 是追加语义，render 可能被调用多次——先 unbind 清旧绑定，否则事件触发 N 次
                 cv.tag_unbind(tag, "<Enter>")
@@ -1811,49 +1848,10 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             if sel_tid is not None:
                 _animate_card_spring(f"row-{sel_tid}")
 
-            # Tab 下划线滑动：记住上一帧 tab cx，render 后从旧位置缓动到新位置
-            def _animate_tab_slide(old_cx):
-                """新下划线在新位置已画好，给它加 slide 动画：先挪到 old_cx 再缓动过来。"""
-                # 找新 tab 下划线：刚画的那条 line，带 tab{N} tag，且是当前 active
-                active_idx = None
-                for idx, (key, _) in enumerate(TABS):
-                    if key == state["tab"]:
-                        active_idx = idx
-                        break
-                if active_idx is None:
-                    return
-                line_tag = f"tab{active_idx}"
-                line_ids = cv.find_withtag(line_tag)
-                line_id = next((iid for iid in line_ids if cv.type(iid) == "line"), None)
-                if line_id is None:
-                    return
-                cur = cv.coords(line_id)     # [cx-11, 126, cx+11, 126]
-                cur_cx = (cur[0] + cur[2]) / 2
-                if abs(cur_cx - old_cx) < 1:
-                    return  # 没动过
-                # 先把下划线挪到 old_cx
-                offset = old_cx - cur_cx
-                cv.coords(line_id, cur[0] + offset, cur[1], cur[2] + offset, cur[3])
-                # 8 帧 ease-out cubic 滑回 cur
-                frames = 8
-                delay = 10
-                def _slide(fidx):
-                    if fidx > frames:
-                        return
-                    t = _ease_out_cubic(fidx / frames)
-                    target_offset = offset * (1 - t)
-                    try:
-                        cv.coords(line_id,
-                                  cur[0] + target_offset, cur[1],
-                                  cur[2] + target_offset, cur[3])
-                    except Exception:
-                        return
-                    cv.after(delay, lambda: _slide(fidx + 1))
-                cv.after(20, lambda: _slide(1))   # render 后让主线程喘口气
+            # SegmentedWidget pill 切换：render 重画后 tab_pill 直接在新位置，
+            # 后续 commit 可给 pill 加滑底动画（从旧位置缓动到新位置）
+            pass
 
-            old_tab_cx = state.pop("_old_tab_cx", None)
-            if old_tab_cx is not None:
-                _animate_tab_slide(old_tab_cx)
             # 滚动滑入淡入：已有 _slide_scroll 做整体 rows 平移，不再叠加颜色
             # （Canvas 无真正 alpha，颜色从 PANEL→CARD_BG 插值会在材质模式下看到颜色跳变）
 
@@ -2118,7 +2116,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             "today": sum(1 for i in todo_items if _is_today_due(i)),
             "done": None,
         }
-        # 分段控件：整体一块胶囊底，选中格高亮 + 强调色下划线
+        # 分段控件（PyQt-Fluent-Widgets SegmentedWidget 风格）：
+        # 外层胶囊 = 深底 + 选中 tab = ACCENT 实色 pill + 深色字（去掉下划线）
         _rounded(cv, PAD, 98, W - PAD, 134, 12, fill=CARD_BG, outline="", tags="body")
         seg = (W - 2 * PAD) / len(TABS)
         for idx, (key, label) in enumerate(TABS):
@@ -2128,16 +2127,14 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             text = f"{label} {n}" if n else label
             cx = x1 + seg / 2
             if active:
+                # SegmentedWidget pill：ACCENT 实色底 + 深色 ACCENT_TEXT
                 _rounded(cv, x1 + 3, 101, x1 + seg - 3, 131, 10,
-                         fill=CARD_PRESSED, outline="", tags="body")
+                         fill=ACCENT, outline="",
+                         tags=("body", "tab_pill", f"tab{idx}"))
             cv.create_text(cx, 113, text=text,
-                           fill=TEXT if active else SUB,
+                           fill=ACCENT_TEXT if active else SUB,
                            font=("Microsoft YaHei UI", 9, "bold" if active else "normal"),
                            tags=("body", f"tab{idx}"))
-            if active:
-                cv.create_line(cx - 11, 126, cx + 11, 126, fill=ACCENT, width=2,
-                               capstyle="round", tags=("body", f"tab{idx}"))
-                state["_tab_cx"] = cx  # 记住当前 active tab 的中心，供下次切换时滑动用
             cv.tag_unbind(f"tab{idx}", "<Button-1>")
             cv.tag_bind(f"tab{idx}", "<Button-1>", lambda _e, k=key: switch_tab(k))
 
