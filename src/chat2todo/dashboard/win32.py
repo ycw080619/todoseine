@@ -176,14 +176,17 @@ def _extend_frame(hwnd) -> None:
     ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(m))
 
 
-def _set_acrylic(root, tint_bgr: int = 0x292929) -> bool:
-    """Acrylic 亚克力材质（配方与开源库 pywinstyles 一致，已实测有效）。
+def _set_acrylic(root, tint_bgr: int = 0x80292929) -> bool:
+    """Acrylic 亚克力材质（配方与 DWMBlurGlass / pywinstyles 对齐）。
 
+    GradientColor 的高位字节控制 TintLuminosityOpacity：
+      0x00xxxxxx = 原始微软配方（luminosity 全洗成灰）
+      0x80xxxxxx = luminosity 生效（背景饱和度透出，DeskBox 推荐）
     要点（缺一不可，此前缺 2/3 导致"成功但无效果"）：
       1. 窗口背景涂纯黑且**不能**用 -transparentcolor（颜色键会让材质失效）；
       2. SetWindowCompositionAttribute 用**未公开属性 30** + AccentState=3 + 底色；
       3. DwmExtendFrameIntoClientArea(-1) 把玻璃帧扩到整个客户区。
-    tint_bgr 是 0x00BBGGRR 叠加底色（建议取主题 PANEL 色）。
+    tint_bgr 是 0xAABBGGRR 叠加底色（建议取主题 PANEL 色 + luminosity 高位）。
     """
     if os.name != "nt":
         return False
@@ -208,7 +211,7 @@ def _set_acrylic(root, tint_bgr: int = 0x292929) -> bool:
         dark = ctypes.c_int(1)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark),
                                                    ctypes.sizeof(dark))
-        # 未公开属性 30：Acrylic 表面；AccentState 3；底色 tint_bgr
+        # 未公开属性 30：Acrylic 表面；AccentState 3；底色 tint_bgr（已带 luminosity 高位）
         policy = AccentPolicy(3, 0, tint_bgr, 0)
         data = WinCompAttrData(30, ctypes.addressof(policy),
                                ctypes.sizeof(policy))

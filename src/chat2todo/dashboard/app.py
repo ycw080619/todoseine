@@ -277,21 +277,23 @@ def _draw_bg(cv, w: int, h: int) -> None:
 
 
 def _panel_bgr() -> int:
-    """把主题 PANEL 色打包成 Acrylic 叠加底色（0x00BBGGRR）。"""
+    """把主题 PANEL 色打包成 Acrylic 叠加底色（0xAABBGGRR，高位 AA=0x80 开启 luminosity）。"""
     try:
         r = int(PANEL[1:3], 16)
         g = int(PANEL[3:5], 16)
         b = int(PANEL[5:7], 16)
     except (ValueError, IndexError):
         r, g, b = 0x21, 0x20, 0x24
-    return (b << 16) | (g << 8) | r
+    return 0x80000000 | (b << 16) | (g << 8) | r   # 0x80 高位 = TintLuminosityOpacity
 
+MICA_BACKDROP = 3   # 默认 MicaAlt（3），可通过 [ui] backdrop 覆盖（2=Mica 4=Tabbed）
 
 def _apply_material(root, cv=None) -> bool:
     """应用系统材质：原生圆角 + Acrylic/Mica 背景（DeskBox 式质感）。
 
     acrylic 走未公开属性 30 + AccentState 3（Win10 1803+，与 pywinstyles 同配方）；
     mica 走 DWMWA_SYSTEMBACKDROP_TYPE（Win11 22H2+），不支持时退回 acrylic。
+    Mica 类型由 MICA_BACKDROP 决定：2=Mica、3=MicaAlt（小窗推荐）、4=Tabbed。
     全部失败返回 False，窗口退回普通不透明面板，不影响功能。
 
     cv 传入时，给 Canvas 子窗口单独挂颜色键（黑→透明）：主窗口不能用
@@ -302,7 +304,7 @@ def _apply_material(root, cv=None) -> bool:
     if MATERIAL == "mica":
         # 系统材质在部分 Win11 版本/无边框窗口上可能静默不渲染（返回成功但无画面），
         # 因此同时铺 Acrylic 底色：Mica 生效时它在底下不可见，失效时兜底不露黑
-        ok = _set_system_backdrop(root, 3) or ok
+        ok = _set_system_backdrop(root, MICA_BACKDROP) or ok
         _set_acrylic(root, _panel_bgr())
     else:
         ok = _set_acrylic(root, _panel_bgr()) or ok
@@ -477,6 +479,10 @@ def _apply_ui_config() -> dict:
     if MATERIAL != "off":
         # 材质模式下整窗 -alpha 会让文字一起发虚，不透明度改由 Acrylic 底色控制
         alpha = 1.0
+    # Mica 类型可选：mica(2) / micaalt(3, 默认, 小窗推荐) / tabbed(4)
+    global MICA_BACKDROP
+    _backdrop = str(ui.get("backdrop") or "micaalt").lower()
+    MICA_BACKDROP = {"mica": 2, "micaalt": 3, "tabbed": 4}.get(_backdrop, 3)
     SNAP_ON = str(ui.get("snap", "true")).lower() not in ("false", "0", "no")
     HOVER_ON = str(ui.get("hover_expand", "false")).lower() in ("true", "1", "yes")
     return {"alpha": max(0.35, min(1.0, alpha))}
