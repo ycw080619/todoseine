@@ -1146,6 +1146,9 @@ class SettingsPanel(QWidget):
             "show": self._hk_show.text().strip() or "ctrl+alt+d",
             "snap": self._hk_snap.text().strip() or "ctrl+shift+s",
         }
+        # 同步旧布局，tk 控制台/旧配置仍能读到同一套组合
+        cfg["dash"] = {**(cfg.get("dash") or {}), "hotkey": cfg["hotkey"]["show"]}
+        cfg["snap"] = {**(cfg.get("snap") or {}), "hotkey": cfg["hotkey"]["snap"]}
         return cfg
 
     def _save_config(self) -> None:

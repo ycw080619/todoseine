@@ -48,6 +48,27 @@ _NAMED_KEYS = {
 }
 
 
+def resolve_specs(cfg: dict) -> dict:
+    """解析两个热键组合，兼容两种配置布局。
+
+    新布局：`[hotkey] show / snap / enabled`（Qt 设置面板写入）
+    旧布局：`[dash] hotkey` / `[snap] hotkey`（tk 控制台写入）
+    新布局优先，旧布局兜底，都没有才用默认值。
+    """
+    hk = cfg.get("hotkey") or {}
+    show = str(hk.get("show") or "").strip()
+    if not show:
+        show = str((cfg.get("dash") or {}).get("hotkey") or "").strip()
+    snap_key = str(hk.get("snap") or "").strip()
+    if not snap_key:
+        snap_key = str((cfg.get("snap") or {}).get("hotkey") or "").strip()
+    return {
+        "show": show or "ctrl+alt+d",
+        "snap": snap_key or "ctrl+shift+s",
+        "enabled": bool(hk.get("enabled", True)),
+    }
+
+
 def parse(spec: str) -> Optional[Tuple[int, int]]:
     """`ctrl+alt+d` → (modifiers, vk)；解析不出来返回 None。"""
     if not spec:

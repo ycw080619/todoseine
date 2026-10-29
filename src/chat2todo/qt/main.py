@@ -24,6 +24,7 @@ from ..core import Store
 from ..core.privacy import install_log_filter
 from ..dashboard.data import due_remindable
 from .hotkey import HotkeyManager
+from .hotkey import resolve_specs as resolve_hotkey_specs
 from .monitor import Monitor
 from .snap import SnapController
 from .tray_icon import TrayController
@@ -125,13 +126,13 @@ def main() -> int:
 
     def apply_hotkeys(cfg_now: dict) -> None:
         hotkeys.unbind_all()
-        hk = cfg_now.get("hotkey") or {}
-        if not hk.get("enabled", True):
+        specs = resolve_hotkey_specs(cfg_now)
+        if not specs["enabled"]:
             return
-        if not hotkeys.bind(str(hk.get("show") or "ctrl+alt+d"), on_show_hotkey):
-            tray.notify("热键未生效", f"{hk.get('show')} 可能被其它程序占用")
-        if not hotkeys.bind(str(hk.get("snap") or "ctrl+shift+s"), snap.trigger):
-            tray.notify("热键未生效", f"{hk.get('snap')} 可能被其它程序占用")
+        if not hotkeys.bind(specs["show"], on_show_hotkey):
+            tray.notify("热键未生效", f"{specs['show']} 可能被其它程序占用")
+        if not hotkeys.bind(specs["snap"], snap.trigger):
+            tray.notify("热键未生效", f"{specs['snap']} 可能被其它程序占用")
 
     apply_hotkeys(cfg)
 

@@ -309,6 +309,56 @@ def find_file(explicit: Optional[str] = None) -> Optional[str]:
     return None
 
 
+# 老版本（tk 控制台/看板）把配置写在 ~/Chat2Todo/c2t.toml。
+# 新版本用 ~/.config/chat2todo/config.toml，两者路径不同，升级后会「设置全丢」。
+# 这里做**只补空**的兜底迁移：新配置里是默认值/空值的项，才用旧配置的值填上，
+# 绝不覆盖用户在新版里改过的值，也不改写任何文件。
+_LEGACY_CONFIG = os.path.join(os.path.expanduser("~"), "Chat2Todo", "c2t.toml")
+
+
+def _is_default(value: Any, default: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip() or value == default
+    if isinstance(value, (list, tuple, dict)):
+        return len(value) == 0
+    return value == default
+
+
+def _legacy_fill(cfg: Dict[str, Any]) -> None:
+    """把旧配置里「新配置仍是默认值」的项补进来（就地修改，不落盘）。"""
+    if not os.path.exists(_LEGACY_CONFIG):
+        return
+    try:
+        raw = _read(_LEGACY_CONFIG)
+    except Exception:  # noqa: BLE001
+        return
+    if not isinstance(raw, dict):
+        return
+
+    for key in ("db_path", "export_dir"):
+        if _is_default(cfg.get(key), DEFAULTS.get(key)) and raw.get(key):
+            cfg[key] = raw[key]
+
+    for key, value in (raw.get("ai") or {}).items():
+        if key in cfg["ai"] and _is_default(cfg["ai"][key], AI_DEFAULTS.get(key)):
+            cfg["ai"][key] = value
+
+    legacy_filter = raw.get("filter") or {}
+    for key, value in legacy_filter.items():
+        if isinstance(value, list) and value and not (cfg["filter"].get(key) or []):
+            cfg["filter"][key] = list(value)
+
+    # 旧布局：热键在 [dash] hotkey / [snap] hotkey；新布局在 [hotkey] show/snap
+    legacy_show = (raw.get("dash") or {}).get("hotkey")
+    if legacy_show and _is_default(cfg["hotkey"].get("show"), HOTKEY_DEFAULTS.get("show")):
+        cfg["hotkey"]["show"] = legacy_show
+    legacy_snap = (raw.get("snap") or {}).get("hotkey")
+    if legacy_snap and _is_default(cfg["hotkey"].get("snap"), HOTKEY_DEFAULTS.get("snap")):
+        cfg["hotkey"]["snap"] = legacy_snap
+
+
 def load(path: Optional[str] = None) -> Dict[str, Any]:
     """返回合并后的配置；找不到文件时返回纯默认值。"""
     from .semantic import VECTOR_DEFAULTS
@@ -342,6 +392,11 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
                 cfg[key] = value
     else:
         cfg["config_file"] = ""
+
+    # 只在「用默认配置文件、且没被 -c/环境变量指定」时做旧配置兜底，
+    # 这样单测与 --config 显式指定的场景不会被本机旧文件污染。
+    if path is None and not os.environ.get("C2T_CONFIG"):
+        _legacy_fill(cfg)
 
     if os.environ.get("C2T_DB"):
         cfg["db_path"] = os.environ["C2T_DB"]
