@@ -137,6 +137,88 @@ def _surface() -> str:
     return "black" if MATERIAL != "off" else KEY
 
 
+def _deskbox_window(parent, title: str, w: int, h: int,
+                    offset_x: int = 40, offset_y: int = 60):
+    """DeskBox 风格无边框弹窗：自绘 Canvas 容器 + 圆角 + 自绘标题栏 + 关闭按钮。
+
+    parent 必须是 Tk() 或 Toplevel() 实例（调用方已保证 tkinter 已导入）。
+    返回 (win, canvas)，调用方在 canvas 上 pack/place 自己的内容。
+    """
+    import tkinter as tk   # 模块级，局部 import 避免影响其他扫描
+    win = tk.Toplevel(parent)
+    win.overrideredirect(True)                # 干掉系统标题栏
+    win.attributes("-topmost", True)
+    win.configure(bg=PANEL)
+    # 位置：父窗口右下偏移
+    win.geometry(f"{w}x{h}+{parent.winfo_x() + offset_x}+{parent.winfo_y() + offset_y}")
+
+    # Canvas 自绘容器
+    cv = tk.Canvas(win, width=w, height=h, bg=PANEL, highlightthickness=0)
+    cv.pack(fill="both", expand=True)
+
+    # 圆角底板（卡片感）
+    R = 14
+    _rounded(cv, 0, 0, w, h, R, fill=CARD_BG, outline=CARD_BORDER, width=1, tags=("c", "bg"))
+    # 自绘标题栏
+    _rounded(cv, R, 0, w - R, 36, R, fill=CARD_BG, outline="", tags=("c", "titlebar"))
+    cv.create_text(14, 18, text=title, fill=TEXT, anchor="w",
+                   font=("Microsoft YaHei UI", 10, "bold"), tags=("c", "title"))
+    # DeskBox 风格关闭按钮：圆形 X
+    bx, by = w - 28, 18
+    cv.create_oval(bx - 10, by - 10, bx + 10, by + 10, fill="", outline="", tags=("c", "close_bg"))
+    cv.create_text(bx, by, text="✕", fill=SUB, font=("Segoe UI", 9), tags=("c", "close_x"))
+    # 关闭按钮 hover 反馈
+    def _close_enter(_e):
+        cv.itemconfig("close_bg", fill=ACCENT)
+        cv.itemconfig("close_x", fill=ACCENT_TEXT)
+    def _close_leave(_e):
+        cv.itemconfig("close_bg", fill="")
+        cv.itemconfig("close_x", fill=SUB)
+    cv.tag_bind("close_bg", "<Enter>", _close_enter)
+    cv.tag_bind("close_bg", "<Leave>", _close_leave)
+    cv.tag_bind("close_bg", "<Button-1>", lambda _e: win.destroy())
+    cv.tag_bind("close_x", "<Enter>", _close_enter)
+    cv.tag_bind("close_x", "<Leave>", _close_leave)
+    cv.tag_bind("close_x", "<Button-1>", lambda _e: win.destroy())
+    # 标题栏可拖拽
+    def _drag_start(e):
+        win._drag_x, win._drag_y = e.x_root - win.winfo_x(), e.y_root - win.winfo_y()
+    def _drag_move(e):
+        win.geometry(f"+{e.x_root - win._drag_x}+{e.y_root - win._drag_y}")
+    cv.tag_bind("titlebar", "<Button-1>", _drag_start)
+    cv.tag_bind("titlebar", "<B1-Motion>", _drag_move)
+
+    return win, cv
+
+
+def _deskbox_button(parent, x1: int, y1: int, x2: int, y2: int,
+                    text: str, command, *, tag_prefix: str = "btn",
+                    fill: str = DIALOG_BTN, hover_fill: str = CARD_HOVER,
+                    text_fill: str = TEXT, accent: bool = False) -> None:
+    """DeskBox 风格 Canvas 胶囊按钮。tag_prefix 用于区分同一 Canvas 上多个按钮。"""
+    if accent:
+        fill, hover_fill, text_fill = ACCENT, ACCENT, ACCENT_TEXT
+    bg_tag = f"{tag_prefix}_bg"
+    txt_tag = f"{tag_prefix}_txt"
+    _rounded(parent, x1, y1, x2, y2, 10, fill=fill, outline="",
+             tags=(tag_prefix, bg_tag))
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    parent.create_text(cx, cy, text=text, fill=text_fill,
+                       font=("Microsoft YaHei UI", 9), tags=(tag_prefix, txt_tag))
+    def _enter(_e):
+        parent.itemconfig(bg_tag, fill=hover_fill)
+    def _leave(_e):
+        parent.itemconfig(bg_tag, fill=fill)
+    def _click(_e):
+        command()
+    parent.tag_bind(bg_tag, "<Enter>", _enter)
+    parent.tag_bind(bg_tag, "<Leave>", _leave)
+    parent.tag_bind(bg_tag, "<Button-1>", _click)
+    parent.tag_bind(txt_tag, "<Enter>", _enter)
+    parent.tag_bind(txt_tag, "<Leave>", _leave)
+    parent.tag_bind(txt_tag, "<Button-1>", _click)
+
+
 def _win_alpha(root, value: float) -> None:
     """设置整窗透明度。
 
@@ -789,33 +871,36 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         render()
 
     def show_detail(item: TodoItem) -> None:
-        """点文字：弹窗看原文上下文（判断这条该不该做）。"""
-        win = tk.Toplevel(root)
-        win.title("原文")
-        win.configure(bg=PANEL)
-        win.attributes("-topmost", True)
-        win.geometry(f"380x320+{root.winfo_x() + 40}+{root.winfo_y() + 60}")
+        """点文字：弹窗看原文上下文（判断这条该不该做）。DeskBox 风格无边框卡片。"""
+        w, h = 380, 380
+        win, cv = _deskbox_window(root, "原文", w, h)
+        inner_y = 48    # 标题栏下方起点
 
-        tk.Label(win, text="待办内容", bg=PANEL, fg=SUB, anchor="w",
-                 font=("Microsoft YaHei UI", 8)).pack(fill="x", padx=12, pady=(10, 0))
-        tk.Label(win, text=item.text, bg=PANEL, fg=TEXT, anchor="w", justify="left",
-                 wraplength=350, font=("Microsoft YaHei UI", 10)).pack(
-            fill="x", padx=12, pady=(2, 8))
+        # 内容区 Frame（放在 Canvas 上，背景匹配 CARD_BG）
+        content = tk.Frame(cv, bg=CARD_BG)
+        cv.create_window(12, inner_y, anchor="nw", window=content, width=w - 24)
+
+        tk.Label(content, text="待办内容", bg=CARD_BG, fg=CAPTION, anchor="w",
+                 font=("Microsoft YaHei UI", 8)).pack(fill="x", pady=(0, 0))
+        tk.Label(content, text=item.text, bg=CARD_BG, fg=TEXT, anchor="w", justify="left",
+                 wraplength=w - 48, font=("Microsoft YaHei UI", 10)).pack(
+            fill="x", pady=(2, 6))
 
         meta = f"{item.sender or '未知'} · {_fmt_ts(item.message_ts)} · 置信度 {item.confidence:.2f}"
         if item.reason:
             meta += f"\n依据：{item.reason}"
-        tk.Label(win, text=meta, bg=PANEL, fg=SUB, anchor="w", justify="left",
-                 wraplength=350, font=("Microsoft YaHei UI", 8)).pack(
-            fill="x", padx=12, pady=(0, 8))
+        tk.Label(content, text=meta, bg=CARD_BG, fg=SUB, anchor="w", justify="left",
+                 wraplength=w - 48, font=("Microsoft YaHei UI", 8)).pack(fill="x", pady=(0, 6))
 
-        tk.Frame(win, bg=LINE, height=1).pack(fill="x", padx=12)
-        tk.Label(win, text="前后消息", bg=PANEL, fg=SUB, anchor="w",
-                 font=("Microsoft YaHei UI", 8)).pack(fill="x", padx=12, pady=(8, 2))
+        # DeskBox 风格分隔线
+        cv.create_line(12, cv.winfo_reqheight() - 68, w - 12, cv.winfo_reqheight() - 68,
+                       fill=CARD_DIVIDER, width=1)
 
-        box = tk.Text(win, height=8, bg=DIALOG_INNER, fg=TEXT, bd=0, wrap="word",
-                      font=("Microsoft YaHei UI", 8), padx=8, pady=6)
-        box.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        # 前后消息 Text 框
+        box = tk.Text(content, height=8, bg=CARD_BG, fg=TEXT, bd=0, wrap="word",
+                      font=("Microsoft YaHei UI", 8), padx=8, pady=6,
+                      highlightthickness=1, highlightbackground=CARD_BORDER)
+        box.pack(fill="both", expand=True, pady=(0, 6))
         st = _store()
         try:
             for m in reversed(st.nearby_messages(item.message_ts or 0, 6)):
@@ -827,11 +912,17 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         finally:
             st.close()
         box.config(state="disabled")
-        tk.Button(win, text="关闭", command=win.destroy, bg=DIALOG_BTN, fg=TEXT,
-                  bd=0, activebackground="#3a3733", activeforeground=TEXT).pack(pady=(0, 10))
+
+        # DeskBox 胶囊关闭按钮（放在 Canvas 底部）
+        bw, bh = 72, 28
+        bx = (w - bw) // 2
+        by = h - 44
+        _deskbox_button(cv, bx, by, bx + bw, by + bh, "关闭", win.destroy, accent=False)
+
+        cv.update_idletasks()
 
     def explain_why(item: TodoItem) -> None:
-        """右键「判定理由」：弹窗展示规则分解 + 校准命中。"""
+        """右键「判定理由」：弹窗展示规则分解 + 校准命中。DeskBox 风格。"""
         st = _store()
         try:
             report = st.explain_todo(
@@ -841,29 +932,28 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         finally:
             st.close()
 
-        win = tk.Toplevel(root)
-        win.title("判定理由")
-        win.configure(bg=PANEL)
-        win.attributes("-topmost", True)
-        win.geometry(f"440x380+{root.winfo_x() + 40}+{root.winfo_y() + 60}")
+        w, h = 440, 400
+        win, cv = _deskbox_window(root, "判定理由", w, h)
 
-        # 顶部标题
-        tk.Label(win, text=f"#{item.todo_id}  {item.text}", bg=PANEL, fg=TEXT,
-                 anchor="w", justify="left", wraplength=410,
-                 font=("Microsoft YaHei UI", 10, "bold")).pack(
-            fill="x", padx=12, pady=(10, 4))
+        content = tk.Frame(cv, bg=CARD_BG)
+        cv.create_window(12, 48, anchor="nw", window=content, width=w - 24)
+
         conf = f"{report['confidence']:.2f}" if report else f"{item.confidence:.2f}"
         status = (report or {}).get("status", item.status) if report else item.status
-        tk.Label(win,
-                 text=f"状态 {status} · 置信度 {conf}",
-                 bg=PANEL, fg=SUB, anchor="w",
-                 font=("Microsoft YaHei UI", 8)).pack(fill="x", padx=12, pady=(0, 6))
+        tk.Label(content, text=f"#{item.todo_id}  {item.text}", bg=CARD_BG, fg=TEXT,
+                 anchor="w", justify="left", wraplength=w - 48,
+                 font=("Microsoft YaHei UI", 10, "bold")).pack(fill="x")
+        tk.Label(content, text=f"状态 {status} · 置信度 {conf}",
+                 bg=CARD_BG, fg=SUB, anchor="w",
+                 font=("Microsoft YaHei UI", 8)).pack(fill="x", pady=(2, 4))
 
-        tk.Frame(win, bg=LINE, height=1).pack(fill="x", padx=12)
+        # 分隔线 + Text 框
+        cv.create_line(12, h - 76, w - 12, h - 76, fill=CARD_DIVIDER, width=1)
 
-        box = tk.Text(win, height=14, bg=DIALOG_INNER, fg=TEXT, bd=0, wrap="word",
-                      font=("Consolas", 9), padx=8, pady=6)
-        box.pack(fill="both", expand=True, padx=12, pady=8)
+        box = tk.Text(content, height=14, bg=CARD_BG, fg=TEXT, bd=0, wrap="word",
+                      font=("Consolas", 9), padx=8, pady=6,
+                      highlightthickness=1, highlightbackground=CARD_BORDER)
+        box.pack(fill="both", expand=True, pady=(4, 6))
 
         if not report:
             box.insert("end", "这条没有判定报告（可能是手动添加或库不在）")
@@ -891,24 +981,30 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     box.insert("end", f"  {k}: {v}\n")
 
         box.config(state="disabled")
-        tk.Button(win, text="关闭", command=win.destroy, bg=DIALOG_BTN, fg=TEXT,
-                  bd=0, activebackground="#3a3733", activeforeground=TEXT).pack(pady=(0, 10))
+
+        # DeskBox 关闭按钮
+        bw, bh = 72, 28
+        bx = (w - bw) // 2
+        by = h - 44
+        _deskbox_button(cv, bx, by, bx + bw, by + bh, "关闭", win.destroy, accent=False)
+
+        cv.update_idletasks()
 
     def edit_item(item: TodoItem) -> None:
-        """点行尾「改」：弹小窗改待办文字，回车 / 保存写回数据库。"""
-        win = tk.Toplevel(root)
-        win.title("修改待办")
-        win.configure(bg=PANEL)
-        win.attributes("-topmost", True)
-        win.resizable(False, False)
-        win.geometry(f"380x132+{root.winfo_x() + 40}+{root.winfo_y() + 60}")
+        """点行尾「改」：弹小窗改待办文字，回车 / 保存写回数据库。DeskBox 风格。"""
+        w, h = 380, 160
+        win, cv = _deskbox_window(root, "修改待办", w, h)
 
-        tk.Label(win, text="待办内容", bg=PANEL, fg=SUB, anchor="w",
-                 font=("Microsoft YaHei UI", 8)).pack(fill="x", padx=12, pady=(10, 0))
+        content = tk.Frame(cv, bg=CARD_BG)
+        cv.create_window(12, 48, anchor="nw", window=content, width=w - 24)
+
+        tk.Label(content, text="待办内容", bg=CARD_BG, fg=CAPTION, anchor="w",
+                 font=("Microsoft YaHei UI", 8)).pack(fill="x")
         var = tk.StringVar(value=item.text)
-        ent = tk.Entry(win, textvariable=var, bg=FIELD, fg=TEXT, bd=0,
-                       insertbackground=TEXT, font=("Microsoft YaHei UI", 10))
-        ent.pack(fill="x", padx=12, pady=(4, 10), ipady=5)
+        ent = tk.Entry(content, textvariable=var, bg=CARD_BG, fg=TEXT, bd=0,
+                       insertbackground=TEXT, font=("Microsoft YaHei UI", 10),
+                       highlightthickness=1, highlightbackground=CARD_BORDER)
+        ent.pack(fill="x", pady=(4, 10), ipady=6)
         ent.focus_set()
         ent.select_range(0, "end")
 
@@ -924,9 +1020,19 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             win.destroy()
 
         ent.bind("<Return>", lambda _e: _save())
-        tk.Button(win, text="保存", command=_save, bg=ACCENT, fg="#0b1a22", bd=0,
-                  activebackground=ACCENT, activeforeground="#0b1a22",
-                  font=("Microsoft YaHei UI", 9)).pack(pady=(0, 10))
+
+        # DeskBox 胶囊按钮：强调色「保存」+ 次级「取消」
+        bw, bh = 76, 28
+        gap = 12
+        total = bw * 2 + gap
+        start_x = (w - total) // 2
+        by = h - 44
+        _deskbox_button(cv, start_x, by, start_x + bw, by + bh,
+                        "取消", win.destroy, tag_prefix="cancel")
+        _deskbox_button(cv, start_x + bw + gap, by, start_x + bw + gap + bw, by + bh,
+                        "保存", _save, tag_prefix="save", accent=True)
+
+        cv.update_idletasks()
 
     def locate_source(item: TodoItem) -> None:
         """双击：源头提到 QQ 下载的文件时，直接在目录里选中它；否则看原文。
@@ -2412,7 +2518,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     refresh_ms = 5000
 
     def show_remind_toast(pairs, title: str = "⏰ 到期提醒") -> None:
-        """右下角弹一张提醒小卡片：点击唤出看板，8 秒自动消失。"""
+        """右下角弹一张 DeskBox 风格胶囊提醒卡：点击唤出看板，8 秒自动消失。"""
         try:
             from ..core.deadline import label as _due_label
 
@@ -2420,27 +2526,35 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             toast.overrideredirect(True)
             toast.attributes("-topmost", True)
             try:
-                toast.attributes("-alpha", 0.96)
+                toast.attributes("-alpha", 0.98)
             except tk.TclError:
                 pass
-            body = tk.Frame(toast, bg=PANEL, highlightbackground=BORDER,
-                            highlightthickness=1)
-            body.pack(fill="both", expand=True)
-            tk.Label(body, text=title, bg=PANEL, fg=ACCENT, anchor="w",
-                     font=("Microsoft YaHei UI", 9, "bold")).pack(
-                fill="x", padx=12, pady=(8, 2))
+            toast.configure(bg=PANEL)
+
+            # DeskBox 风格：圆角卡片 + Canvas 自绘
+            W, H = 320, 96
+            cv = tk.Canvas(toast, width=W, height=H, bg=PANEL, highlightthickness=0)
+            cv.pack()
+            R = 14
+            _rounded(cv, 0, 0, W, H, R, fill=CARD_BG, outline=CARD_BORDER, width=1,
+                     tags=("t", "tbg"))
+            # 左侧强调色竖条（DeskBox 风格指示）
+            _rounded(cv, 0, 0, 4, H, R, fill=ACCENT, outline="", tags=("t", "tbar"))
+
+            # 内容 Frame（放在 Canvas 上）
+            body = tk.Frame(cv, bg=CARD_BG)
+            cv.create_window(14, 10, anchor="nw", window=body, width=W - 20)
+
+            tk.Label(body, text=title, bg=CARD_BG, fg=ACCENT, anchor="w",
+                     font=("Microsoft YaHei UI", 9, "bold")).pack(fill="x")
             for item, due in pairs[:3]:
-                txt = item.text if len(item.text) <= 22 else item.text[:22] + "…"
-                tk.Label(body, text=f"{_due_label(due)}　{txt}", bg=PANEL, fg=TEXT,
-                         anchor="w", font=("Microsoft YaHei UI", 8)).pack(
-                    fill="x", padx=12)
+                txt = item.text if len(item.text) <= 26 else item.text[:26] + "…"
+                tk.Label(body, text=f"{_due_label(due)}　{txt}", bg=CARD_BG, fg=TEXT,
+                         anchor="w", font=("Microsoft YaHei UI", 8)).pack(fill="x")
             if len(pairs) > 3:
-                tk.Label(body, text=f"还有 {len(pairs) - 3} 条…", bg=PANEL, fg=SUB,
-                         anchor="w", font=("Microsoft YaHei UI", 8)).pack(
-                    fill="x", padx=12)
-            tk.Label(body, text="点击查看看板", bg=PANEL, fg=SUB, anchor="w",
-                     font=("Microsoft YaHei UI", 7)).pack(fill="x", padx=12,
-                                                          pady=(2, 8))
+                tk.Label(body, text=f"还有 {len(pairs) - 3} 条…", bg=CARD_BG, fg=SUB,
+                         anchor="w", font=("Microsoft YaHei UI", 8)).pack(fill="x")
+
             toast.update_idletasks()
             tw, th = toast.winfo_reqwidth(), toast.winfo_reqheight()
             rects = _monitor_work_areas()
@@ -2450,6 +2564,20 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 r, b = root.winfo_screenwidth(), root.winfo_screenheight()
             toast.geometry(f"+{r - tw - 16}+{b - th - 16}")
 
+            # hover 高亮反馈
+            def _enter(_e):
+                try:
+                    cv.itemconfig("tbg", fill=CARD_HOVER)
+                except Exception:
+                    pass
+            def _leave(_e):
+                try:
+                    cv.itemconfig("tbg", fill=CARD_BG)
+                except Exception:
+                    pass
+            cv.tag_bind("t", "<Enter>", _enter)
+            cv.tag_bind("t", "<Leave>", _leave)
+
             def _dismiss(_evt=None) -> None:
                 try:
                     toast.destroy()
@@ -2457,8 +2585,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     pass
                 reveal()
 
-            for w_ in [toast, body] + list(body.winfo_children()):
+            for w_ in [toast, cv, body] + list(body.winfo_children()):
                 w_.bind("<Button-1>", _dismiss)
+            cv.tag_bind("t", "<Button-1>", _dismiss)
 
             def _auto_close() -> None:
                 try:
