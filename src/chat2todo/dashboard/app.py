@@ -120,11 +120,6 @@ def _interp_color(c1: str, c2: str, t: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def _ease_out_cubic(t: float) -> float:
-    """DeskBox/WinUI 风格缓出曲线：前期快、后期慢。t∈[0,1]→[0,1]。"""
-    return 1 - (1 - t) ** 3
-
-
 def _ease_out_back(t: float) -> float:
     """弹簧过冲曲线：先越过目标再弹回。t∈[0,1]→≈[0,1.1]→[0,1]。"""
     c1 = 1.70158
@@ -1544,7 +1539,6 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         if not items:
             return
         iid = items[0]
-        base_sz = 28
         # 3 帧：28 → 32 → 26 → 28
         stages = [32, 26, 28]
         def _step(fidx):
