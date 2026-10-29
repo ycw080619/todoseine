@@ -12,8 +12,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DB = Path.home() / "Chat2Todo" / "qq.db"
-DASH_MUTEX = "Chat2TodoDashboard"      # 与 dashboard._single_instance 同名
+DASH_MUTEX = "Chat2Todo_MainApp_Mutex"   # 与 qt/tray.py 的 _MUTEX_NAME 同名
 CONSOLE_TITLE = "Chat2Todo 控制台"
 
 SYNCHRONIZE = 0x00100000
@@ -69,7 +68,8 @@ def main() -> int:
         subprocess.Popen([py, str(target), "--page", "general"], cwd=str(ROOT), env=env())
         return 0
 
-    args = [py, "-m", "chat2todo", "dash", "--db", str(DB), "--interval", "30"]
+    # Qt 版 dash 不接受 --db/--interval：DB 路径从配置读（config.load 含旧路径兜底）
+    args = [py, "-m", "chat2todo", "dash"]
     subprocess.Popen(args, cwd=str(ROOT), env=env())
     return 0
 

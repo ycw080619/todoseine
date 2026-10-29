@@ -35,6 +35,12 @@ _KNOWN_SUBCOMMANDS = {
     "purge-chat", "purge-unmarked",
     "export-calibration", "import-calibration", "export-chatlab",
     "watch", "plugins", "serve",
+    "mute", "unmute", "mutes",
+    "backup", "wipe", "obsidian-sync",
+    "desktop-export", "desktop-token",
+    "plugin-status", "plugin-enable", "plugin-disable", "plugin-rollback",
+    "migrate", "sbom",
+    "hermes-token", "hermes-serve", "hermes-summary",
 }
 
 

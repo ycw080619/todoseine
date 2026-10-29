@@ -344,7 +344,7 @@ def _set_autostart(on: bool) -> tuple:
         ps = (
             "$w=New-Object -ComObject WScript.Shell;"
             f"$a=$w.CreateShortcut('{dash}');$a.TargetPath='{exe}';"
-            "$a.Arguments='dash --interval 30';$a.WindowStyle=7;$a.Save();"
+            "$a.Arguments='dash';$a.WindowStyle=7;$a.Save();"
             f"$b=$w.CreateShortcut('{snap}');$b.TargetPath='{exe}';"
             f"$b.Arguments='\"{snap_py}\" --hotkey --db \"{DB}\"';$b.WindowStyle=7;$b.Save()"
         )
@@ -1300,7 +1300,8 @@ class Console(tk.Tk):
 
     def on_dashboard(self) -> None:
         try:
-            subprocess.Popen([PY, "-m", "chat2todo", "dash", "--db", str(DB), "--interval", "30"],
+            # Qt 版 dash 不接受 --db/--interval：DB 路径从配置读（config.load 含旧路径兜底）
+            subprocess.Popen([PY, "-m", "chat2todo", "dash"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              env=_env(),
                              creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))

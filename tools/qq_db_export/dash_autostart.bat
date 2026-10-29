@@ -2,16 +2,16 @@
 chcp 65001 >nul
 rem auto-start dashboard (no console window)
 
-rem === Python 自解析：逐个验证 tkinter，PATH 首条可能是无 tk 的运行时 ===
+rem === Python 自解析：逐个验证 PySide6，PATH 首条可能是缺 Qt 依赖的运行时 ===
 set "PY_CMD="
 for /f "delims=" %%i in ('where pythonw 2^>nul') do (
     if not defined PY_CMD (
-        "%%i" -c "import tkinter" >nul 2>&1 && set "PY_CMD=%%i"
+        "%%i" -c "import PySide6" >nul 2>&1 && set "PY_CMD=%%i"
     )
 )
 for /f "delims=" %%i in ('where python 2^>nul') do (
     if not defined PY_CMD (
-        "%%i" -c "import tkinter" >nul 2>&1 && set "PY_CMD=%%i"
+        "%%i" -c "import PySide6" >nul 2>&1 && set "PY_CMD=%%i"
     )
 )
 if not defined PY_CMD (
@@ -20,11 +20,11 @@ if not defined PY_CMD (
     )
 )
 if not defined PY_CMD (
-    echo [Chat2Todo] 未找到可用 Python（需 3.9+ 且带 tkinter），请安装并勾选 Add to PATH
+    echo [Chat2Todo] 未找到可用 Python（需 3.9+ 且已 pip install PySide6）
     pause
     exit /b 1
 )
 
 cd /d "%~dp0..\.."
 set PYTHONPATH=%~dp0..\..\src
-start "" "%PY_CMD%" -m chat2todo dash --db "%USERPROFILE%\Chat2Todo\qq.db" --interval 30
+start "" "%PY_CMD%" -m chat2todo dash
