@@ -77,7 +77,7 @@ def _muted(text: str, size: int = 11) -> QLabel:
 def _title(text: str) -> QLabel:
     lab = QLabel(text)
     f = QFont(theme.FONT_FAMILY)
-    f.setPixelSize(13)
+    f.setPointSize(10)
     f.setBold(True)
     lab.setFont(f)
     lab.setStyleSheet(f"color: {theme.TEXT.name()}; background: transparent;")
@@ -177,7 +177,7 @@ class TrashPage(QWidget):
 
         text = ElidedLabel(row.get("text") or "")
         f = QFont(theme.FONT_FAMILY)
-        f.setPixelSize(12)
+        f.setPointSize(9)
         text.setFont(f)
         text.setTextColor(theme.TEXT)
         text.setStyleSheet("background: transparent;")

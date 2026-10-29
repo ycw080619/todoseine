@@ -158,7 +158,7 @@ class CheckDot(QWidget):
             p.scale(0.7 + 0.3 * t, 0.7 + 0.3 * t)
             p.translate(-center)
             f = QFont(theme.FONT_FAMILY)
-            f.setPixelSize(11)
+            f.setPointSize(8)
             f.setBold(True)
             p.setFont(f)
             color = QColor(theme.ACCENT_TEXT)

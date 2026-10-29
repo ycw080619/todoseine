@@ -167,7 +167,7 @@ class PillTabs(QWidget):
                 hover_path.addRoundedRect(self._segment_rect(index), 10, 10)
                 p.fillPath(hover_path, theme.CARD_HOVER)
             f = QFont(theme.FONT_FAMILY)
-            f.setPixelSize(12)
+            f.setPointSize(9)
             f.setBold(active)
             p.setFont(f)
             p.setPen(theme.ACCENT_TEXT if active else theme.SUB)

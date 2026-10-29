@@ -16,7 +16,7 @@ import sys
 import time
 from datetime import datetime
 
-from PySide6.QtCore import QObject, QTimer, QCoreApplication, Signal
+from PySide6.QtCore import QObject, QTimer, QCoreApplication, Signal, Qt
 from PySide6.QtWidgets import QApplication
 
 from .. import config as c2t_config
@@ -73,6 +73,11 @@ def main() -> int:
     if is_another_running():
         logging.getLogger("chat2todo.qt").info("已有实例在运行，当前进程退出")
         return 0
+
+    # ---------- 高 DPI：必须在 QApplication 之前设置 ----------
+    # Qt6 默认启用缩放，但显式声明更稳；AA_UseHighDpiPixmaps 让图标在高 DPI 下清晰
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
     # ---------- Qt 插件路径（PyInstaller onefile） ----------
     if getattr(sys, "frozen", False):

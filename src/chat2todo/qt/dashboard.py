@@ -184,7 +184,7 @@ class TodoRow(RoundedCard):
 
         title = ElidedLabel(("★ " if star else "") + self.display_text)
         title_font = QFont(theme.FONT_FAMILY)
-        title_font.setPixelSize(13)
+        title_font.setPointSize(10)
         if item.status == "done":
             title_font.setStrikeOut(True)
         title.setFont(title_font)
@@ -205,7 +205,7 @@ class TodoRow(RoundedCard):
             bits.append(item.sender)
         meta = ElidedLabel(" · ".join(bits))
         meta_font = QFont(theme.FONT_FAMILY)
-        meta_font.setPixelSize(10)
+        meta_font.setPointSize(8)
         meta.setFont(meta_font)
         if due and due < now_ts:
             meta_color = theme.WARN
