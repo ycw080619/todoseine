@@ -57,7 +57,7 @@ class _StubAI:
 
     filter_out = ""
 
-    def __init__(self, cfg) -> None:
+    def __init__(self, cfg, on_call=None) -> None:
         self.enabled = True
         self.usable = True
         self.calls = 1

@@ -30,8 +30,8 @@ def load_items(db_path: str, status: str = "pending") -> List[TodoItem]:
                  or (i.status == "done" and (i.done_at or "") == today)]
     else:
         items = [i for i in items if i.status == status]
-    # AI 复核判定为 noise 的条目只是被规则误抓的闲聊，不进看板
-    items = [i for i in items if i.status != "noise"]
+    # noise 是被规则误抓的闲聊，muted 是用户自己点了「以后不再通知」，都不进看板
+    items = [i for i in items if i.status not in ("noise", "muted")]
     # 看板要「最近该做的事」：先按状态（确认过的优先），再按时间倒序
     items.sort(key=lambda i: (i.status == "done", i.status != "pending",
                              -int(i.message_ts or 0)))

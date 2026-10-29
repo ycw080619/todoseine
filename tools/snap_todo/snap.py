@@ -32,6 +32,7 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import Optional
 from urllib import request as urlreq
+from urllib.parse import urlparse
 
 HERE = Path(__file__).resolve().parent
 SRC = HERE.parents[1] / "src"                      # 仓库源码（src 布局，免 pip install）
@@ -261,10 +262,20 @@ def ocr_windows(bmp_path: str) -> str:
 
 
 def _ollama_host(cfg: dict) -> str:
+    """只允许本机 Ollama；配置指向云端时截图也不外发（回落到本机默认端口）。
+
+    截图里通常带着群名、头像、手机号，属于最高敏感度数据：
+    即使 ai.base_url 被设成了云端服务，OCR 也只在 127.0.0.1 上跑。
+    """
     base = str((cfg.get("ai") or {}).get("base_url") or "").rstrip("/")
     if base.endswith("/v1"):
         base = base[:-3]
-    return base or "http://127.0.0.1:11434"
+    if not base:
+        return "http://127.0.0.1:11434"
+    host = (urlparse(base).hostname or "").lower()
+    if host in ("127.0.0.1", "localhost", "::1"):
+        return base
+    return "http://127.0.0.1:11434"
 
 
 def vision_model_available(cfg: dict) -> str:

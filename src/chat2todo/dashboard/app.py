@@ -31,6 +31,8 @@ LINE = "#332f2f"       # 分隔线（更淡，仅用于必要分组）
 FIELD = "#2c2b31"      # 输入框底色
 ACTIVE = "#3a3942"     # 选中标签底色
 ACCENT = "#4cc2ff"     # WinUI 强调色（用于选中态与链接）
+DIALOG_INNER = "#1a191d"  # 弹窗内辅助文本框底色（深色主题默认）
+DIALOG_BTN = "#2b292e"    # 弹窗内按钮底色（深色主题默认）
 ACCENTS = ["#ff6b6b", "#ff9f43", "#ffd93d", "#6ee7a8",
            "#4cc9f0", "#8aa4ff", "#ff8fab"]
 
@@ -56,7 +58,7 @@ TABS: List[Tuple[str, str]] = [("todo", "全部"), ("star", "重点"),
 
 
 def _fill_item_menu(menu, item: TodoItem, *, mark, edit_item,
-                    show_detail, explain_why) -> None:
+                    show_detail, explain_why, mute=None) -> None:
     """按条目状态填右键菜单。
 
     与 Tk 解耦成普通函数：菜单项集合能在无图形环境下直接断言，
@@ -68,6 +70,14 @@ def _fill_item_menu(menu, item: TodoItem, *, mark, edit_item,
     else:
         menu.add_command(label="恢复为待办", command=lambda: mark(item, "pending"))
     menu.add_command(label="标为非待办", command=lambda: mark(item, "noise"))
+    if mute is not None:
+        # 「此类不再提醒」是默认动作：按语义相似度判断，同类通知以后都不再冒出来
+        menu.add_command(label="此类消息不再提醒",
+                         command=lambda: mute(item, "kind"))
+        menu.add_command(label="此人不再提醒",
+                         command=lambda: mute(item, "sender"))
+        menu.add_command(label="整个来源不再提醒",
+                         command=lambda: mute(item, "source"))
     menu.add_separator()
     menu.add_command(label="修改内容", command=lambda: edit_item(item))
     menu.add_command(label="查看原文", command=lambda: show_detail(item))
@@ -189,6 +199,7 @@ def _apply_ui_config() -> dict:
     import re as _re
 
     global ACCENT, PANEL, BORDER, TEXT, SUB, LINE, FIELD, ACTIVE
+    global DIALOG_INNER, DIALOG_BTN
     global RADIUS, W, BORDER_ON, SHOW_CLOCK, BORDER_W, ANIM_ON, BLUR_ON, SNAP_ON
     global HOVER_ON
 
@@ -200,10 +211,16 @@ def _apply_ui_config() -> dict:
         PANEL, BORDER = "#f8f8fb", "#e3e3ec"
         TEXT, SUB, LINE = "#1f2330", "#6b7280", "#ececf3"
         FIELD, ACTIVE = "#ffffff", "#e8eefc"
+        # 弹窗内的辅助文本框（判定理由 / 前后消息）：比 PANEL 稍深一点，视觉上像个内嵌框
+        DIALOG_INNER = "#eef0f4"
+        DIALOG_BTN = "#e3e3ec"
     else:
         PANEL, BORDER = "#212024", "#3a3940"
         TEXT, SUB, LINE = "#f2f2f4", "#9c9ca6", "#332f2f"
         FIELD, ACTIVE = "#2c2b31", "#3a3942"
+        # 深色下 PANEL 本身就够深，内嵌框比它再深一档即可
+        DIALOG_INNER = "#1a191d"
+        DIALOG_BTN = "#2b292e"
 
     accent = str(ui.get("accent") or "").strip()
     if _re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
@@ -375,7 +392,6 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         "pos_full": None,      # 展开态记住的位置（迷你胶囊有自己独立的位置）
         "pos_mini": None,
         "hover_open": False,   # 由悬停展开的：指针离开 0.8s 自动收回
-        "search": False,       # 搜索模式：顶部输入卡变成搜索框
         "query": "",           # 当前搜索词（大小写不敏感子串过滤）
         "top_n": 5,            # 每日上限：只显示置信度最高的 5 条；None=全量
         "top_n_full": False,   # 是否已展开全部（点「展开更多」后）
@@ -434,10 +450,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     entry.bind("<FocusIn>", ph_off)
     entry.bind("<FocusOut>", ph_on)
 
-    # ---- 搜索框（Ctrl+F 唤出，与添加框共用顶部输入卡的位置）----
-    SPLACEHOLDER = "搜索待办 / 发送人，Esc 退出"
+    # ---- 搜索框（常驻在顶部输入卡右侧，Ctrl+F 聚焦）----
+    SPLACEHOLDER = "搜索…"
     sentry = tk.Entry(root, bg=FIELD, fg=TEXT, insertbackground=TEXT, bd=0,
-                      highlightthickness=0, font=("Microsoft YaHei UI", 9))
+                      highlightthickness=1, highlightbackground=BORDER,
+                      font=("Microsoft YaHei UI", 9))
     sentry.insert(0, SPLACEHOLDER)
     sentry.config(fg="#6f6a64")
     sph = {"on": True}
@@ -471,6 +488,24 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         state["undo"] = (item.todo_id, item.status)
         render()
 
+    def _mute(item: TodoItem, scope: str = "kind") -> None:
+        """右键「不再提醒」：写一条静音规则，命中的条目立刻从看板消失。
+
+        kind = 按语义相似度认定「此类消息」，这是默认动作；
+        sender / source = 退化成按人、按群静音。
+        """
+        st = _store()
+        try:
+            if scope == "source":
+                st.mute(item.session, "")
+            elif scope == "sender":
+                st.mute(item.session, item.sender)
+            else:
+                st.mute(item.session, "", item.text)
+        finally:
+            st.close()
+        render()
+
     def toggle_item(item: TodoItem) -> None:
         """圆点：待定→确认，待办→完成，已完成→恢复待办。"""
         if item.status == "unconfirmed":
@@ -485,7 +520,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         state["batch"] = not state["batch"]
         state["sel"] = set()
         if state["batch"]:
-            search_close()               # 批量操作条要占输入卡，先退出搜索
+            search_close()               # 批量操作条要占输入卡，先清掉搜索词
         render()
 
     def toggle_top_n() -> None:
@@ -510,21 +545,19 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             pass
 
     def search_open() -> None:
-        """Ctrl+F：顶部输入卡切换成搜索框（收起态先展开）。"""
+        """Ctrl+F：聚焦常驻搜索框（收起态先展开）。"""
         if state["mini"]:
             toggle_mini()
         if state["batch"]:
             state["batch"] = False
             state["sel"] = set()
-        state["search"] = True
-        render()
+            render()
         root.after(60, lambda: (sph_off(), sentry.focus_set()))
 
     def search_close(_evt=None) -> str:
-        """Esc：清空搜索词并退回「添加待办」框。"""
-        if not state.get("search"):
+        """Esc：清空搜索词，列表恢复完整。"""
+        if not sentry.get() or sph["on"]:
             return "break"
-        state["search"] = False
         state["query"] = ""
         sentry.delete(0, "end")
         sph_on()
@@ -660,7 +693,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         tk.Label(win, text="前后消息", bg=PANEL, fg=SUB, anchor="w",
                  font=("Microsoft YaHei UI", 8)).pack(fill="x", padx=12, pady=(8, 2))
 
-        box = tk.Text(win, height=8, bg="#141312", fg=TEXT, bd=0, wrap="word",
+        box = tk.Text(win, height=8, bg=DIALOG_INNER, fg=TEXT, bd=0, wrap="word",
                       font=("Microsoft YaHei UI", 8), padx=8, pady=6)
         box.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         st = _store()
@@ -674,7 +707,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         finally:
             st.close()
         box.config(state="disabled")
-        tk.Button(win, text="关闭", command=win.destroy, bg="#2b2926", fg=TEXT,
+        tk.Button(win, text="关闭", command=win.destroy, bg=DIALOG_BTN, fg=TEXT,
                   bd=0, activebackground="#3a3733", activeforeground=TEXT).pack(pady=(0, 10))
 
     def explain_why(item: TodoItem) -> None:
@@ -708,7 +741,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
         tk.Frame(win, bg=LINE, height=1).pack(fill="x", padx=12)
 
-        box = tk.Text(win, height=14, bg="#141312", fg=TEXT, bd=0, wrap="word",
+        box = tk.Text(win, height=14, bg=DIALOG_INNER, fg=TEXT, bd=0, wrap="word",
                       font=("Consolas", 9), padx=8, pady=6)
         box.pack(fill="both", expand=True, padx=12, pady=8)
 
@@ -738,7 +771,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     box.insert("end", f"  {k}: {v}\n")
 
         box.config(state="disabled")
-        tk.Button(win, text="关闭", command=win.destroy, bg="#2b2926", fg=TEXT,
+        tk.Button(win, text="关闭", command=win.destroy, bg=DIALOG_BTN, fg=TEXT,
                   bd=0, activebackground="#3a3733", activeforeground=TEXT).pack(pady=(0, 10))
 
     def edit_item(item: TodoItem) -> None:
@@ -806,12 +839,13 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         threading.Thread(target=work, daemon=True).start()
 
     # ---- 右键菜单 ----
-    menu = tk.Menu(root, tearoff=0, bg="#2b2926", fg=TEXT, bd=0,
+    menu = tk.Menu(root, tearoff=0, bg=DIALOG_BTN, fg=TEXT, bd=0,
                    activebackground=ACTIVE, activeforeground=TEXT)
 
     def popup(e, item: TodoItem) -> None:
         _fill_item_menu(menu, item, mark=_mark, edit_item=edit_item,
-                        show_detail=show_detail, explain_why=explain_why)
+                        show_detail=show_detail, explain_why=explain_why,
+                        mute=_mute)
         menu.tk_popup(e.x_root, e.y_root)
 
     def popup_win(e) -> None:
@@ -1202,7 +1236,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         global W
 
         now = time.localtime()
-        week = "日一二三四五六"[now.tm_wday]
+        week = "一二三四五六日"[now.tm_wday]
         try:
             cv.itemconfig("hclock", text=time.strftime("%H:%M", now))
         except Exception:  # noqa: BLE001 - 标题栏不在（收起态）时忽略
@@ -1286,7 +1320,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 for i in todo_items)
             debounce = (state["mini"], state["daily_mode"], state["tab"], state.get("query", ""),
                         state.get("batch", False), state.get("pin", False),
-                        state.get("search", False), state.get("w", W),
+                        state.get("w", W),
                         state.get("x_off", 0), mtime, signatures)
             if debounce == state.get("render_hash"):
                 return                       # 什么都没变，省一次全量重画
@@ -1297,9 +1331,13 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             unconfirmed = sum(1 for i in todo_items if i.status == "unconfirmed")
 
             if state["mini"]:
+                entry.place_forget()      # 迷你胶囊 / 早报视图没有输入卡，别留下悬空的输入框
+                sentry.place_forget()
                 _render_mini(len(todo_items), unconfirmed)
                 return
             if state["daily_mode"]:
+                entry.place_forget()
+                sentry.place_forget()
                 _render_daily(todo_items, unconfirmed)
                 return
             _render_full(todo_items, unconfirmed, err)
@@ -1335,7 +1373,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         tick_now = time.localtime()
         cv.itemconfig(clock, text=time.strftime("%H:%M", tick_now))
         cv.itemconfig(date_id, text=time.strftime("%m月%d日", tick_now)
-                      + f" 周{'日一二三四五六'[tick_now.tm_wday]}")
+                      + f" 周{'一二三四五六日'[tick_now.tm_wday]}")
         cv.create_text(W_MINI // 2, 92,
                        text=f"待办 {total} · 待定 {unconfirmed}", fill=SUB,
                        font=("Microsoft YaHei UI", 8), tags="body")
@@ -1376,7 +1414,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             tick = time.localtime()
             cv.create_text(W / 2, 70,
                            text=time.strftime("%m月%d日", tick)
-                           + f" 周{'日一二三四五六'[tick.tm_wday]}",
+                           + f" 周{'一二三四五六日'[tick.tm_wday]}",
                            anchor="center", fill=SUB,
                            font=("Microsoft YaHei UI", 9), tags="body")
             cv.create_text(W / 2, 120, text="🎉 今天没有待办", anchor="center",
@@ -1566,10 +1604,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             cv.create_text(PAD + 14, 68, text=f"已选 {n_sel}", anchor="w", fill=TEXT,
                            font=("Microsoft YaHei UI", 9, "bold"), tags="body")
         else:
-            searching = bool(state.get("search"))
-            cv.create_text(PAD + 18, 68, text=("搜" if searching else "＋"),
-                           anchor="center", fill=(ACCENT if searching else SUB),
-                           font=("Microsoft YaHei UI", 9 if searching else 12), tags="body")
+            cv.create_text(PAD + 18, 68, text="＋", anchor="center", fill=SUB,
+                           font=("Microsoft YaHei UI", 12), tags="body")
 
         # 筛选标签：圆角胶囊 + 数量（DeskBox 的 All / Today / ... 风格）
         open_count = sum(1 for i in todo_items if i.status != "done")
@@ -1718,11 +1754,11 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 x_t, y_t = PAD + 48 + xo, y - 9
                 if q:
                     lower = body.lower()
-                    idx = lower.find(q.lower())
-                    if idx >= 0:
-                        before = body[:idx]
-                        hit = body[idx:idx + len(q)]
-                        after = body[idx + len(q):]
+                    hit_pos = lower.find(q.lower())
+                    if hit_pos >= 0:
+                        before = body[:hit_pos]
+                        hit = body[hit_pos:hit_pos + len(q)]
+                        after = body[hit_pos + len(q):]
                         cur = x_t
                         for seg, color in ((before, base_c), (hit, ACCENT), (after, base_c)):
                             if not seg:
@@ -1876,16 +1912,15 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                            font=("Microsoft YaHei UI", 8), tags=("body", "togglen"))
             cv.tag_bind("togglen", "<Button-1>", lambda _e: toggle_top_n())
 
-        # 输入框压在顶部卡片上：搜索模式放搜索框，批量模式两个都藏起来
+        # 输入框压在顶部卡片上：添加框在左、搜索框常驻在右；批量模式两个都藏起来
         if state["batch"]:
             entry.place_forget()
             sentry.place_forget()
-        elif state.get("search"):
-            entry.place_forget()
-            sentry.place(x=PAD + 42, y=57, width=W - 2 * PAD - 52, height=22)
         else:
-            sentry.place_forget()
-            entry.place(x=PAD + 42, y=57, width=W - 2 * PAD - 52, height=22)
+            sw = 100 if W >= 320 else 80
+            entry.place(x=PAD + 42, y=57,
+                        width=W - 2 * PAD - 52 - sw - 8, height=22)
+            sentry.place(x=W - PAD - 8 - sw, y=57, width=sw, height=22)
 
     # ---- 交互绑定 ----
     cv.tag_bind("close", "<Button-1>", lambda _e: close())
@@ -1989,8 +2024,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     def _new_todo(_evt=None) -> str:
         if state["mini"]:
             toggle_mini()
-        if state.get("search"):
-            search_close()               # Ctrl+N：从搜索切回「添加待办」
+        if state.get("query"):
+            search_close()               # Ctrl+N：先清掉搜索词，再聚焦「添加待办」
         ph_off()
         root.after(60, entry.focus_set)
         return "break"        # Ctrl+N：收起时先展开，再把光标放进输入框
@@ -2012,8 +2047,8 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     # mtime 没变时 CPU 几乎零开销；同步完新待办最多 5s 就能看到
     refresh_ms = 5000
 
-    def show_remind_toast(pairs) -> None:
-        """右下角弹一张到期提醒小卡片：点击唤出看板，8 秒自动消失。"""
+    def show_remind_toast(pairs, title: str = "⏰ 到期提醒") -> None:
+        """右下角弹一张提醒小卡片：点击唤出看板，8 秒自动消失。"""
         try:
             from ..core.deadline import label as _due_label
 
@@ -2027,7 +2062,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             body = tk.Frame(toast, bg=PANEL, highlightbackground=BORDER,
                             highlightthickness=1)
             body.pack(fill="both", expand=True)
-            tk.Label(body, text="⏰ 到期提醒", bg=PANEL, fg=ACCENT, anchor="w",
+            tk.Label(body, text=title, bg=PANEL, fg=ACCENT, anchor="w",
                      font=("Microsoft YaHei UI", 9, "bold")).pack(
                 fill="x", padx=12, pady=(8, 2))
             for item, due in pairs[:3]:
@@ -2088,7 +2123,37 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         except Exception:  # noqa: BLE001
             pass
 
+    def check_money_alerts() -> None:
+        """近半小时内的红包 / 转账条目，本次运行还没提醒过就各弹一张卡片。
+
+        这类消息过时就没意义，所以只回溯 30 分钟，避免首次启动被历史消息刷屏。
+        """
+        if not state.get("remind"):
+            return
+        try:
+            import time as _time
+
+            now_ts = _time.time()
+            buckets = {"红包提醒": [], "转账提醒": []}
+            for item in load_items(db_path, "pending"):
+                for reason, bucket in buckets.items():
+                    if (reason in (item.reason or "")
+                            and item.todo_id not in state["reminded"]
+                            and 0 <= now_ts - item.message_ts <= 1800):
+                        bucket.append((item, item.message_ts))
+                        break
+            titles = {"红包提醒": "🧧 群里有新红包", "转账提醒": "💸 群里有转账"}
+            for reason, pairs in buckets.items():
+                if not pairs:
+                    continue
+                pairs.sort(key=lambda pair: pair[1], reverse=True)
+                state["reminded"].update(i.todo_id for i, _ in pairs)
+                show_remind_toast(pairs, title=titles[reason])
+        except Exception:  # noqa: BLE001
+            pass
+
     def loop() -> None:
+        check_money_alerts()
         check_reminders()
         render()
         root.after(refresh_ms, loop)

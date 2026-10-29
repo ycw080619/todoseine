@@ -28,11 +28,23 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))       # 同目录的 c2t_pages 包（按页拆分）
-from c2t_pages import about, ai, general, home, snap, trash  # noqa: E402
+from c2t_pages import about, ai, data, general, home, snap, todo, trash  # noqa: E402
 ROOT = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Chat2Todo"
 CONFIG = ROOT / "c2t.toml"
 DB = ROOT / "qq.db"
 PY = sys.executable
+
+
+def _tools_dir() -> Path:
+    """随包的 tools 目录：frozen 时在 _MEIPASS 下，开发态是仓库 tools/。
+
+    打包后 console.py 的 __file__ 落在 _MEIPASS 根，``HERE.parent`` 会指到
+    解包目录的父级，snap_todo / *.bat 全都找不到。这里统一解析真实位置。
+    """
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", "") or str(Path(sys.executable).parent)
+        return Path(base) / "tools"
+    return HERE.parent
 
 # 设置窗口的 AI 服务商预设：均为 OpenAI 兼容端点（核心 ai.py 用 /chat/completions + Bearer）
 AI_PRESETS = {
@@ -323,13 +335,25 @@ def _set_autostart(on: bool) -> tuple:
                 return False, f"删除启动项失败：{exc}"
         return True, "已关闭开机自启"
 
-    dash_bat = REPO / "tools" / "qq_db_export" / "dash_autostart.bat"
-    snap_bat = REPO / "tools" / "snap_todo" / "snap_autostart.bat"
-    ps = (
-        "$w=New-Object -ComObject WScript.Shell;"
-        f"$a=$w.CreateShortcut('{dash}');$a.TargetPath='{dash_bat}';$a.WindowStyle=7;$a.Save();"
-        f"$b=$w.CreateShortcut('{snap}');$b.TargetPath='{snap_bat}';$b.WindowStyle=7;$b.Save()"
-    )
+    dash_bat = _tools_dir() / "qq_db_export" / "dash_autostart.bat"
+    snap_bat = _tools_dir() / "snap_todo" / "snap_autostart.bat"
+    if getattr(sys, "frozen", False):
+        # exe 场景下 bat 会去调系统 python，找不到打包进来的 chat2todo，必须直指 exe 自身
+        exe = str(sys.executable)
+        snap_py = str(_tools_dir() / "snap_todo" / "snap.py")
+        ps = (
+            "$w=New-Object -ComObject WScript.Shell;"
+            f"$a=$w.CreateShortcut('{dash}');$a.TargetPath='{exe}';"
+            "$a.Arguments='dash --interval 30';$a.WindowStyle=7;$a.Save();"
+            f"$b=$w.CreateShortcut('{snap}');$b.TargetPath='{exe}';"
+            f"$b.Arguments='\"{snap_py}\" --hotkey --db \"{DB}\"';$b.WindowStyle=7;$b.Save()"
+        )
+    else:
+        ps = (
+            "$w=New-Object -ComObject WScript.Shell;"
+            f"$a=$w.CreateShortcut('{dash}');$a.TargetPath='{dash_bat}';$a.WindowStyle=7;$a.Save();"
+            f"$b=$w.CreateShortcut('{snap}');$b.TargetPath='{snap_bat}';$b.WindowStyle=7;$b.Save()"
+        )
     r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
                        capture_output=True, text=True,
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -481,8 +505,25 @@ class Console(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Chat2Todo 控制台")
-        self.geometry("820x580")
-        self.minsize(720, 500)
+        # 默认 820x580 撑不住现在的 4 张卡（新增 + 搜索 + 列表 + 操作两行），
+        # 内容总高度约 520px，加上标题栏和 padding，留一点余量到 620。
+        self.geometry("960x640")
+        self.minsize(820, 600)
+
+        # 给外部自动化一个抓手：启动时把顶层 hwnd 写到指定文件，
+        # 便于脚本 raise 窗口 / 截图 / 关闭。
+        hwnd_file = os.environ.get("C2T_HWND_FILE")
+        if hwnd_file:
+            try:
+                import ctypes
+
+                top = ctypes.windll.user32.GetParent(self.winfo_id())
+                if not top:
+                    top = self.winfo_id()
+                with open(hwnd_file, "w") as f:
+                    f.write(str(int(top)))
+            except Exception:
+                pass
 
         self.syncing = False
         self.watch_proc: subprocess.Popen | None = None
@@ -703,6 +744,8 @@ class Console(tk.Tk):
     # ---------- 单窗口：侧栏 + 分页 ----------
     NAV = [
         ("console", "◈", "控制台"),
+        ("todo", "☑", "待办"),
+        ("data", "⛁", "数据"),
         ("general", "🏠", "常规"),
         ("ai", "✨", "AI 服务"),
         ("snap", "📷", "截图识别"),
@@ -768,6 +811,8 @@ class Console(tk.Tk):
 
         self._pages = {}
         self._build_page_console()
+        self._build_page_todo()
+        self._build_page_data()
         self._build_page_general()
         self._build_page_ai()
         self._build_page_snap()
@@ -826,9 +871,12 @@ class Console(tk.Tk):
         self.page_title.config(text=label[2])
         sub = {
             "console": "同步、看板与运行日志",
+            "todo": "待办的搜索、完成、删除与判定报告",
+            "data": "原文检索、导出、统计与清理",
             "general": "外观、数据库口令与定时同步",
             "ai": "服务商、密钥与连接测试",
             "snap": "截图待办使用的识别引擎",
+            "trash": "回收站与保留天数",
             "about": "版本与数据位置",
         }.get(key, "")
         self.page_sub.config(text=sub)
@@ -865,6 +913,14 @@ class Console(tk.Tk):
     # ---------- 页：控制台 ----------
     def _build_page_console(self) -> None:
         home.build(self, self._ctx)
+
+    # ---------- 页：待办 ----------
+    def _build_page_todo(self) -> None:
+        todo.build(self, self._ctx)
+
+    # ---------- 页：数据 ----------
+    def _build_page_data(self) -> None:
+        data.build(self, self._ctx)
 
     # ---------- 页：常规 ----------
     def _build_page_general(self) -> None:
@@ -999,6 +1055,10 @@ class Console(tk.Tk):
             return
         box.delete(0, "end")
         self._trash_rows = []
+        keyword = ""
+        ent = getattr(self, "trash_search", None)
+        if ent is not None:
+            keyword = ent.get().strip().lower()
         try:
             from chat2todo.core.store import Store
 
@@ -1010,6 +1070,11 @@ class Console(tk.Tk):
         except Exception as exc:  # noqa: BLE001
             self.write(f"读取回收站失败：{exc}\n")
             return
+        if keyword:
+            rows = [r for r in rows
+                    if keyword in (r.get("text") or "").lower()
+                    or keyword in (r.get("sender") or "").lower()
+                    or keyword in (r.get("deleted_at") or "").lower()]
         self._trash_rows = rows
         for r in rows:
             text = (r.get("text") or "").replace("\n", " ")
@@ -1181,13 +1246,19 @@ class Console(tk.Tk):
             messagebox.showinfo("定时同步", "已关闭定时同步")
             return
 
-        bat = Path(__file__).with_name("后台同步.bat")
-        if not bat.exists():
-            messagebox.showerror("定时同步", f"找不到 {bat.name}，请检查安装是否完整")
-            return
+        if getattr(sys, "frozen", False):
+            # exe 场景直接让计划任务跑 exe 自身的 CLI，不依赖系统 python 与 bat
+            tr = (f'"{sys.executable}" -u -m chat2todo --config "{CONFIG}" '
+                  f'db-import --days 1 --db "{DB}"')
+        else:
+            bat = _tools_dir() / "qq_db_export" / "后台同步.bat"
+            if not bat.exists():
+                messagebox.showerror("定时同步", f"找不到 {bat.name}，请检查安装是否完整")
+                return
+            tr = f'cmd /c "{bat}"'
         r = subprocess.run(
             ["schtasks", "/Create", "/TN", task, "/SC", "HOURLY", "/MO", "2",
-             "/TR", f'cmd /c "{bat}"', "/F"],
+             "/TR", tr, "/F"],
             capture_output=True, text=True,
         )
         if r.returncode == 0:
@@ -1429,7 +1500,7 @@ class Console(tk.Tk):
 
     def on_snap(self) -> None:
         """截图待办：独立小窗进程，不阻塞控制台（自带确认弹窗）。"""
-        snap = HERE.parent / "snap_todo" / "snap.py"
+        snap = _tools_dir() / "snap_todo" / "snap.py"
         if not snap.exists():
             messagebox.showerror("截图待办", f"找不到 {snap}\n请检查 tools/snap_todo 是否完整")
             return
@@ -1448,7 +1519,7 @@ class Console(tk.Tk):
             self.snap_btn.config(text="截图热键")
             self.write("已停止截图热键\n")
             return
-        snap = HERE.parent / "snap_todo" / "snap.py"
+        snap = _tools_dir() / "snap_todo" / "snap.py"
         if not snap.exists():
             messagebox.showerror("截图热键", f"找不到 {snap}\n请检查 tools/snap_todo 是否完整")
             return

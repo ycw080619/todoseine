@@ -15,21 +15,71 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import time
 import urllib.error
 import urllib.request
-from typing import Optional
+from typing import Callable, Optional
+from urllib.parse import urlparse
 
-from .config import AI_DEFAULTS
+from .config import AI_DEFAULTS, _as_bool
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """拒绝一切重定向。
+
+    urlopen 默认跟随 302，会把 Authorization 头原样带到新地址——
+    配置的端点只要回一个 302，Bearer <api_key> 就送给了攻击者。
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def url_allowed(url: str) -> bool:
+    """出口白名单：https 放行任意主机；明文 http 只允许本机或内网。
+
+    内网是给 Ollama 这类本地模型留的；公网 http 等于把聊天原文裸奔上网。
+    """
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return False
+    if p.scheme not in ("http", "https"):
+        return False
+    host = (p.hostname or "").lower()
+    if not host:
+        return False
+    if p.scheme == "https":
+        return True
+    if host in ("localhost", "::1"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False        # http + 公网域名 → 拒绝
+    return ip.is_loopback or ip.is_private
 
 
 class AI:
-    def __init__(self, cfg: dict) -> None:
+    def __init__(self, cfg: dict,
+                 on_call: Optional[Callable[[dict], None]] = None) -> None:
         ai = dict(AI_DEFAULTS)
         ai.update(cfg.get("ai") or {})
         self.cfg = ai
-        self.enabled = bool(ai.get("enabled"))
-        self.base_url = str(ai.get("base_url") or "").rstrip("/")
+        self.enabled = _as_bool(ai.get("enabled"))
+        raw_base = str(ai.get("base_url") or "").rstrip("/")
+        # 不安全的主机直接置空 → usable 为 False → 一个请求都不会发
+        self.base_url = raw_base if raw_base and url_allowed(raw_base) else ""
+        self.base_url_rejected = bool(raw_base and not self.base_url)
+        if self.base_url:
+            # 全局装上「不跟随重定向」的 opener：urlopen 之后一律拒绝 3xx，
+            # 避免 Authorization 头被带到别的地址去。
+            urllib.request.install_opener(_NO_REDIRECT_OPENER)
         self.api_key = str(ai.get("api_key") or "")
         import os
 
@@ -37,6 +87,16 @@ class AI:
         self.model = str(ai.get("model") or "gpt-4o-mini")
         self.timeout = int(ai.get("timeout") or 15)
         self.calls = 0
+        self.on_call = on_call
+
+    def _fire(self, record: dict) -> None:
+        """触发 on_call 回调；任何异常吞掉，绝不阻塞主流程。"""
+        if self.on_call is None:
+            return
+        try:
+            self.on_call(record)
+        except Exception:  # noqa: BLE001 - 回调失败不能影响抽取
+            pass
 
     # --- 能力开关 -------------------------------------------------
     def on(self, feature: str) -> bool:
@@ -48,7 +108,7 @@ class AI:
 
     # --- 底层调用 -------------------------------------------------
     def _chat(self, system: str, user: str, max_tokens: int = 256,
-              timeout: Optional[int] = None) -> Optional[str]:
+              timeout: Optional[int] = None, feature: str = "") -> Optional[str]:
         if not self.usable:
             return None
         payload = {
@@ -69,12 +129,33 @@ class AI:
             },
             method="POST",
         )
+        t0 = time.monotonic()
         try:
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
+            latency_ms = int((time.monotonic() - t0) * 1000)
             self.calls += 1
+            usage = body.get("usage") or {}
+            self._fire({
+                "feature": feature,
+                "model": self.model,
+                "in_tokens": int(usage.get("prompt_tokens") or 0),
+                "out_tokens": int(usage.get("completion_tokens") or 0),
+                "latency_ms": latency_ms,
+                "failed": 0,
+            })
             return body["choices"][0]["message"]["content"].strip()
-        except (urllib.error.URLError, KeyError, IndexError, ValueError, OSError):
+        except (urllib.error.URLError, KeyError, IndexError, ValueError,
+                TypeError, AttributeError, OSError):
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            self._fire({
+                "feature": feature,
+                "model": self.model,
+                "in_tokens": 0,
+                "out_tokens": 0,
+                "latency_ms": latency_ms,
+                "failed": 1,
+            })
             return None
 
     # --- 五个环节 -------------------------------------------------
@@ -85,7 +166,7 @@ class AI:
             "判定标准：只要这句话在提醒、通知或要求读者去做某件事，就算“是”；"
             "面向全体的通知（如“大家记得报名”）也算；纯闲聊、纯陈述事实算“否”。",
             f"这句话是否包含需要读者去做的事：\n{text}",
-            max_tokens=4,
+            max_tokens=4, feature="review",
         )
         if not out:
             return None
@@ -99,7 +180,7 @@ class AI:
             "只有纯粹是说话人陈述自己要做什么时才回 B。只回 A 或 B。"
             "A=有我该做的事，B=只是说话人自己的事。",
             text,
-            max_tokens=4,
+            max_tokens=4, feature="intent",
         )
         if not out:
             return None
@@ -110,7 +191,7 @@ class AI:
             "把口语化的要求改写成一条可执行待办，格式：时间 + 动作 + 对象。"
             "保留原文信息，不要编造。只输出改写结果一行。",
             text,
-            max_tokens=80,
+            max_tokens=80, feature="rewrite",
         )
         return out.strip() if out else None
 
@@ -126,7 +207,7 @@ class AI:
             "3) 整理成通顺、保留全部关键事实的分行文本。"
             "严禁编造原文没有的信息，宁可保留原样。只输出整理后的文本。",
             text,
-            max_tokens=600,
+            max_tokens=600, feature="refine_ocr",
             timeout=max(int(self.timeout), 120),   # OCR 文本长，单次放宽超时
         )
         return out.strip() if out else None
@@ -140,7 +221,7 @@ class AI:
             "下面若干条待办里，有些其实在说同一件事。请把说同一件事的合并成一条，"
             "其余原样保留。只输出 JSON 数组，例如 [\"合并后的待办\"]。",
             numbered,
-            max_tokens=300,
+            max_tokens=300, feature="merge",
         )
         if not out:
             return None

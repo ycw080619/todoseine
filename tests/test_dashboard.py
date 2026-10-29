@@ -383,6 +383,27 @@ class TestItemMenu(unittest.TestCase):
                 call[2]()
         self.assertEqual(self.touched, [("edit", 7), ("detail", 7), ("why", 7)])
 
+    def test_mute_menu_items(self) -> None:
+        """看板右键要能选「此类消息不再提醒」，且保留按人 / 按群。"""
+        from chat2todo.dashboard.app import _fill_item_menu
+
+        muted = []
+        item = TodoItem(text="通知", session="群A", sender="张三",
+                        message_ts=0, todo_id=7, status="pending")
+        menu = _FakeMenu()
+        _fill_item_menu(menu, item, mark=self.mark,
+                        edit_item=lambda i: None, show_detail=lambda i: None,
+                        explain_why=lambda i: None,
+                        mute=lambda i, scope: muted.append((i.todo_id, scope)))
+        labels = menu.labels()
+        self.assertIn("此类消息不再提醒", labels)
+        self.assertIn("此人不再提醒", labels)
+        self.assertIn("整个来源不再提醒", labels)
+        for call in menu.calls:
+            if call[0] == "command" and "不再提醒" in call[1]:
+                call[2]()
+        self.assertEqual(muted, [(7, "kind"), (7, "sender"), (7, "source")])
+
 
 if __name__ == "__main__":
     unittest.main()

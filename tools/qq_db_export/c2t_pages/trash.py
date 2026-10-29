@@ -13,6 +13,16 @@ def build(app, ctx) -> None:
              fg=p["muted"], anchor="w",
              font=("Microsoft YaHei UI", 8)).pack(fill="x", padx=28, pady=(0, 6))
 
+    srow = tk.Frame(page, bg=p["bg"])
+    srow.pack(fill="x", padx=28, pady=(0, 4))
+    tk.Label(srow, text="搜索", bg=p["bg"], fg=p["muted"],
+             font=("Microsoft YaHei UI", 8)).pack(side="left")
+    app.trash_search = tk.Entry(srow, bg=p["field"], fg=p["text"], bd=0,
+                                highlightthickness=0, insertbackground=p["text"],
+                                font=("Microsoft YaHei UI", 9))
+    app.trash_search.pack(side="left", fill="x", expand=True, padx=(6, 0))
+    app.trash_search.bind("<KeyRelease>", lambda _e: app._refresh_trash())
+
     card = tk.Frame(page, bg=p["card"], highlightbackground=p["border"],
                     highlightthickness=1)
     card.pack(fill="both", expand=True, padx=28, pady=(8, 16))

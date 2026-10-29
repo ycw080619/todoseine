@@ -59,7 +59,11 @@ AI_DEFAULTS: Dict[str, Any] = {    "enabled": False,
 _HOME_CONFIG = os.path.join(
     os.path.expanduser("~"), ".config", "chat2todo", "config.toml"
 )
-_CANDIDATES = ("c2t.toml", "chat2todo.toml", _HOME_CONFIG)
+# 只认固定的用户目录路径。当前工作目录的 c2t.toml 默认不加载：
+# 在别人给的目录/下载目录里跑一次，就可能被投毒的配置改掉 base_url，
+# 聊天原文与 API key 会被悄悄发出去。需要时用 C2T_TRUST_CWD=1 显式开启。
+_CANDIDATES = (_HOME_CONFIG,)
+_CWD_CANDIDATES = ("c2t.toml", "chat2todo.toml")
 
 
 class ConfigError(Exception):
@@ -145,6 +149,10 @@ def find_file(explicit: Optional[str] = None) -> Optional[str]:
     env = os.environ.get("C2T_CONFIG")
     if env and os.path.exists(env):
         return env
+    if os.environ.get("C2T_TRUST_CWD") == "1":
+        for candidate in _CWD_CANDIDATES:
+            if os.path.exists(candidate):
+                return candidate
     for candidate in _CANDIDATES:
         if os.path.exists(candidate):
             return candidate
@@ -190,7 +198,28 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
         cfg["vector"]["model"] = os.environ["C2T_VECTOR_MODEL"]
     if os.environ.get("C2T_VECTOR_OFF"):
         cfg["vector"]["enabled"] = False
+    # TOML 里写成 enabled = "false"（多打了引号）时 bool("false") is True，
+    # AI 会被意外开启并开始外发聊天原文，这里统一按真值语义纠正一次。
+    for section in ("ai", "vector", "db"):
+        if section in cfg and "enabled" in cfg[section]:
+            cfg[section]["enabled"] = _as_bool(cfg[section]["enabled"], False)
     return cfg
+
+
+_FALSE_WORDS = ("", "0", "false", "no", "off", "none", "null")
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    """把配置里的开关值解析成 bool（字符串按真值语义）。"""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() not in _FALSE_WORDS
+    return default
 
 
 def sample_toml() -> str:

@@ -12,14 +12,25 @@ from ..models import TodoItem
 CSV_FIELDS = ["id", "text", "session", "sender", "ts", "reason", "confidence", "status"]
 
 
+def _safe_cell(value) -> object:
+    """防 CSV 公式注入：以 = + - @ 开头的文本，Excel 会当公式执行。
+
+    聊天内容来自不可信输入，导出时统一加前导单引号，让它被当成纯文本。
+    """
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@"):
+        return "'" + value
+    return value
+
+
 def to_csv(todos: Iterable[TodoItem]) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\n")
     writer.writerow(CSV_FIELDS)
     for t in todos:
         writer.writerow([
-            getattr(t, "todo_id", ""), t.text, t.session, t.sender, t.message_ts,
-            t.reason, f"{t.confidence:.2f}", t.status,
+            getattr(t, "todo_id", ""), _safe_cell(t.text), _safe_cell(t.session),
+            _safe_cell(t.sender), t.message_ts, _safe_cell(t.reason),
+            f"{t.confidence:.2f}", t.status,
         ])
     return buf.getvalue()
 

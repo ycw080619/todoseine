@@ -17,7 +17,7 @@ from . import __version__
 from .adapters import REGISTRY, get_adapter
 from .ai import AI
 from .config import ConfigError, load, sample_toml
-from .core import Store, dedupe, extract_todos, render_markdown, to_csv, to_json
+from .core import Store, dedupe, extract_todos, merge_events, render_markdown, to_csv, to_json
 from .errors import C2TError
 from .models import TodoItem
 
@@ -79,7 +79,11 @@ def _parse_since(text: str) -> int:
 
 
 def _decode_to_temp(path: str, encoding: str) -> str:
-    """--encoding 时把文件解码成临时 UTF-8，交给适配器读。"""
+    """--encoding 时把文件解码成临时 UTF-8，交给适配器读。
+
+    返回值是临时文件路径，调用方用完必须删掉——这里是完整的明文聊天记录，
+    留在 %TEMP% 里等于每次导入都多一份副本。
+    """
     try:
         with open(path, "r", encoding=encoding, errors="strict") as fh:
             text = fh.read()
@@ -92,14 +96,25 @@ def _decode_to_temp(path: str, encoding: str) -> str:
     return tmp
 
 
+def _drop_temp(path: str) -> None:
+    """删掉 _decode_to_temp 落下的明文临时文件（失败不报错）。"""
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 # --- 命令 ---------------------------------------------------------
 def cmd_import(args) -> int:
     if not os.path.exists(args.file):
         raise C2TError("E1001", f"找不到文件 {args.file}")
 
     src = args.file
+    tmp_src = ""
     if args.encoding:
-        src = _decode_to_temp(args.file, args.encoding)
+        src = tmp_src = _decode_to_temp(args.file, args.encoding)
 
     adapter_name = args.adapter if args.adapter != "auto" else _guess_adapter(args.file)
     if adapter_name not in REGISTRY:
@@ -108,60 +123,13 @@ def cmd_import(args) -> int:
 
     cfg = _cfg(args)
     session = args.session or os.path.splitext(os.path.basename(args.file))[0]
-    raw = list(adapter.read(src))
+    try:
+        raw = list(adapter.read(src))
+    finally:
+        _drop_temp(tmp_src)
     unique = dedupe(raw, strict=bool(cfg.get("strict_dedupe")))
-    todos = extract_todos(unique, session=session,
-                          todo_threshold=cfg.get("todo_threshold"),
-                          weak_threshold=cfg.get("pending_threshold"))
 
-    from .semantic import vector_pass
-
-    todos, vec_note = vector_pass(todos, cfg)
-
-    # AI 默认全关；开启后失败也只是退回规则结果
-    ai = AI(cfg)
-    ai_note = ""
-    if ai.calls == 0 and ai.enabled and not ai.usable:
-        ai_note = "（AI 已启用但缺少 base_url/api_key，本次未调用）"
-    if ai.on("review"):
-        kept = []
-        for item in todos:
-            verdict = ai.review(item.text)
-            if verdict is None or verdict:
-                kept.append(item)
-        ai_note = f"（AI 复核：{len(todos)} → {len(kept)}）"
-        todos = kept
-    if ai.on("rewrite"):
-        for item in todos:
-            better = ai.rewrite(item.text)
-            if better:
-                item.text = better
-    if ai.on("intent"):
-        kept = []
-        for item in todos:
-            verdict = ai.intent(item.text)
-            if verdict is not False:          # None = 判断失败，保留规则结论
-                kept.append(item)
-        if len(kept) != len(todos):
-            ai_note = f"{ai_note}（意图过滤：{len(todos)} → {len(kept)}）".strip()
-        todos = kept
-    if ai.on("merge") and len(todos) >= 2:
-        merged = ai.merge([t.text for t in todos])
-        if merged and len(merged) < len(todos):
-            by_text = {t.text: t for t in todos}
-            rebuilt = []
-            for text in merged:
-                base = by_text.get(text)
-                if base is not None:
-                    rebuilt.append(base)
-                else:                          # AI 合并出的新描述：沿用首条元数据并降置信度
-                    first = todos[0]
-                    rebuilt.append(TodoItem(
-                        text=text, session=first.session, sender=first.sender,
-                        message_ts=first.message_ts, reason="AI 归并", confidence=0.70,
-                    ))
-            ai_note = f"{ai_note}（AI 归并：{len(todos)} → {len(rebuilt)}）".strip()
-            todos = rebuilt
+    todos, decisions, llm_records, notes = _run_extraction(unique, cfg, session)
 
     try:
         store = Store(args.db or cfg["db_path"])
@@ -170,6 +138,8 @@ def cmd_import(args) -> int:
     try:
         added = store.add_messages(unique, session=session)
         added_todos = store.add_todos(todos)
+        store.add_decisions(decisions)
+        store.add_llm_calls(llm_records)
         stats = store.stats()
     finally:
         store.close()
@@ -177,7 +147,7 @@ def cmd_import(args) -> int:
     print(f"适配器      : {adapter_name}")
     print(f"读到消息    : {len(raw)}")
     print(f"去重后      : {len(unique)}（新增入库 {added}）")
-    print(f"抽取待办    : {len(todos)}（新增 {added_todos}）{vec_note}{ai_note}")
+    print(f"抽取待办    : {len(todos)}（新增 {added_todos}）{notes}")
     print(f"库内总计    : 消息 {stats['messages']} / 待办 {stats['todos']} / 待处理 {stats['pending']}")
 
     if args.out:
@@ -197,6 +167,91 @@ def _write_export(directory: str, name: str, content: str) -> str:
     return path
 
 
+def _run_extraction(messages, cfg: dict, session: str,
+                    weights_map: dict = None) -> tuple:
+    """统一抽取管线：extract → 跨群合并 → 语义清洗 → AI。
+
+    返回 (todos, decisions, llm_records, notes)。
+    不触碰数据库，落库由调用方负责。
+    """
+    from .semantic import vector_pass
+
+    decisions: list = []
+    todos = extract_todos(messages, session=session,
+                          weights_map=weights_map,
+                          todo_threshold=cfg.get("todo_threshold"),
+                          weak_threshold=cfg.get("pending_threshold"),
+                          decisions=decisions)
+
+    todos, ev_note = merge_events(todos, messages)
+    todos, vec_note = vector_pass(todos, cfg)
+
+    llm_records: list = []
+    ai = AI(cfg, on_call=llm_records.append)
+    ai_note = ""
+    if ai.calls == 0 and ai.enabled and not ai.usable:
+        if ai.base_url_rejected:
+            ai_note = ("（AI 已启用但 base_url 被安全检查拒绝："
+                       "明文 http 只允许本机/内网地址，本次未调用）")
+        else:
+            ai_note = "（AI 已启用但缺少 base_url/api_key，本次未调用）"
+    if ai.on("review"):
+        kept = [t for t in todos if ai.review(t.text) is not False]
+        ai_note = f"{ai_note}（AI 复核 {len(todos)}→{len(kept)}）".strip()
+        todos = kept
+    if ai.on("intent"):
+        kept = [t for t in todos if ai.intent(t.text) is not False]
+        ai_note = f"{ai_note}（意图过滤 {len(todos)}→{len(kept)}）".strip()
+        todos = kept
+    if ai.on("rewrite"):
+        for t in todos:
+            better = ai.rewrite(t.text)
+            if better:
+                t.text = better
+        ai_note = f"{ai_note}（AI 改写）".strip()
+    if ai.on("merge") and len(todos) >= 2:
+        merged = ai.merge([t.text for t in todos])
+        if merged and len(merged) < len(todos):
+            by_text = {t.text: t for t in todos}
+            rebuilt = []
+            for text in merged:
+                base = by_text.get(text)
+                if base is not None:
+                    rebuilt.append(base)
+                else:
+                    first = todos[0]
+                    rebuilt.append(TodoItem(
+                        text=text, session=first.session, sender=first.sender,
+                        message_ts=first.message_ts, reason="AI 归并", confidence=0.70,
+                    ))
+            ai_note = f"{ai_note}（AI 归并 {len(todos)}→{len(rebuilt)}）".strip()
+            todos = rebuilt
+
+    # AI 一次都没成功时不能报「AI 复核过」：那会让用户以为有人工智能把关，
+    # 实际跑的是纯规则结果（密钥过期、断网、端点 500 都会走到这里）。
+    if llm_records and all(r.get("failed") for r in llm_records):
+        ai_note = f"{ai_note}（AI 调用全部失败，已退回纯规则结果）".strip()
+
+    notes = ev_note + vec_note + ai_note
+    return todos, decisions, llm_records, notes
+
+
+def _pad(text: str, width: int) -> str:
+    """按终端显示宽度补空格：中文是全角，按字符数补会让列错位。"""
+    flat = " ".join((text or "").split())
+    shown = sum(2 if ord(ch) > 127 else 1 for ch in flat)
+    if shown <= width:
+        return flat + " " * (width - shown)
+    out, acc = "", 0
+    for ch in flat:
+        w = 2 if ord(ch) > 127 else 1
+        if acc + w > width - 2:
+            break
+        out += ch
+        acc += w
+    return out + "…" + " " * max(0, width - acc - 2)
+
+
 def cmd_todos(args) -> int:
     cfg = _cfg(args)
     db = cfg["db_path"]
@@ -205,15 +260,20 @@ def cmd_todos(args) -> int:
         todos = store.list_todos(args.status)
     finally:
         store.close()
+    if not args.status:
+        # 被用户否掉的 noise / 自己静音掉的 muted 都不该混在待办列表里：
+        # 混进去后「哪些是我处理过的」就完全看不出来了
+        todos = [t for t in todos if t.status not in ("noise", "muted")]
     if not todos:
         print("没有待办。")
         return 0
     for idx, item in enumerate(todos, 1):
-        mark = {"pending": " ", "unconfirmed": "?", "done": "x"}.get(item.status, " ")
+        mark = {"pending": " ", "unconfirmed": "?", "done": "x"}.get(item.status, "-")
         where = f"{item.session} · {item.sender}" if item.session else item.sender
-        print(f"{idx:>2}. [{mark}] {item.text:<28} {where:<12} {item.confidence:.2f}")
+        print(f"{idx:>4}. [{mark}] {_pad(item.text, 46)} {_pad(where, 18)} "
+              f"{item.confidence:.2f}")
         if args.verbose:
-            print(f"       #{item.todo_id} 依据：{item.reason}")
+            print(f"        #{item.todo_id} 依据：{item.reason}")
     return 0
 
 
@@ -227,6 +287,66 @@ def cmd_done(args) -> int:
         print(f"没有编号为 {args.id} 的待办。", file=sys.stderr)
         return 1
     print(f"#{args.id} 已标记完成")
+    return 0
+
+
+def cmd_mute(args) -> int:
+    """对某条待办设置「此类消息以后不再提醒」。"""
+    store = Store(_db(args))
+    try:
+        todo = next((t for t in store.list_todos() if t.todo_id == args.id), None)
+        if todo is None:
+            print(f"没有编号为 {args.id} 的待办。", file=sys.stderr)
+            return 1
+        if args.scope == "source":
+            res = store.mute(todo.session, "")
+            scope = "整个来源"
+        elif args.scope == "sender":
+            res = store.mute(todo.session, todo.sender)
+            scope = f"{todo.sender}"
+        else:
+            res = store.mute(todo.session, "", todo.text)
+            scope = f"此类消息（样板：{todo.text[:24]}…）"
+    finally:
+        store.close()
+    print(f"已静音（{scope}）：规则 #{res['rule_id']}，"
+          f"同时收起 {res['muted_todos']} 条已有待办")
+    print("以后相似的消息不再生成提醒；撤销用 c2t unmute <规则编号>")
+    return 0
+
+
+def cmd_unmute(args) -> int:
+    store = Store(_db(args))
+    try:
+        res = store.unmute(args.id)
+    finally:
+        store.close()
+    if not res["found"]:
+        print(f"没有编号为 {args.id} 的静音规则。", file=sys.stderr)
+        return 1
+    print(f"规则 #{args.id} 已撤销，恢复 {res['restored']} 条待办")
+    return 0
+
+
+def cmd_mutes(args) -> int:
+    store = Store(_db(args))
+    try:
+        rules = store.list_mutes()
+    finally:
+        store.close()
+    if not rules:
+        print("没有静音规则。")
+        return 0
+    for r in rules:
+        if r["kind"] == "kind":
+            where = f"此类：{r['text'][:20]}"
+        elif r["kind"] == "sender":
+            where = f"{r['session']} · {r['sender']}"
+        else:
+            where = f"{r['session'] or '全部来源'}（整群）"
+        print(f"{r['id']:>4}. {_pad(where, 30)} 已收起 {r['muted_count']} 条  "
+              f"{r['created_at']}")
+    print(f"\n共 {len(rules)} 条（撤销用 c2t unmute <编号>）")
     return 0
 
 
@@ -581,7 +701,7 @@ def cmd_db(args) -> int:
 
 def cmd_db_import(args) -> int:
     """从 QQ 数据库只读拉取消息，走与文件导入相同的抽取管线。"""
-    from .core import dedupe, extract_todos
+    from .core import dedupe
     from .sources import load_messages
 
     cfg = _cfg(args)
@@ -603,39 +723,15 @@ def cmd_db_import(args) -> int:
     except Exception as exc:  # noqa: BLE001 - 权重加载失败不阻塞导入
         logging.getLogger("chat2todo.cli").debug("校准权重加载失败，按默认权重打分：%s", exc)
 
-    todos = extract_todos(messages, session=args.session or "qq",
-                          weights_map=weights,
-                          todo_threshold=cfg.get("todo_threshold"),
-                          weak_threshold=cfg.get("pending_threshold"))
-
-    from .semantic import vector_pass
-
-    todos, vec_note = vector_pass(todos, cfg)
-
-    # 本地模型清洗待办：复核 / 意图过滤 / 改写（默认全关，失败静默退规则）
-    ai = AI(cfg)
-    ai_note = ""
-    if ai.enabled and not ai.usable:
-        ai_note = "（AI 已启用但缺少 base_url/api_key，本次未调用）"
-    if ai.on("review"):
-        kept = [t for t in todos if ai.review(t.text) is not False]
-        ai_note = f"{ai_note}（AI 复核 {len(todos)}→{len(kept)}）".strip()
-        todos = kept
-    if ai.on("intent"):
-        kept = [t for t in todos if ai.intent(t.text) is not False]
-        ai_note = f"{ai_note}（意图过滤 {len(todos)}→{len(kept)}）".strip()
-        todos = kept
-    if ai.on("rewrite"):
-        for t in todos:
-            better = ai.rewrite(t.text)
-            if better:
-                t.text = better
-        ai_note = f"{ai_note}（AI 改写）".strip()
+    todos, decisions, llm_records, notes = _run_extraction(
+        messages, cfg, args.session or "qq", weights_map=weights)
 
     store = Store(_db(args))
     try:
         added = store.add_messages(messages)
         tadded = store.add_todos(todos)
+        store.add_decisions(decisions)
+        store.add_llm_calls(llm_records)
         # 顺带刷新群名表（群名在同级另一个库里；失败静默，不影响同步）
         try:
             from .sources import fetch_group_names
@@ -648,7 +744,7 @@ def cmd_db_import(args) -> int:
     print("来源        : 数据库（只读）")
     print(f"读到消息    : {len(messages)}")
     print(f"去重后      : {len(messages)}（新增入库 {added}）")
-    print(f"抽取待办    : {len(todos)}（新增 {tadded}）{vec_note}{ai_note}")
+    print(f"抽取待办    : {len(todos)}（新增 {tadded}）{notes}")
     print(f"库内总计    : 消息 {s['messages']} / 待办 {s['todos']} / 待处理 {s['pending']}")
     return 0
 
@@ -792,29 +888,26 @@ def cmd_serve(args) -> int:
 
 
 def _pipeline(path: str, cfg: dict, encoding: str = "") -> tuple:
-    """把一份导出文件跑完 读→去重→抽取→AI 清洗，返回 (messages, todos)。"""
+    """把一份导出文件跑完 读→去重→抽取→跨群合并→语义→AI 清洗。
+
+    返回 (messages, todos, decisions, llm_records)。
+    """
     src = path
+    tmp_src = ""
     if encoding:
-        src = _decode_to_temp(path, encoding)
+        src = tmp_src = _decode_to_temp(path, encoding)
     name = _guess_adapter(path)
     if name not in REGISTRY:
         raise C2TError("E1002", f"没有名为 {name} 的适配器")
-    raw = list(get_adapter(name).read(src))
+    raw = []
+    try:
+        raw = list(get_adapter(name).read(src))
+    finally:
+        _drop_temp(tmp_src)
     messages = dedupe(raw, strict=bool(cfg.get("strict_dedupe")))
-    todos = extract_todos(messages, session=os.path.splitext(os.path.basename(path))[0],
-                          todo_threshold=cfg.get("todo_threshold"),
-                          weak_threshold=cfg.get("pending_threshold"))
-    ai = AI(cfg)
-    if ai.on("review"):
-        todos = [t for t in todos if ai.review(t.text) is not False]
-    if ai.on("intent"):
-        todos = [t for t in todos if ai.intent(t.text) is not False]
-    if ai.on("rewrite"):
-        for t in todos:
-            better = ai.rewrite(t.text)
-            if better:
-                t.text = better
-    return messages, todos
+    session = os.path.splitext(os.path.basename(path))[0]
+    todos, decisions, llm_records, _ = _run_extraction(messages, cfg, session)
+    return messages, todos, decisions, llm_records
 
 
 def cmd_watch(args) -> int:
@@ -850,11 +943,13 @@ def cmd_watch(args) -> int:
                 if seen.get(name) == stamp:
                     continue
                 try:
-                    messages, todos = _pipeline(path, cfg, args.encoding)
+                    messages, todos, decisions, llm_records = _pipeline(path, cfg, args.encoding)
                     store = Store(_db(args))
                     try:
                         added = store.add_messages(messages)
                         tadded = store.add_todos(todos)
+                        store.add_decisions(decisions)
+                        store.add_llm_calls(llm_records)
                     finally:
                         store.close()
                     print(f"[{_time.strftime('%H:%M:%S')}] {name}: 消息 {len(messages)}"
@@ -891,7 +986,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("todos", help="列出待办")
     p.add_argument("--db", default="")
-    p.add_argument("--status", default=None, choices=["pending", "unconfirmed", "done"])
+    p.add_argument("--status", default=None,
+                   choices=["pending", "unconfirmed", "done", "noise", "muted"])
     p.add_argument("-v", "--verbose", action="store_true", help="同时显示判定依据")
     p.set_defaults(func=cmd_todos)
 
@@ -899,6 +995,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id", type=int)
     p.add_argument("--db", default="")
     p.set_defaults(func=cmd_done)
+
+    p = sub.add_parser("mute", help="此类消息以后不再提醒")
+    p.add_argument("id", type=int, help="待办编号（todos 表里的 id）")
+    p.add_argument("--scope", default="kind", choices=["kind", "sender", "source"],
+                   help="kind=此类消息（默认，按语义相似度）；"
+                        "sender=只静音这个人；source=整个群/整份导出")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_mute)
+
+    p = sub.add_parser("unmute", help="撤销一条静音规则")
+    p.add_argument("id", type=int, help="规则编号（c2t mutes 里看到的）")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_unmute)
+
+    p = sub.add_parser("mutes", help="列出当前静音规则")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_mutes)
 
     p = sub.add_parser("search", help="检索原文")
     p.add_argument("keyword")
@@ -1004,8 +1117,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("plugins", help="扫描 tools/* 下的插件 manifest 打表")
     p.set_defaults(func=cmd_plugins)
 
-    p = sub.add_parser("serve", help="启动本地 HTTP API（仅 127.0.0.1）")
-    p.add_argument("--host", default="127.0.0.1")
+    p = sub.add_parser("serve", help="启动本地 HTTP API（仅本机 127.0.0.1）")
+    p.add_argument("--host", default="127.0.0.1",
+                   choices=["127.0.0.1", "localhost", "::1"],
+                   help="监听地址，仅允许回环地址；API 无鉴权，不要暴露到局域网")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--db", default="")
     p.add_argument("--verbose", action="store_true", help="打印每个请求的访问日志")

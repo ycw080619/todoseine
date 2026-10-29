@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Iterable, List
 
 from ..models import Message, MsgType, TodoItem
@@ -14,13 +15,15 @@ ACTION_WORDS = (
     "记得", "别忘", "不要忘", "安排", "确认", "提交", "报名", "准备",
     "发我", "给我", "处理", "跟进", "回复", "检查", "核对", "务必",
     "需要", "整理", "补一下", "填一下",
+    "交给", "递交", "上交", "交到", "发一下", "传一下",
+    "做完", "做完再", "写一下", "写好", "填好", "报一下",
 )
 TIME_WORDS = (
     "今天", "明天", "后天", "本周", "下周", "周一", "周二", "周三", "周四",
     "周五", "周六", "周日", "上午", "下午", "晚上", "点前", "之前", "截止",
     "月底", "尽快", "今天内",
 )
-SELF_HINTS = ("@我", "麻烦你", "帮我", "你来", "你负责")
+SELF_HINTS = ("@我", "麻烦你", "帮我", "你来", "你负责", "帮忙", "协助")
 QUESTION_HINTS = ("?", "？", "能不能", "可以吗", "行不行", "是否")
 
 
@@ -117,6 +120,30 @@ def _hits(text: str, words: Iterable[str]) -> List[str]:
     return [w for w in words if w in text]
 
 
+def _todo_text(content: str, limit: int = 200) -> str:
+    """把消息裁成一条看得懂的待办文本。
+
+    硬截前 200 字常把「三点前把材料交给老王」这类关键句砍在边界外，
+    留下开头一整段无关铺垫。这里优先取包含动作词/时间词的句子。
+    """
+    text = (content or "").strip()
+    if not text:
+        return ""
+    flat = " ".join(text.split())
+    if len(flat) <= limit:
+        return flat
+    # 按句号/换行切句，挑第一句同时含动作或时间词的；都没有就退回前 limit 字
+    parts = [p.strip() for p in re.split(r"[。！？!?\n]", flat) if p.strip()]
+    marker = ACTION_WORDS + TIME_WORDS
+    for part in parts:
+        if any(w in part for w in marker) and len(part) <= limit:
+            return part
+    for part in parts:
+        if any(w in part for w in marker):
+            return part[:limit]
+    return flat[:limit]
+
+
 def score_message(msg: Message, weights_map: dict = None) -> tuple:
     """返回 (分数, 命中的理由列表)。
 
@@ -177,29 +204,89 @@ def score_message(msg: Message, weights_map: dict = None) -> tuple:
 def extract_todos(messages: Iterable[Message], session: str = "",
                   weights_map: dict = None,
                   todo_threshold: int = TODO_THRESHOLD,
-                  weak_threshold: int = WEAK_THRESHOLD) -> List[TodoItem]:
+                  weak_threshold: int = WEAK_THRESHOLD,
+                  decisions: list = None) -> List[TodoItem]:
     """从消息流里抽取出待办，返回按时间排序的结果。
 
     todo_threshold / weak_threshold 默认取模块常量，但调用方（CLI / 看板）
     应从配置里传 todo_threshold / pending_threshold 进来——否则用户在
     c2t.toml 里改阈值完全不生效。
+
+    decisions 可选出参：若传入一个 list，每条消息（含被过滤掉的）的判定结果
+    会以 dict 形式 append 进去，供决策日志落库。不影响返回值。
     """
     todos: List[TodoItem] = []
     for msg in messages:
-        if classify(msg) == "risk":
+        kind = classify(msg)
+        if kind in ("redpacket", "transfer"):
+            # 红包/转账不是「要做的事」，但值得立刻提醒：生成一条高置信度条目，
+            # 看板会据此弹提示，点完成后就不再打扰。
+            body = (msg.content or "").strip() or "（无文字）"
+            if kind == "redpacket":
+                emoji, label, noun = "🧧", "红包提醒", "发的红包"
+            else:
+                emoji, label, noun = "💸", "转账提醒", "的转账"
+            todos.append(
+                TodoItem(
+                    text=f"{emoji} {msg.sender_name} {noun}：{body}"[:200],
+                    session=session,
+                    sender=msg.sender_name,
+                    message_ts=msg.timestamp,
+                    reason=label,
+                    confidence=0.95,
+                    status="pending",
+                    chat_id=msg.chat_id or "",
+                )
+            )
+            if decisions is not None:
+                decisions.append({
+                    "ts": msg.timestamp, "sender_id": msg.sender_id,
+                    "sender_name": msg.sender_name,
+                    "content_hash": msg.content_hash,
+                    "outcome": "pending", "score": 0,
+                    "threshold": todo_threshold, "reason": label,
+                })
+            continue
+        if kind == "risk":
+            if decisions is not None:
+                decisions.append({
+                    "ts": msg.timestamp, "sender_id": msg.sender_id,
+                    "sender_name": msg.sender_name,
+                    "content_hash": msg.content_hash,
+                    "outcome": "noise", "score": 0,
+                    "threshold": todo_threshold, "reason": "risk 类型",
+                })
             continue
         score, reasons = score_message(msg, weights_map)
+        if decisions is not None:
+            if score >= todo_threshold:
+                outcome = "pending"
+            elif score >= weak_threshold:
+                outcome = "unconfirmed"
+            elif score > 0:
+                outcome = "filtered"
+            else:
+                outcome = "noise"
+            decisions.append({
+                "ts": msg.timestamp, "sender_id": msg.sender_id,
+                "sender_name": msg.sender_name,
+                "content_hash": msg.content_hash,
+                "outcome": outcome, "score": score,
+                "threshold": todo_threshold,
+                "reason": "; ".join(reasons),
+            })
         if score < weak_threshold:
             continue
         todos.append(
             TodoItem(
-                text=(msg.content or "").strip()[:200],
+                text=_todo_text(msg.content),
                 session=session,
                 sender=msg.sender_name,
                 message_ts=msg.timestamp,
                 reason=("★重点 · " if getattr(msg, "star", False) else "") + "; ".join(reasons),
                 confidence=round(min(max(score, 0) / 7.0, 1.0), 2),
                 status="pending" if score >= todo_threshold else "unconfirmed",
+                chat_id=msg.chat_id or "",
             )
         )
     todos.sort(key=lambda t: t.message_ts)

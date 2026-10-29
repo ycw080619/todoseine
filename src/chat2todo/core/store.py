@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -12,8 +13,32 @@ from datetime import datetime, timezone
 from typing import Iterable, List, Optional
 
 from ..models import Message, TodoItem
+from .vector import LocalEmbedder, cosine
 
 logger = logging.getLogger("chat2todo.store")
+
+# 「此类消息」判定：与静音样板的余弦相似度 ≥ 阈值就算同一类。
+# 实测同批通知 0.31–0.63、无关消息 ≤0.12，取 0.25 留出安全余量；
+# 过短的句子字面特征太少，不参与语义判定，避免误伤。
+MUTE_SIM_THRESHOLD = 0.25
+MUTE_MIN_CHARS = 10
+
+
+def _load_vec(raw: str) -> List[float]:
+    """把库里存的向量 JSON 还原成 float 列表；损坏或为空就当没有。"""
+    if not raw:
+        return []
+    try:
+        vec = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(vec, list):
+        return []
+    try:
+        return [float(x) for x in vec]
+    except (TypeError, ValueError):
+        return []
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -27,7 +52,7 @@ CREATE TABLE IF NOT EXISTS messages (
     content_hash TEXT NOT NULL,
     session      TEXT NOT NULL DEFAULT '',
     chat_id      TEXT NOT NULL DEFAULT '',
-    UNIQUE (ts, sender_id, content_len, content_hash)
+    UNIQUE (ts, sender_id, content_len, content_hash, chat_id)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages (ts);
 
@@ -66,6 +91,20 @@ CREATE TABLE IF NOT EXISTS chat_names (
     name    TEXT NOT NULL DEFAULT ''
 );
 
+-- 静音规则：对某条通知点「以后不再提醒」后写一行。
+--   text 非空  → 语义静音：之后与这句相似的消息都算「此类」，不再提醒
+--   sender 非空 → 只静音这个来源里的这个人
+--   session 非空且 sender 为空 → 整个来源（整个群/整份导出）静音
+CREATE TABLE IF NOT EXISTS mutes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session    TEXT NOT NULL DEFAULT '',
+    sender     TEXT NOT NULL DEFAULT '',
+    text       TEXT NOT NULL DEFAULT '',
+    vector     TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mutes_key ON mutes (session, sender, text);
+
 -- 用户校准反馈：每次点「非待办/完成/恢复」都写一条，长这个用户专属权重表
 -- todo_id 故意可空、且不建 FK：校准档案要能跨机器导入，落地时源库的 todo_id
 -- 在本库多半不存在，硬约束会让整份档案导入失败。孤儿行由 _heal_feedback_orphans()
@@ -83,6 +122,35 @@ CREATE TABLE IF NOT EXISTS feedback (
 CREATE INDEX IF NOT EXISTS idx_feedback_lookup
     ON feedback (chat_id, sender, reason_tags);
 
+-- 决策日志：每条消息一个最终判定结果，便于追溯"为什么没进待办"
+CREATE TABLE IF NOT EXISTS decisions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts           INTEGER NOT NULL,
+    sender_id    TEXT NOT NULL DEFAULT '',
+    sender_name  TEXT NOT NULL DEFAULT '',
+    content_hash TEXT NOT NULL DEFAULT '',
+    outcome      TEXT NOT NULL,       -- pending / unconfirmed / filtered / noise / deduped
+    score        REAL NOT NULL DEFAULT 0,
+    threshold    REAL NOT NULL DEFAULT 0,
+    reason       TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_decisions_lookup
+    ON decisions (ts, sender_id, content_hash);
+
+-- LLM 调用记录：每次 AI 调用一行，事后可算成本、查失败率
+CREATE TABLE IF NOT EXISTS llm_calls (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    feature      TEXT NOT NULL,       -- review / intent / rewrite / merge / refine_ocr
+    model        TEXT NOT NULL DEFAULT '',
+    in_tokens    INTEGER NOT NULL DEFAULT 0,
+    out_tokens   INTEGER NOT NULL DEFAULT 0,
+    latency_ms   INTEGER NOT NULL DEFAULT 0,
+    failed       INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_feature ON llm_calls (feature);
+
 -- 内部簿记（FTS 增量同步水位等），一个 key 一行
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -94,7 +162,7 @@ CREATE TABLE IF NOT EXISTS meta (
 class Store:
     # bump 这个版本号时，_migrate 会对老库跑一遍结构补齐 + 孤儿解绑；
     # 当前版本没变就直接跳过，避免看板每 30 秒刷新都跑一次全表 UPDATE。
-    SCHEMA_VERSION = "3"
+    SCHEMA_VERSION = "6"
 
     def __init__(self, path: str = "c2t.db") -> None:
         self.path = path
@@ -151,9 +219,82 @@ class Store:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages (chat_id)"
         )
+        self._rebuild_messages_chat_unique()
+        self._migrate_mutes()
         self._rebuild_feedback_nullable()
         self._heal_feedback_orphans()
         self._meta_set("schema_version", self.SCHEMA_VERSION)
+        self.conn.commit()
+
+    def _migrate_mutes(self) -> None:
+        """静音表从「按人/按来源」升级到「按语义」：补 text/vector 两列。
+
+        唯一键也要从 (session, sender) 放宽到 (session, sender, text)，
+        否则同一个来源下存不下第二条「此类消息」样板。
+        """
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(mutes)")}
+        if "text" not in cols:
+            self.conn.execute(
+                "ALTER TABLE mutes ADD COLUMN text TEXT NOT NULL DEFAULT ''")
+        if "vector" not in cols:
+            self.conn.execute(
+                "ALTER TABLE mutes ADD COLUMN vector TEXT NOT NULL DEFAULT ''")
+        self.conn.execute("DROP INDEX IF EXISTS idx_mutes_key")
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_mutes_key "
+            "ON mutes (session, sender, text)")
+        self.conn.commit()
+
+    def _rebuild_messages_chat_unique(self) -> None:
+        """把 messages 的唯一键从 4 列放宽到 5 列（补 chat_id）。
+
+        老库的 UNIQUE (ts, sender_id, content_len, content_hash) 会把
+        「同一秒、同一人、同一句话、发到两个群」的第二条当成重复丢掉。
+        唯一约束没法 ALTER，只能重建表；id 原样保留，FTS 增量水位不受影响。
+        """
+        uniques = []
+        for idx in self.conn.execute("PRAGMA index_list(messages)").fetchall():
+            if not idx[2]:      # 只看 UNIQUE 索引
+                continue
+            cols = [r[2] for r in
+                    self.conn.execute(f"PRAGMA index_info('{idx[1]}')").fetchall()]
+            if cols:
+                uniques.append(cols)
+        if any("chat_id" in cols for cols in uniques):
+            return              # 已经是新结构
+
+        self.conn.commit()
+        self.conn.execute("""
+            CREATE TABLE messages_new (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts           INTEGER NOT NULL,
+                sender_id    TEXT NOT NULL,
+                sender_name  TEXT NOT NULL,
+                content      TEXT NOT NULL,
+                type         INTEGER NOT NULL DEFAULT 0,
+                content_len  INTEGER NOT NULL,
+                content_hash TEXT NOT NULL,
+                session      TEXT NOT NULL DEFAULT '',
+                chat_id      TEXT NOT NULL DEFAULT '',
+                UNIQUE (ts, sender_id, content_len, content_hash, chat_id)
+            )
+        """)
+        self.conn.execute("""
+            INSERT INTO messages_new
+                (id, ts, sender_id, sender_name, content, type,
+                 content_len, content_hash, session, chat_id)
+            SELECT id, ts, sender_id, sender_name, content, type,
+                   content_len, content_hash, session, chat_id
+            FROM messages
+        """)
+        self.conn.execute("DROP TABLE messages")
+        self.conn.execute("ALTER TABLE messages_new RENAME TO messages")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages (ts)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages (chat_id)"
+        )
         self.conn.commit()
 
     def _rebuild_feedback_nullable(self) -> None:
@@ -283,10 +424,12 @@ class Store:
             except sqlite3.OperationalError:
                 rows = []
         if not rows:
+            # LIKE 通配符必须转义：搜 "%" 会匹配全部原文，一次拉走整库
+            esc = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             rows = self.conn.execute(
-                "SELECT * FROM messages WHERE content LIKE ? OR sender_name LIKE ? "
-                "ORDER BY ts LIMIT ?",
-                (f"%{keyword}%", f"%{keyword}%", limit),
+                "SELECT * FROM messages WHERE content LIKE ? ESCAPE '\\' "
+                "OR sender_name LIKE ? ESCAPE '\\' ORDER BY ts LIMIT ?",
+                (f"%{esc}%", f"%{esc}%", limit),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -325,13 +468,20 @@ class Store:
             for m in messages
         ]
         before = self._count("messages")
+        # 先把历史行缺失的 chat_id 补上：唯一的冲突键现在包含 chat_id，
+        # 不先回填的话，老的空群号行和新行会被当成两条不同消息。
+        self.conn.executemany(
+            "UPDATE messages SET chat_id = ? "
+            "WHERE ts = ? AND sender_id = ? AND content_len = ? AND content_hash = ? "
+            "AND chat_id = '' AND ? != ''",
+            [(r[8], r[0], r[1], r[5], r[6], r[8]) for r in rows],
+        )
         self.conn.executemany(
             "INSERT INTO messages "
             "(ts, sender_id, sender_name, content, type, content_len, content_hash, "
             "session, chat_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT (ts, sender_id, content_len, content_hash) DO UPDATE SET "
-            "chat_id = excluded.chat_id WHERE messages.chat_id = ''",
+            "ON CONFLICT (ts, sender_id, content_len, content_hash, chat_id) DO NOTHING",
             rows,
         )
         self.conn.commit()
@@ -341,14 +491,106 @@ class Store:
     def add_todos(self, todos: Iterable[TodoItem]) -> int:
         before = self._count("todos")
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        # 命中静音规则的条目直接落成 muted：既不进列表也不提醒，
+        # 但数据仍在，撤销静音后能原样恢复（比丢弃安全）。
+        rules = self.muted_rules()
+        seeds = self.semantic_seeds()
+        payload = []
+        for t in todos:
+            row = list(t.as_row())
+            if row[6] in ("pending", "unconfirmed") and (
+                    self.is_muted(t.session, t.sender, rules)
+                    or self.matches_seed(t.text, seeds)[0]):
+                row[6] = "muted"
+            payload.append(tuple(row) + (now,))
         self.conn.executemany(
             "INSERT OR IGNORE INTO todos "
             "(text, session, sender, ts, reason, confidence, status, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [t.as_row() + (now,) for t in todos],
+            payload,
         )
         self.conn.commit()
         return self._count("todos") - before
+
+    # --- 决策日志 -------------------------------------------------
+    def add_decisions(self, rows: Iterable[dict]) -> int:
+        """批量写入决策日志。rows 每项含 ts/sender_id/sender_name/content_hash/
+        outcome/score/threshold/reason。返回写入条数。"""
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        payload = [
+            (
+                int(r["ts"]), str(r.get("sender_id") or ""),
+                str(r.get("sender_name") or ""), str(r.get("content_hash") or ""),
+                str(r["outcome"]), float(r.get("score") or 0),
+                float(r.get("threshold") or 0), str(r.get("reason") or ""), now,
+            )
+            for r in rows
+        ]
+        if not payload:
+            return 0
+        self.conn.executemany(
+            "INSERT INTO decisions "
+            "(ts, sender_id, sender_name, content_hash, outcome, score, "
+            "threshold, reason, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            payload,
+        )
+        self.conn.commit()
+        return len(payload)
+
+    def query_decision(self, ts: int, sender_id: str,
+                       content_hash: str) -> Optional[dict]:
+        """按消息定位它的判定结果（最近一条）。"""
+        row = self.conn.execute(
+            "SELECT * FROM decisions WHERE ts=? AND sender_id=? AND content_hash=? "
+            "ORDER BY id DESC LIMIT 1",
+            (int(ts), str(sender_id or ""), str(content_hash or "")),
+        ).fetchone()
+        return dict(row) if row else None
+
+    # --- LLM 调用记录 ---------------------------------------------
+    def add_llm_calls(self, rows: Iterable[dict]) -> int:
+        """批量写入 LLM 调用记录。rows 每项含 feature/model/in_tokens/
+        out_tokens/latency_ms/failed。返回写入条数。"""
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        payload = [
+            (
+                str(r["feature"]), str(r.get("model") or ""),
+                int(r.get("in_tokens") or 0), int(r.get("out_tokens") or 0),
+                int(r.get("latency_ms") or 0), int(r.get("failed") or 0), now,
+            )
+            for r in rows
+        ]
+        if not payload:
+            return 0
+        self.conn.executemany(
+            "INSERT INTO llm_calls "
+            "(feature, model, in_tokens, out_tokens, latency_ms, failed, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            payload,
+        )
+        self.conn.commit()
+        return len(payload)
+
+    def llm_stats(self) -> dict:
+        """按 feature 聚合：调用数、失败数、平均延迟（ms）。"""
+        rows = self.conn.execute(
+            "SELECT feature, COUNT(*) AS n, SUM(failed) AS fails, "
+            "AVG(latency_ms) AS avg_lat "
+            "FROM llm_calls GROUP BY feature"
+        ).fetchall()
+        total = self.conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0]
+        return {
+            "total": total,
+            "features": {
+                r["feature"]: {
+                    "calls": r["n"],
+                    "failed": r["fails"] or 0,
+                    "avg_latency_ms": round(r["avg_lat"] or 0, 1),
+                }
+                for r in rows
+            },
+        }
 
     # --- 群名（仅展示用） ------------------------------------------
     def set_chat_names(self, names: dict) -> int:
@@ -512,6 +754,167 @@ class Store:
         self.conn.commit()
         return cur.rowcount > 0
 
+    # ---------- 静音规则（以后不再提醒） ------------------------
+    def muted_rules(self) -> list:
+        """按人/按来源的规则对；语义规则（text 非空）不在这里，另有向量判定。"""
+        return [(r["session"], r["sender"]) for r in self.conn.execute(
+            "SELECT session, sender FROM mutes WHERE text = '' ORDER BY id").fetchall()]
+
+    def semantic_seeds(self) -> List[tuple]:
+        """语义静音样板：[(text, vector)]，vector 缺失时按 text 现算。"""
+        rows = self.conn.execute(
+            "SELECT text, vector FROM mutes WHERE text != '' ORDER BY id").fetchall()
+        emb = LocalEmbedder()
+        seeds = []
+        for r in rows:
+            vec = _load_vec(r["vector"])
+            if not vec:
+                vec = emb.embed([r["text"]])[0]
+            seeds.append((r["text"], vec))
+        return seeds
+
+    @staticmethod
+    def is_muted(session: str, sender: str, rules) -> bool:
+        """规则为空串表示通配：session 空 = 任何来源，sender 空 = 该来源的所有人。"""
+        s, who = (session or ""), (sender or "")
+        for rs, rw in rules:
+            if (not rs or rs == s) and (not rw or rw == who):
+                return True
+        return False
+
+    @staticmethod
+    def matches_seed(text: str, seeds) -> tuple:
+        """这条待办是不是「此类消息」。返回 (命中, 相似度)。"""
+        flat = " ".join((text or "").split())
+        if not seeds or len(flat) < MUTE_MIN_CHARS:
+            return False, 0.0
+        query = LocalEmbedder().embed([flat])[0]
+        best = max((cosine(query, vec) for _, vec in seeds), default=0.0)
+        return best >= MUTE_SIM_THRESHOLD, best
+
+    def mute(self, session: str, sender: str = "", text: str = "") -> dict:
+        """新增一条静音规则。
+
+        text 非空  → 语义静音：此后与这句话相似的消息都算「此类」，不再提醒；
+        sender 非空 → 只静音这个来源里的这个人；
+        两者都空   → 整个来源静音。
+        已存在的待办一并转成 muted，列表和提醒里立刻消失；撤销后能恢复。
+        返回 {'rule_id', 'created', 'muted_todos'}。
+        """
+        session = (session or "").strip()
+        sender = (sender or "").strip()
+        text = " ".join((text or "").split())[:200]
+        if not session and not sender and not text:
+            raise ValueError("session、sender、text 不能同时为空")
+        vec_json = ""
+        if text:
+            vec_json = json.dumps(LocalEmbedder().embed([text])[0])
+        created_at = datetime.now().isoformat(timespec="seconds")
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO mutes (session, sender, text, vector, created_at) "
+            "VALUES (?, ?, ?, ?, ?)", (session, sender, text, vec_json, created_at))
+        created = cur.rowcount > 0
+        rule_id = self.conn.execute(
+            "SELECT id FROM mutes WHERE session=? AND sender=? AND text=?",
+            (session, sender, text)).fetchone()["id"]
+        muted = self._apply_mute_rules()
+        self.conn.commit()
+        return {"rule_id": rule_id, "created": created, "muted_todos": muted}
+
+    def _apply_mute_rules(self) -> int:
+        """按当前全部规则，把还活着的待办里命中的那些一次性收成 muted。"""
+        rules = self.muted_rules()
+        seeds = self.semantic_seeds()
+        if not rules and not seeds:
+            return 0
+        rows = self.conn.execute(
+            "SELECT id, text, session, sender FROM todos "
+            "WHERE status IN ('pending', 'unconfirmed')").fetchall()
+        hit = [r["id"] for r in rows
+               if self.is_muted(r["session"], r["sender"], rules)
+               or self.matches_seed(r["text"], seeds)[0]]
+        if hit:
+            self.conn.executemany(
+                "UPDATE todos SET status='muted' WHERE id=?", [(i,) for i in hit])
+        return len(hit)
+
+    def list_mutes(self) -> List[dict]:
+        """列出静音规则，附带每条规则当前压住多少条待办。"""
+        rows = self.conn.execute("SELECT * FROM mutes ORDER BY id").fetchall()
+        emb = LocalEmbedder()
+        live = self.conn.execute(
+            "SELECT text, session, sender FROM todos WHERE status='muted'").fetchall()
+        out = []
+        for r in rows:
+            if r["text"]:
+                own = [(r["text"], _load_vec(r["vector"]) or emb.embed([r["text"]])[0])]
+                count = sum(1 for t in live if self.matches_seed(t["text"], own)[0])
+                kind = "kind"
+            else:
+                scope = [(r["session"], r["sender"])]
+                count = sum(
+                    1 for t in live if self.is_muted(t["session"], t["sender"], scope))
+                kind = "sender" if r["sender"] else "source"
+            item = dict(r)
+            item.pop("vector", None)
+            item["muted_count"] = count
+            item["kind"] = kind
+            out.append(item)
+        return out
+
+    def unmute(self, rule_id: int) -> dict:
+        """按规则编号撤销静音；被撤销规则覆盖的条目恢复成 pending。"""
+        row = self.conn.execute(
+            "SELECT * FROM mutes WHERE id=?", (rule_id,)).fetchone()
+        if not row:
+            return {"rule_id": rule_id, "restored": 0, "found": False}
+        self.conn.execute("DELETE FROM mutes WHERE id=?", (rule_id,))
+        restored = self._restore_uncovered()
+        self.conn.commit()
+        return {"rule_id": rule_id, "restored": restored, "found": True,
+                "session": row["session"], "sender": row["sender"],
+                "text": row["text"]}
+
+    def release(self, session: str, sender: str = "", text: str = "") -> int:
+        """撤销覆盖这条待办的所有规则（控制台/看板「恢复提醒」用）。
+
+        返回恢复成待办的条数；没有命中规则返回 0。
+        """
+        rows = self.conn.execute("SELECT * FROM mutes").fetchall()
+        emb = LocalEmbedder()
+        hit = []
+        for r in rows:
+            if r["text"]:
+                if not text:
+                    continue
+                vec = _load_vec(r["vector"]) or emb.embed([r["text"]])[0]
+                if self.matches_seed(text, [(r["text"], vec)])[0]:
+                    hit.append(r["id"])
+                continue
+            if (not r["session"] or r["session"] == session) and (
+                    not r["sender"] or r["sender"] == sender):
+                hit.append(r["id"])
+        if not hit:
+            return 0
+        self.conn.executemany("DELETE FROM mutes WHERE id=?", [(i,) for i in hit])
+        restored = self._restore_uncovered()
+        self.conn.commit()
+        return restored
+
+    def _restore_uncovered(self) -> int:
+        """把已经不再被任何规则覆盖的 muted 条目恢复成 pending。"""
+        rules = self.muted_rules()
+        seeds = self.semantic_seeds()
+        rows = self.conn.execute(
+            "SELECT id, text, session, sender FROM todos WHERE status='muted'").fetchall()
+        restore = [r["id"] for r in rows
+                   if not self.is_muted(r["session"], r["sender"], rules)
+                   and not self.matches_seed(r["text"], seeds)[0]]
+        if restore:
+            self.conn.executemany(
+                "UPDATE todos SET status='pending' WHERE id=?", [(i,) for i in restore])
+        return len(restore)
+
     def unreviewed_todos(self, limit: int = 0) -> List[TodoItem]:
         """还没被 AI 复核过的待办（增量复核用，避免每次全量重跑）。"""
         sql = "SELECT * FROM todos WHERE reviewed = 0 ORDER BY ts DESC"
@@ -566,8 +969,9 @@ class Store:
         chat_id = ""
         try:
             mrow = self.conn.execute(
-                "SELECT chat_id FROM messages WHERE ts=? AND sender_id=? LIMIT 1",
-                (row["ts"], row["sender"])).fetchone()
+                "SELECT chat_id FROM messages WHERE ts=? "
+                "AND (sender_name=? OR sender_id=?) LIMIT 1",
+                (row["ts"], row["sender"], row["sender"])).fetchone()
             if mrow:
                 chat_id = mrow["chat_id"] or ""
         except Exception:  # noqa: BLE001 - messages 可能不存在这个 ts/sender 组合
@@ -698,8 +1102,9 @@ class Store:
         chat_id = ""
         try:
             mrow = self.conn.execute(
-                "SELECT chat_id FROM messages WHERE ts=? AND sender_id=? LIMIT 1",
-                (row["ts"], row["sender"])).fetchone()
+                "SELECT chat_id FROM messages WHERE ts=? "
+                "AND (sender_name=? OR sender_id=?) LIMIT 1",
+                (row["ts"], row["sender"], row["sender"])).fetchone()
             if mrow:
                 chat_id = mrow["chat_id"] or ""
         except Exception:  # noqa: BLE001
@@ -711,8 +1116,8 @@ class Store:
         try:
             mrow = self.conn.execute(
                 "SELECT id, ts, sender_name, content, chat_id "
-                "FROM messages WHERE ts=? AND sender_id=? LIMIT 1",
-                (row["ts"], sender)).fetchone()
+                "FROM messages WHERE ts=? AND (sender_name=? OR sender_id=?) LIMIT 1",
+                (row["ts"], sender, sender)).fetchone()
             if mrow:
                 original_msg = dict(mrow)
         except Exception:  # noqa: BLE001
@@ -911,17 +1316,23 @@ class Store:
         return int(self.conn.execute("SELECT COUNT(*) FROM trash").fetchone()[0])
 
     def restore(self, trash_id: int) -> bool:
-        """从回收站还原成待办（状态回到 pending）。"""
+        """从回收站还原成待办（状态回到 pending）。
+
+        同一条待办已存在（text/ts/sender 撞 UNIQUE）时 INSERT OR IGNORE 会静默丢弃，
+        此时必须保留回收站记录并返回 False，否则待办彻底消失且界面还报成功。
+        """
         r = self.conn.execute("SELECT * FROM trash WHERE id=?", (trash_id,)).fetchone()
         if not r:
             return False
-        self.conn.execute(
+        cur = self.conn.execute(
             "INSERT OR IGNORE INTO todos (text, session, sender, ts, reason, "
             "confidence, status, created_at, done_at, reviewed) "
             "VALUES (?,?,?,?,?,?,'pending',?,'',1)",
             (r["text"], r["session"], r["sender"], r["ts"], r["reason"],
              r["confidence"], r["created_at"]),
         )
+        if not cur.rowcount:
+            return False        # 已有同一条待办，回收站记录不动
         self.conn.execute("DELETE FROM trash WHERE id=?", (trash_id,))
         self.conn.commit()
         return True
@@ -951,6 +1362,18 @@ class Store:
                 "pending": self.conn.execute(
                     "SELECT COUNT(*) FROM todos WHERE status='pending'"
                 ).fetchone()[0],
+                "unconfirmed": self.conn.execute(
+                    "SELECT COUNT(*) FROM todos WHERE status='unconfirmed'"
+                ).fetchone()[0],
+                "rejected": self.conn.execute(
+                    "SELECT COUNT(*) FROM todos WHERE status='noise'"
+                ).fetchone()[0],
+                "done": self.conn.execute(
+                    "SELECT COUNT(*) FROM todos WHERE status='done'"
+                ).fetchone()[0],
+                "muted": self.conn.execute(
+                    "SELECT COUNT(*) FROM todos WHERE status='muted'"
+                ).fetchone()[0],
             }
         return {
             "messages": self.conn.execute(
@@ -961,6 +1384,19 @@ class Store:
             ).fetchone()[0],
             "pending": self.conn.execute(
                 "SELECT COUNT(*) FROM todos WHERE status='pending' AND ts >= ?", (since_ts,)
+            ).fetchone()[0],
+            "unconfirmed": self.conn.execute(
+                "SELECT COUNT(*) FROM todos WHERE status='unconfirmed' AND ts >= ?",
+                (since_ts,),
+            ).fetchone()[0],
+            "rejected": self.conn.execute(
+                "SELECT COUNT(*) FROM todos WHERE status='noise' AND ts >= ?", (since_ts,)
+            ).fetchone()[0],
+            "done": self.conn.execute(
+                "SELECT COUNT(*) FROM todos WHERE status='done' AND ts >= ?", (since_ts,)
+            ).fetchone()[0],
+            "muted": self.conn.execute(
+                "SELECT COUNT(*) FROM todos WHERE status='muted' AND ts >= ?", (since_ts,)
             ).fetchone()[0],
         }
 

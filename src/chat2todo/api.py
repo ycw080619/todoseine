@@ -136,6 +136,12 @@ class _ApiHandler(BaseHTTPRequestHandler):
         if not _is_local(self.client_address[0]):
             self._send(403, {"error": "只接受本机请求"})
             return
+        # 只接受 JSON：跨站页面能用 text/plain 发「简单请求」绕过 CORS 预检，
+        # 这里卡掉一切非 JSON 的写操作，浏览器就没法偷偷改/删待办。
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            self._send(415, {"error": "Content-Type 必须是 application/json"})
+            return
         path = urlparse(self.path).path.rstrip("/")
         parts = [p for p in path.split("/") if p]
 

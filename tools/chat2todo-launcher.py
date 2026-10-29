@@ -73,8 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     # 规则 2：args[0] 是 .py 文件路径 → snap_todo 等独立脚本
     if args and args[0].lower().endswith(".py"):
         if getattr(sys, "frozen", False):
-            print(f"[chat2todo] 此功能未打包为 exe，开发态运行可用：{args[0]}", file=sys.stderr)
-            return 1
+            return _run_script_inprocess(args)
         return _route_script(args)
 
     # 规则 3：第一个参数是已知子命令 → CLI
@@ -104,6 +103,26 @@ def _route_script(args: list[str]) -> int:
 
     proc = subprocess.run([sys.executable, str(script), *args[1:]])
     return proc.returncode
+
+
+def _run_script_inprocess(args: list[str]) -> int:
+    """frozen：用打包内的解释器直接执行随包的 .py（tools/ 已在 spec datas 里）。
+
+    PyInstaller 的 windowed exe 无法再启动外部 Python 进程跑任意脚本，
+    但可以用 runpy 在本进程内执行解包目录下的 .py，依赖标准库与已打包模块。
+    """
+    import runpy
+
+    script = Path(args[0])
+    if not script.exists():
+        print(f"[chat2todo] 脚本不存在：{script}", file=sys.stderr)
+        return 1
+    sys.argv = [str(script), *args[1:]]
+    try:
+        runpy.run_path(str(script), run_name="__main__")
+    except SystemExit as exc:
+        return int(exc.code) if exc.code is not None else 0
+    return 0
 
 
 def _route_console(args: list[str]) -> int:

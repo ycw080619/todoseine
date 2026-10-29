@@ -73,13 +73,15 @@ class Message:
     def content_hash(self) -> str:
         return hashlib.sha1((self.content or "").encode("utf-8")).hexdigest()[:16]
 
-    def dedupe_key(self) -> Tuple[int, str, int, str]:
-        """去重键：时间戳 + 发送者 + 内容长度 + 内容哈希。
+    def dedupe_key(self) -> Tuple[int, str, int, str, str]:
+        """去重键：时间戳 + 发送者 + 内容长度 + 内容哈希 + 来源群。
 
-        前三项与 ChatLab 的增量去重规则一致；第四项用于区分
-        「同一秒、同一人、等长但内容不同」的两条消息。
+        前四项与 ChatLab 的增量去重规则一致；chat_id 必须参与，
+        否则「同一秒同一人把同一句话发到两个群」会被误判成重复，
+        第二条真实消息被永久丢弃。
         """
-        return (self.timestamp, self.sender_id, len(self.content or ""), self.content_hash)
+        return (self.timestamp, self.sender_id, len(self.content or ""),
+                self.content_hash, self.chat_id or "")
 
 
 @dataclass
@@ -101,6 +103,7 @@ class TodoItem:
     status: str = "pending"
     todo_id: Optional[int] = None
     done_at: str = ""          # 完成日期（YYYY-MM-DD），用于当天保留、次日归档
+    chat_id: str = ""          # 来源群号（内存态，不入库；供跨群事件合并判定来源）
 
     def as_row(self) -> Tuple:
         return (

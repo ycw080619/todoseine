@@ -131,12 +131,20 @@ def _rows_to_messages(rows: Iterable[Dict], star_groups: set = frozenset(),
     for row in rows:
         text = row.get("content") or row.get("text") or ""
         ts = row.get("timestamp") or row.get("ts") or 0
-        sender = row.get("sender") or row.get("sender_id") or ""
+        # 真正的发言者 ID 字段名各家不一，先按常见别名找；
+        # 找不到时才退回 sender / sender_id（有些导出工具把群号塞在这里）
+        uid = (row.get("sender_uid") or row.get("sender_uin") or row.get("uin")
+               or row.get("uid") or row.get("user_id") or "")
+        sender = uid or row.get("sender") or row.get("sender_id") or ""
         name = row.get("sender_name") or row.get("name") or str(sender)
         if not text:
             continue
         chat = str(row.get("chat_id") or "")
         sender_s = str(sender)
+        if uid == "" and chat and sender_s and sender_s == chat and name and name != chat:
+            # sender_id 和 chat_id 一模一样 → 这个字段其实是群号。
+            # 用昵称作替代键，至少不会让「同群不同人」在去重时互相吞掉。
+            sender_s = str(name)
         starred = bool(
             (chat and chat in star_groups)
             or (sender_s and sender_s in star_groups)
@@ -145,7 +153,7 @@ def _rows_to_messages(rows: Iterable[Dict], star_groups: set = frozenset(),
         out.append(
             Message(
                 timestamp=int(ts),
-                sender_id=str(sender),
+                sender_id=sender_s,
                 sender_name=str(name),
                 content=str(text),
                 type=int(row.get("type", 0)),
@@ -166,7 +174,9 @@ class CommunityBackend:
     name = "community"
 
     def available(self) -> bool:
-        return bool(self.module) and os.path.exists(self.module)
+        # 必须是可执行的文件；os.path.exists 对目录也返回 True，
+        # 配置里填个目录就会把子进程启动成「执行目录」，静默失败或更糟。
+        return bool(self.module) and os.path.isfile(self.module)
 
     def fetch(self, db: DBInfo, limit: int = 0, since: int = 0) -> List[Dict]:
         if not self.available():
@@ -177,8 +187,10 @@ class CommunityBackend:
         cmd.append(db.path)
         if limit:
             cmd += ["--limit", str(limit)]
+        # 子进程不该看到数据库口令：把它排除掉，避免被第三方工具顺手记录
+        env = {k: v for k, v in os.environ.items() if k != "C2T_DB_KEY"}
         try:
-            proc = subprocess.run(cmd, capture_output=True, timeout=300)
+            proc = subprocess.run(cmd, capture_output=True, timeout=300, env=env)
         except OSError as exc:
             raise C2TError("E4004", f"无法启动社区模块：{exc}") from exc
         out = proc.stdout.decode("utf-8", "replace").strip()
