@@ -2565,38 +2565,42 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 pass
             toast.configure(bg=PANEL)
 
-            # DeskBox 风格：圆角卡片 + Canvas 自绘
-            W, H = 320, 96
+            # DeskBox 风格 Toast：纯 Canvas 坐标布局 + 右侧 action 按钮
+            # （和 dialog 一样，避免 cv.create_window Frame 与自绘元素坐标系冲突）
+            W, H = 360, 96
             cv = tk.Canvas(toast, width=W, height=H, bg=PANEL, highlightthickness=0)
             cv.pack()
             R = 14
             _rounded(cv, 0, 0, W, H, R, fill=CARD_BG, outline=CARD_BORDER, width=1,
                      tags=("t", "tbg"))
-            # 左侧强调色竖条（DeskBox 风格指示）
+            # 左侧强调色竖条
             _rounded(cv, 0, 0, 4, H, R, fill=ACCENT, outline="", tags=("t", "tbar"))
 
-            # 内容 Frame（放在 Canvas 上）
-            body = tk.Frame(cv, bg=CARD_BG)
-            cv.create_window(14, 10, anchor="nw", window=body, width=W - 20)
-
-            tk.Label(body, text=title, bg=CARD_BG, fg=ACCENT, anchor="w",
-                     font=("Microsoft YaHei UI", 9, "bold")).pack(fill="x")
+            # 内容（纯 Canvas create_text）
+            txt_right = W - 90   # 文字区域右边界（给右侧按钮留空间）
+            cv.create_text(14, 18, text=title, fill=ACCENT, anchor="w",
+                           font=("Microsoft YaHei UI", 9, "bold"), tags=("t",))
+            y_cur = 38
             for item, due in pairs[:3]:
-                txt = item.text if len(item.text) <= 26 else item.text[:26] + "…"
-                tk.Label(body, text=f"{_due_label(due)}　{txt}", bg=CARD_BG, fg=TEXT,
-                         anchor="w", font=("Microsoft YaHei UI", 8)).pack(fill="x")
+                txt = item.text if len(item.text) <= 24 else item.text[:24] + "…"
+                cv.create_text(14, y_cur,
+                               text=f"{_due_label(due)}　{txt}",
+                               fill=TEXT, anchor="w", width=txt_right - 20,
+                               font=("Microsoft YaHei UI", 8), tags=("t",))
+                y_cur += 16
             if len(pairs) > 3:
-                tk.Label(body, text=f"还有 {len(pairs) - 3} 条…", bg=CARD_BG, fg=SUB,
-                         anchor="w", font=("Microsoft YaHei UI", 8)).pack(fill="x")
+                cv.create_text(14, y_cur,
+                               text=f"还有 {len(pairs) - 3} 条…",
+                               fill=SUB, anchor="w", width=txt_right - 20,
+                               font=("Microsoft YaHei UI", 8), tags=("t",))
 
             toast.update_idletasks()
-            tw, th = toast.winfo_reqwidth(), toast.winfo_reqheight()
             rects = _monitor_work_areas()
             if rects:
                 _l, _t, r, b = rects[0]
             else:
                 r, b = root.winfo_screenwidth(), root.winfo_screenheight()
-            toast.geometry(f"+{r - tw - 16}+{b - th - 16}")
+            toast.geometry(f"+{r - W - 16}+{b - H - 16}")
 
             # hover 高亮反馈
             def _enter(_e):
@@ -2619,8 +2623,15 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     pass
                 reveal()
 
-            for w_ in [toast, cv, body] + list(body.winfo_children()):
-                w_.bind("<Button-1>", _dismiss)
+            # 右侧 action 按钮：强调色「查看」，点击展开看板
+            bw, bh = 60, 28
+            bx1, bx2 = W - bw - 14, W - 14
+            by1 = H // 2 - bh // 2
+            _deskbox_button(cv, bx1, by1, bx2, by1 + bh,
+                            "查看", _dismiss,
+                            tag_prefix="toast_view", accent=False)
+
+            # 卡片其余区域点击也 dismiss
             cv.tag_bind("t", "<Button-1>", _dismiss)
 
             def _auto_close() -> None:
