@@ -111,13 +111,25 @@ def _rounded(canvas, x1, y1, x2, y2, r, **kw):
 
 
 def _interp_color(c1: str, c2: str, t: float) -> str:
-    """线性插值两个 #rrggbb 颜色，t∈[0,1]（DeskBox 悬浮动画用）。"""
+    """线性插值两个 #rrggbb 颜色，t∈[0,1]。"""
     r1, g1, b1 = int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16)
     r2, g2, b2 = int(c2[1:3], 16), int(c2[3:5], 16), int(c2[5:7], 16)
     r = int(r1 + (r2 - r1) * t)
     g = int(g1 + (g2 - g1) * t)
     b = int(b1 + (b2 - b1) * t)
     return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _ease_out_cubic(t: float) -> float:
+    """DeskBox/WinUI 风格缓出曲线：前期快、后期慢。t∈[0,1]→[0,1]。"""
+    return 1 - (1 - t) ** 3
+
+
+def _ease_out_back(t: float) -> float:
+    """弹簧过冲曲线：先越过目标再弹回。t∈[0,1]→≈[0,1.1]→[0,1]。"""
+    c1 = 1.70158
+    c3 = c1 + 1
+    return 1 + c3 * (t - 1) ** 3 + c1 * (t - 1) ** 2
 
 
 def _surface() -> str:
@@ -619,6 +631,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         elif item.status == "done":
             _mark(item, "pending")
         else:
+            state["_spring_tick"] = item.todo_id   # 标记：render 后给 ✓ 弹一下
             _mark(item, "done")
 
     def toggle_batch() -> None:
@@ -1444,34 +1457,106 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 _render_daily(todo_items, unconfirmed)
                 return
             _render_full(todo_items, unconfirmed, err)
-            # DeskBox 风格悬浮反馈：4 帧颜色缓动（Tkinter 无 GPU 动画，after 帧近似）
-            # 因为 cv.delete("body") 会清掉旧绑定，所以每次 render 后重绑
-            ANIM_FRAMES = 4
-            ANIM_DELAY = 14  # ms/帧，总 ≈ 56ms
-            def _ease(tag_, src_, dst_, frame=1):
-                if frame > ANIM_FRAMES:
+            # DeskBox 风格悬浮反馈：10帧 cubic ease-out 颜色缓动 + 微放大
+            # 只动画 Canvas 内部元素的 fill 和 coords，不改 Tk widget 尺寸 → 布局不抖
+            HOVER_FRAMES = 10
+            HOVER_DELAY = 12   # ms/帧，总 ≈ 120ms（HIG 舒适区间）
+            SCALE_PX = 1.2     # 卡片 hover 时向外扩张的像素（每边）
+
+            def _ease_color(tag_, src_, dst_, frame=1):
+                if frame > HOVER_FRAMES:
                     return
-                t = frame / ANIM_FRAMES
+                t = _ease_out_cubic(frame / HOVER_FRAMES)
                 try:
                     cv.itemconfig(tag_, fill=_interp_color(src_, dst_, t))
                 except Exception:
                     return  # cv.delete 已清掉，放弃
-                cv.after(ANIM_DELAY, lambda: _ease(tag_, src_, dst_, frame + 1))
+                cv.after(HOVER_DELAY, lambda: _ease_color(tag_, src_, dst_, frame + 1))
+
+            def _ease_coords(tag_, id_, src_coords, dst_coords, frame=1):
+                """逐帧插值 Canvas 元素的 coords（用于卡片微放大）。"""
+                if frame > HOVER_FRAMES:
+                    return
+                t = _ease_out_cubic(frame / HOVER_FRAMES)
+                try:
+                    interp = []
+                    for s, d in zip(src_coords, dst_coords):
+                        interp.append(s + (d - s) * t)
+                    cv.coords(id_, *interp)
+                except Exception:
+                    return
+                cv.after(HOVER_DELAY,
+                         lambda: _ease_coords(tag_, id_, src_coords, dst_coords, frame + 1))
+
+            def _play_scale(row_tag, enter, scale_px=SCALE_PX):
+                """卡片 hover 微放大：只动画背景圆角矩形的 coords，其他元素不动。
+
+                先 row_tag 下的 create_polygon 就是卡片底，用它做缩放基准。
+                """
+                items = cv.find_withtag(row_tag)
+                if not items:
+                    return
+                bg_polygon = None
+                for iid in items:
+                    if cv.type(iid) == "polygon":
+                        bg_polygon = iid
+                        break
+                if bg_polygon is None:
+                    return
+                src = cv.coords(bg_polygon)
+                # 矩形的四角顶点：(r,0) → (w-r,0) → (w,r) → ... 缩放坐标
+                # 简单做法：整体向四周偏移 scale_px
+                cx = (src[0] + src[2]) / 2   # 近似中心 x
+                cy = (src[1] + src[5]) / 2   # 近似中心 y
+                dst = []
+                for i in range(0, len(src), 2):
+                    px, py = src[i], src[i + 1]
+                    # 每个点沿从中心指向它的方向偏移 scale_px
+                    dx = px - cx
+                    dy = py - cy
+                    dist = (dx * dx + dy * dy) ** 0.5 or 1
+                    factor = (dist + scale_px) / dist if enter else (dist - scale_px) / dist
+                    dst.append(cx + dx * factor)
+                    dst.append(cy + dy * factor)
+                _ease_coords(row_tag, bg_polygon, list(src), dst)
 
             for item in state.get("visible", []):
                 tag = f"row-{item.todo_id}"
                 picked = item.todo_id in state["sel"]
                 base_fill = CARD_PRESSED if picked else CARD_BG
-                # 选中态已比 CARD_HOVER 亮，不再做 hover 动画防过曝
                 hover_fill = CARD_PRESSED if picked else CARD_HOVER
 
                 def _on_enter(_e, t=tag, s=base_fill, d=hover_fill):
-                    _ease(t, s, d)
+                    _ease_color(t, s, d)
+                    _play_scale(t, enter=True)
+
                 def _on_leave(_e, t=tag, s=hover_fill, d=base_fill):
-                    _ease(t, s, d)
+                    _ease_color(t, s, d)
+                    _play_scale(t, enter=False)
 
                 cv.tag_bind(tag, "<Enter>", _on_enter)
                 cv.tag_bind(tag, "<Leave>", _on_leave)
+
+            # 勾选框完成弹簧动画：标记 → 渲染 → 给新画的 ✓ 过冲弹一下
+            def _animate_tick_spring(iid):
+                frames = [(14, 8), (11, 16), (9, 24)]   # (font_size, delay_ms)
+                def _step(fidx):
+                    if fidx >= len(frames):
+                        return
+                    sz, delay = frames[fidx]
+                    try:
+                        cv.itemconfig(iid, font=("Microsoft YaHei UI", sz, "bold"))
+                    except Exception:
+                        return
+                    cv.after(delay, lambda: _step(fidx + 1))
+                _step(0)
+
+            tid = state.pop("_spring_tick", None)
+            if tid is not None:
+                spring_items = cv.find_withtag(f"tick-{tid}")
+                if spring_items:
+                    _animate_tick_spring(spring_items[0])
+
         finally:
             state["busy"] = False
 
@@ -1855,7 +1940,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                              fill=ACCENT, outline="", tags=("body", f"dot{idx}"))
                     cv.create_text(PAD + 21 + xo, y, text="✓", fill="#0b1a22",
                                    font=("Microsoft YaHei UI", 9, "bold"),
-                                   tags=("body", f"dot{idx}"))
+                                   tags=("body", f"dot{idx}", f"tick-{item.todo_id}"))
                 else:
                     _rounded(cv, PAD + 12 + xo, y - 9, PAD + 30 + xo, y + 9, 5,
                              fill="", outline="#6d6c74", width=1,
