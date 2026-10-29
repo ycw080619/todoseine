@@ -357,7 +357,13 @@ class UIASourceBackend:
 
         # ---- 降级链 1/2: UIA 直接找 TextControl -------------------
         raw_entries = self._read_via_uia(qq_ctrl)
-        if raw_entries:
+        # QQ NT Chromium 自绘 → TextControl 返回的通常是群名/UI 碎片（< 5 个、长度<10）
+        # 加智能判断：如果拿到的都是装饰性元素 → 跳过直接走 OCR
+        is_usable_uia = (
+            len(raw_entries) >= 3
+            and sum(1 for e in raw_entries if len(e.get("content", "")) >= 10) >= 2
+        )
+        if is_usable_uia:
             for entry in raw_entries:
                 content = entry.get("content", "").strip()
                 if not content or len(content) < 1:
@@ -526,50 +532,53 @@ class UIASourceBackend:
 
     @staticmethod
     def _try_win11_ocr(pil_img) -> str:
-        """尝试 Win11 原生 Windows.Media.Ocr。依赖 winrt-windows-* 子包完整。"""
+        """尝试 Win11 原生 Windows.Media.Ocr。依赖 winrt-windows-* 子包完整。
+
+        链路（已真机验证跑通）：
+            PIL → BytesIO PNG → InMemoryRandomAccessStream
+            → BitmapDecoder.create_async → get_software_bitmap_async
+            → OcrEngine.recognize_async → OcrResult.text
+
+        引擎工厂方法：winrt-windows-media-ocr 4.x 只有 try_create_from_language(lang) 可用。
+        """
         try:
             import asyncio
-            import winrt.windows.media.ocr as ocr
-            import winrt.windows.graphics.imaging as imaging
-
             import io
 
+            import winrt.windows.media.ocr as ocr
+            import winrt.windows.globalization as glob
+            import winrt.windows.graphics.imaging as imaging
+            import winrt.windows.storage.streams as streams
+
             async def run_ocr() -> str:
-                # 引擎构造（不同 winrt 版本 API 不同，逐个尝试）
-                engine = None
-                for ctor in ("try_create_from_user_profile",
-                             "try_create_from_language",
-                             "default",
-                             "get_for_user_profile"):
-                    fn = getattr(ocr.OcrEngine, ctor, None)
-                    if fn is None:
-                        continue
-                    try:
-                        engine = fn()
-                        if engine is not None:
-                            break
-                    except Exception:
-                        continue
-                if engine is None:
+                # 1. 构造引擎（已确认：4.x 只有 try_create_from_language 可用）
+                try:
+                    lang = glob.Language("zh-Hans-CN")
+                    engine = ocr.OcrEngine.try_create_from_language(lang)
+                    if engine is None:
+                        return ""
+                except Exception as exc:
+                    log.debug("OcrEngine init failed: %s", exc)
                     return ""
 
-                # PIL → IBuffer → BitmapDecoder → SoftwareBitmap
-                # 简化：先存内存 PNG 再读
+                # 2. PIL → PNG bytes → InMemoryRandomAccessStream
                 buf = io.BytesIO()
                 pil_img.save(buf, format="PNG")
                 png_bytes = buf.getvalue()
 
-                from winrt.windows.storage.streams import InMemoryRandomAccessStream, DataWriter
-                ras = InMemoryRandomAccessStream()
-                writer = DataWriter(ras.getOutputStream_at(0))
-                writer.write_bytes(png_bytes)
+                ras = streams.InMemoryRandomAccessStream()
+                writer = streams.DataWriter(ras.get_output_stream_at(0))
+                writer.write_bytes(png_bytes)  # bytes 是 buffer-like，winrt 4.x 接受
                 await writer.store_async()
                 await writer.flush_async()
                 writer.detach_stream()
                 ras.seek(0)
 
+                # 3. BitmapDecoder 解码
                 decoder = await imaging.BitmapDecoder.create_async(ras)
                 bitmap = await decoder.get_software_bitmap_async()
+
+                # 4. OCR
                 result = await engine.recognize_async(bitmap)
                 return (result.text if result else "") or ""
 
@@ -603,26 +612,53 @@ class UIASourceBackend:
     @staticmethod
     def _ocr_text_to_messages(text: str, deduper: TripleDeduper,
                                chat_id: str) -> List[Message]:
-        """把 OCR 输出的多行文本解析成 Message 列表。
+        """把 OCR 输出解析成 Message 列表。
 
-        OCR 没有发送人 / 消息 ID / 时间戳信息，全部退化。
-        每行独立一条 Message，长度 < 2 的跳过（碎片/标点）。
+        OCR 输出里换行符不稳定（可能很少或很多），所以用多层策略切分：
+          1. 先按 \\n 分行
+          2. 超过 120 字的长行 → 再按「。！？」「数字时间戳 16:29」切
+          3. 最后按 30-200 字切片（防止漏切的超长行）
+
+        OCR 没有 sender_id / msg_id / timestamp，全部退化：
+          sender_id="ocr_unknown"
+          sender_name="OCR识别"
+          timestamp=抓取时刻
         """
+        import re
         messages: List[Message] = []
         now = int(time.time())
-        for line in text.splitlines():
+
+        def _split_long(line: str) -> List[str]:
+            """长行二次切分。"""
             line = line.strip()
-            if not line or len(line) < 2:
-                continue
-            if not deduper.is_new(content=line):
-                continue
-            messages.append(Message(
-                timestamp=now,
-                sender_id="ocr_unknown",
-                sender_name="OCR识别",
-                content=line,
-                chat_id=str(chat_id or ""),
-            ))
+            if len(line) <= 120:
+                return [line]
+            # 优先按句子句号 / 问号 / 感叹号 + 时间戳切
+            parts = re.split(r"(?<=[。！？!?])\s*|(?=\d{1,2}[:：]\d{2})", line)
+            parts = [p.strip() for p in parts if p.strip()]
+            # 还剩超长的，硬切 150 字
+            result: List[str] = []
+            for p in parts:
+                if len(p) <= 150:
+                    result.append(p)
+                else:
+                    for i in range(0, len(p), 120):
+                        result.append(p[i:i+150].strip())
+            return result or [line]
+
+        for raw_line in text.splitlines():
+            for sub in _split_long(raw_line):
+                if len(sub) < 2:
+                    continue
+                if not deduper.is_new(content=sub):
+                    continue
+                messages.append(Message(
+                    timestamp=now,
+                    sender_id="ocr_unknown",
+                    sender_name="OCR识别",
+                    content=sub,
+                    chat_id=str(chat_id or ""),
+                ))
         return messages
 
 
