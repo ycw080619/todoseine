@@ -23,18 +23,31 @@ from .win32 import (_apply_blur, _set_acrylic, _set_child_colorkey, _set_layer,
 
 logger = logging.getLogger("chat2todo.dashboard")
 
-# ---- 外观参数（改这里就能换皮；参考 DeskBox 的 WinUI 深色卡片风格）----
-KEY = "#010203"        # 透明色键：窗口外圆角区域用这个颜色，Windows 会把它抠透
-PANEL = "#212024"      # 面板底色（偏中性深灰，WinUI 深色）
-BORDER = "#3a3940"     # 面板描边（1px，模拟 WinUI 卡片边）
-TEXT = "#f2f2f4"       # 主文字
-SUB = "#9c9ca6"        # 次要文字
-LINE = "#332f2f"       # 分隔线（更淡，仅用于必要分组）
-FIELD = "#2c2b31"      # 输入框底色
-ACTIVE = "#3a3942"     # 选中标签底色
-ACCENT = "#4cc2ff"     # WinUI 强调色（用于选中态与链接）
-DIALOG_INNER = "#1a191d"  # 弹窗内辅助文本框底色（深色主题默认）
-DIALOG_BTN = "#2b292e"    # 弹窗内按钮底色（深色主题默认）
+# ---- 外观参数（DeskBox / WinUI 3 风格）----
+# 层级从上到下：window_surface → card_background → card_hover → card_pressed
+KEY = "#010203"        # 透明色键（窗口外圆角区域抠透）
+# —— 主面板（整窗背景）——
+PANEL = "#212024"
+BORDER = "#3a3940"
+# —— 卡片层级 ——
+CARD_BG = "#2c2b31"          # 卡片底色（比 PANEL 亮一档，WinUI CardBackground）
+CARD_HOVER = "#33323a"       # 悬浮态（再亮一点，SubtleFillSecondary）
+CARD_PRESSED = "#3a3942"     # 按下 / 选中态（SubtleFillTertiary）
+CARD_BORDER = "#3a3940"      # 卡片描边
+CARD_DIVIDER = "#3d3a44"     # 卡片内分隔线
+# —— 文字层级 ——
+TEXT = "#f2f2f4"             # 主文字（TextFillPrimary）
+SUB = "#9c9ca6"              # 次要文字（TextFillSecondary）
+CAPTION = "#6b6873"          # 辅助文字（TextFillTertiary）
+# —— 强调 ——
+ACCENT = "#4cc2ff"           # WinUI AccentFill
+ACCENT_TEXT = "#0b1a22"      # 强调色上的反色文字
+# —— 旧别名（保持兼容）——
+LINE = CARD_DIVIDER
+FIELD = CARD_BG
+ACTIVE = CARD_PRESSED
+DIALOG_INNER = "#1a191d"
+DIALOG_BTN = "#2b292e"
 ACCENTS = ["#ff6b6b", "#ff9f43", "#ffd93d", "#6ee7a8",
            "#4cc9f0", "#8aa4ff", "#ff8fab"]
 
@@ -95,6 +108,16 @@ def _rounded(canvas, x1, y1, x2, y2, r, **kw):
         x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
     ]
     return canvas.create_polygon(pts, smooth=True, **kw)
+
+
+def _interp_color(c1: str, c2: str, t: float) -> str:
+    """线性插值两个 #rrggbb 颜色，t∈[0,1]（DeskBox 悬浮动画用）。"""
+    r1, g1, b1 = int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16)
+    r2, g2, b2 = int(c2[1:3], 16), int(c2[3:5], 16), int(c2[5:7], 16)
+    r = int(r1 + (r2 - r1) * t)
+    g = int(g1 + (g2 - g1) * t)
+    b = int(b1 + (b2 - b1) * t)
+    return f"#{r:02x}{g:02x}{b:02x}"
 
 
 def _surface() -> str:
@@ -265,6 +288,7 @@ def _apply_ui_config() -> dict:
     import re as _re
 
     global ACCENT, PANEL, BORDER, TEXT, SUB, LINE, FIELD, ACTIVE
+    global CARD_BG, CARD_HOVER, CARD_PRESSED, CARD_BORDER, CARD_DIVIDER, CAPTION
     global DIALOG_INNER, DIALOG_BTN
     global RADIUS, W, BORDER_ON, SHOW_CLOCK, BORDER_W, ANIM_ON, BLUR_ON, SNAP_ON
     global HOVER_ON, MATERIAL
@@ -277,16 +301,24 @@ def _apply_ui_config() -> dict:
         PANEL, BORDER = "#f8f8fb", "#e3e3ec"
         TEXT, SUB, LINE = "#1f2330", "#6b7280", "#ececf3"
         FIELD, ACTIVE = "#ffffff", "#e8eefc"
-        # 弹窗内的辅助文本框（判定理由 / 前后消息）：比 PANEL 稍深一点，视觉上像个内嵌框
+        CARD_BG, CARD_HOVER, CARD_PRESSED = "#ffffff", "#f2f2fa", "#e8eefc"
+        CARD_BORDER, CARD_DIVIDER = "#e3e3ec", "#ececf3"
+        CAPTION = "#9ca3af"
         DIALOG_INNER = "#eef0f4"
         DIALOG_BTN = "#e3e3ec"
     else:
         PANEL, BORDER = "#212024", "#3a3940"
         TEXT, SUB, LINE = "#f2f2f4", "#9c9ca6", "#332f2f"
         FIELD, ACTIVE = "#2c2b31", "#3a3942"
-        # 深色下 PANEL 本身就够深，内嵌框比它再深一档即可
+        CARD_BG, CARD_HOVER, CARD_PRESSED = "#2c2b31", "#33323a", "#3a3942"
+        CARD_BORDER, CARD_DIVIDER = "#3a3940", "#3d3a44"
+        CAPTION = "#6b6873"
         DIALOG_INNER = "#1a191d"
         DIALOG_BTN = "#2b292e"
+    # 把别名也同步一下（某些老代码还在用 FIELD/LINE/ACTIVE 直接当 fill）
+    LINE = CARD_DIVIDER
+    FIELD = CARD_BG
+    ACTIVE = CARD_PRESSED
 
     accent = str(ui.get("accent") or "").strip()
     if _re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
@@ -1412,19 +1444,31 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 _render_daily(todo_items, unconfirmed)
                 return
             _render_full(todo_items, unconfirmed, err)
-            # 每行 hover 高亮：<Enter> 改 fill 为稍亮色、<Leave> 恢复；
+            # DeskBox 风格悬浮反馈：4 帧颜色缓动（Tkinter 无 GPU 动画，after 帧近似）
             # 因为 cv.delete("body") 会清掉旧绑定，所以每次 render 后重绑
-            HOVER_FILL = "#3a363d"      # Hover 时的微亮色（比 FIELD #2c2b31 亮一点）
+            ANIM_FRAMES = 4
+            ANIM_DELAY = 14  # ms/帧，总 ≈ 56ms
+            def _ease(tag_, src_, dst_, frame=1):
+                if frame > ANIM_FRAMES:
+                    return
+                t = frame / ANIM_FRAMES
+                try:
+                    cv.itemconfig(tag_, fill=_interp_color(src_, dst_, t))
+                except Exception:
+                    return  # cv.delete 已清掉，放弃
+                cv.after(ANIM_DELAY, lambda: _ease(tag_, src_, dst_, frame + 1))
+
             for item in state.get("visible", []):
                 tag = f"row-{item.todo_id}"
                 picked = item.todo_id in state["sel"]
-                base_fill = ACTIVE if picked else FIELD
+                base_fill = CARD_PRESSED if picked else CARD_BG
+                # 选中态已比 CARD_HOVER 亮，不再做 hover 动画防过曝
+                hover_fill = CARD_PRESSED if picked else CARD_HOVER
 
-                def _on_enter(_e, t=tag):
-                    cv.itemconfig(t, fill=HOVER_FILL)
-
-                def _on_leave(_e, t=tag, f=base_fill):
-                    cv.itemconfig(t, fill=f)
+                def _on_enter(_e, t=tag, s=base_fill, d=hover_fill):
+                    _ease(t, s, d)
+                def _on_leave(_e, t=tag, s=hover_fill, d=base_fill):
+                    _ease(t, s, d)
 
                 cv.tag_bind(tag, "<Enter>", _on_enter)
                 cv.tag_bind(tag, "<Leave>", _on_leave)
@@ -1537,7 +1581,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 bar = color
             # 卡片底
             _rounded(cv, PAD, y, W - PAD, y + 60, 12,
-                     fill=FIELD, outline=BORDER, width=1,
+                     fill=CARD_BG, outline=CARD_BORDER, width=1,
                      tags=("body", row_tag))
             # 序号圆点
             cv.create_oval(PAD + 10, y + 8, PAD + 28, y + 26, fill=bar,
@@ -1574,7 +1618,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
         # 底部：全部展开按钮
         _rounded(cv, W / 2 - 60, h - 42, W / 2 + 60, h - 22, 10,
-                 fill=FIELD, outline=BORDER, width=1, tags=("body", "expand"))
+                 fill=CARD_BG, outline=CARD_BORDER, width=1, tags=("body", "expand"))
         cv.create_text(W / 2, h - 32, text="全部展开列表", anchor="center",
                        fill=ACCENT, font=("Microsoft YaHei UI", 9),
                        tags=("body", "expand"))
@@ -1621,12 +1665,14 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         cv.itemconfig(clock, text="", state="hidden")
         cv.itemconfig(date_id, text="", state="hidden")
 
-        # 标题栏：方形图标 + 标题 +（右侧）时间 / 钉 / — / ✕
-        _rounded(cv, PAD, 14, PAD + 20, 34, 6, fill=ACCENT, outline="", tags="body")
-        cv.create_text(PAD + 10, 24, text="≡", fill="#0b1a22",
+        # 标题栏：DeskBox 风格——圆角胶囊图标 + 分隔线 + 时钟
+        _rounded(cv, PAD, 14, PAD + 22, 34, 8, fill=ACCENT, outline="", tags="body")
+        cv.create_text(PAD + 11, 24, text="≡", fill=ACCENT_TEXT,
                        font=("Microsoft YaHei UI", 9, "bold"), tags="body")
-        cv.create_text(PAD + 28, 24, text="待办", anchor="w",
+        cv.create_text(PAD + 30, 24, text="待办", anchor="w",
                        fill=TEXT, font=("Microsoft YaHei UI", 11, "bold"), tags="body")
+        # DeskBox 标题栏底部分隔线（1px CardStrokeColor 风格）
+        cv.create_line(PAD, 44, W - PAD, 44, fill=CARD_DIVIDER, width=1, tags="body")
         cv.create_text(W - 152, 24, text=time.strftime("%H:%M"), anchor="e", fill=SUB,
                        font=("Consolas", 10), tags=("body", "hclock"))
         if not SHOW_CLOCK:
@@ -1647,7 +1693,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         cv.tag_bind("multi", "<Button-1>", lambda _e: toggle_batch())
 
         # 顶部输入卡：平时是「＋ 添加待办」，批量模式下变成操作条
-        _rounded(cv, PAD, 48, W - PAD, 88, 12, fill=FIELD, outline=BORDER, width=1, tags="body")
+        _rounded(cv, PAD, 48, W - PAD, 88, 12, fill=CARD_BG, outline=CARD_BORDER, width=1, tags="body")
         if state["batch"]:
             n_sel = len(state["sel"])
             cv.create_text(PAD + 14, 68, text=f"已选 {n_sel}", anchor="w", fill=TEXT,
@@ -1688,7 +1734,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             "done": None,
         }
         # 分段控件：整体一块胶囊底，选中格高亮 + 强调色下划线
-        _rounded(cv, PAD, 98, W - PAD, 134, 12, fill=FIELD, outline="", tags="body")
+        _rounded(cv, PAD, 98, W - PAD, 134, 12, fill=CARD_BG, outline="", tags="body")
         seg = (W - 2 * PAD) / len(TABS)
         for idx, (key, label) in enumerate(TABS):
             x1 = PAD + idx * seg
@@ -1698,7 +1744,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             cx = x1 + seg / 2
             if active:
                 _rounded(cv, x1 + 3, 101, x1 + seg - 3, 131, 10,
-                         fill=ACTIVE, outline="", tags="body")
+                         fill=CARD_PRESSED, outline="", tags="body")
             cv.create_text(cx, 113, text=text,
                            fill=TEXT if active else SUB,
                            font=("Microsoft YaHei UI", 9, "bold" if active else "normal"),
@@ -1796,12 +1842,12 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     bar = "#ffd93d"
                 else:
                     bar = ACCENTS[i % len(ACCENTS)]
-                # 卡片：圆角底 + 1px 描边，勾选框 / 色条 / 标题 / 说明 / ⋯
+                # DeskBox 风格卡片：圆角底 + 细描边 + 选中态强调色描边
                 picked = item.todo_id in state["sel"]
                 row_tag = f"row-{item.todo_id}"
                 _rounded(cv, PAD + xo, y - 26, W - PAD + xo, y + 26, min(14, RADIUS),
-                         fill=(ACTIVE if picked else FIELD),
-                         outline=(ACCENT if picked else BORDER), width=(2 if picked else 1),
+                         fill=(CARD_PRESSED if picked else CARD_BG),
+                         outline=(ACCENT if picked else CARD_BORDER), width=(2 if picked else 1),
                          tags=("body", row_tag))
                 # 勾选框（点击切换完成）
                 if item.status == "done":
@@ -1914,7 +1960,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         # 顶部折叠堆叠提示：往上滚过之后，上方还有条目时露一条窄胶囊压在首卡上沿
         if state["offset"] > 0:
             _rounded(cv, PAD + 24, TOP - 28, W - PAD - 24, TOP - 12, 8,
-                     fill=FIELD, outline=BORDER, width=1, tags="body")
+                     fill=CARD_BG, outline=CARD_BORDER, width=1, tags="body")
             cv.create_text(W / 2, TOP - 20, text=f"↑ 上方还有 {state['offset']} 条 · 滚轮往上翻",
                            anchor="center", fill=SUB,
                            font=("Microsoft YaHei UI", 7), tags="body")
@@ -1927,7 +1973,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             for k, inset in enumerate((26, 13)):
                 yy = h - 92 - k * 7
                 _rounded(cv, PAD + inset, yy, W - PAD - inset, yy + 10, 6,
-                         fill=FIELD, outline=BORDER, width=1, tags="body")
+                         fill=CARD_BG, outline=CARD_BORDER, width=1, tags="body")
             cv.create_text(W / 2, h - 106, text=f"还有 {rest} 条 · 滚轮继续",
                            anchor="center", fill=SUB,
                            font=("Microsoft YaHei UI", 7), tags="body")
@@ -1955,7 +2001,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         btn_text = "清除已完成"
         bw = 72
         _rounded(cv, W - PAD - bw, foot_y - 11, W - PAD, foot_y + 11, 11,
-                 fill=FIELD, outline=BORDER, width=1, tags=("body", "clear"))
+                 fill=CARD_BG, outline=CARD_BORDER, width=1, tags=("body", "clear"))
         cv.create_text(W - PAD - bw / 2, foot_y, text=btn_text, anchor="center", fill=SUB,
                        font=("Microsoft YaHei UI", 8), tags=("body", "clear"))
         cv.tag_bind("clear", "<Button-1>", lambda _e: clear_all())
@@ -1967,7 +2013,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             _x2 = W - PAD - bw - bw2 - 8
             _x2r = W - PAD - bw - 8
             _rounded(cv, _x2, foot_y - 11, _x2r, foot_y + 11, 11,
-                     fill=FIELD, outline=ACCENT, width=1, tags=("body", "togglen"))
+                     fill=CARD_BG, outline=ACCENT, width=1, tags=("body", "togglen"))
             cv.create_text((_x2 + _x2r) / 2, foot_y,
                            text=f"展开 {_hidden} 条全量",
                            anchor="center", fill=ACCENT,
@@ -1978,7 +2024,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             _x2 = W - PAD - bw - bw2 - 8
             _x2r = W - PAD - bw - 8
             _rounded(cv, _x2, foot_y - 11, _x2r, foot_y + 11, 11,
-                     fill=FIELD, outline=BORDER, width=1, tags=("body", "togglen"))
+                     fill=CARD_BG, outline=CARD_BORDER, width=1, tags=("body", "togglen"))
             cv.create_text((_x2 + _x2r) / 2, foot_y, text="收起", anchor="center", fill=SUB,
                            font=("Microsoft YaHei UI", 8), tags=("body", "togglen"))
             cv.tag_bind("togglen", "<Button-1>", lambda _e: toggle_top_n())
