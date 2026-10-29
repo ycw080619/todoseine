@@ -341,6 +341,17 @@ class FramelessMainWindow(QMainWindow):
             area = screen.availableGeometry() if screen else QRect(0, 0, 1280, 800)
             rect = QRect(area.right() - width - 24, area.top() + 60, width,
                          min(height, area.height() - 80))
+
+        # 高 DPI（150% 缩放）下控件按比例变大，固定配置宽度会把内容挤出窗口右侧。
+        # 用控件自身的最小建议宽度兜底，避免文字被硬裁掉。
+        try:
+            needed = self.sizeHint().width()
+        except Exception:  # noqa: BLE001
+            needed = 0
+        if needed > rect.width():
+            limit = (QGuiApplication.primaryScreen().availableGeometry().width()
+                     if QGuiApplication.primaryScreen() else needed)
+            rect.setWidth(min(needed, limit))
         self.setGeometry(rect)
 
     @staticmethod

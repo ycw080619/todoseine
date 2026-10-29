@@ -10,7 +10,7 @@ from typing import Iterable, List, Tuple
 
 from PySide6.QtCore import (QEasingCurve, QRectF, Qt, QVariantAnimation, Signal)
 from PySide6.QtGui import QFont, QFontMetrics, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from . import theme
 
@@ -29,6 +29,9 @@ class PillTabs(QWidget):
         self._pill_index = 0
         self._started = False
         self.setFixedHeight(36)
+        # 宽度完全交给布局协商：否则五个标签的自然宽度会把窗口顶宽，
+        # 内容溢出到窗口外被硬裁掉（窄窗口下尤其明显）。
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMouseTracking(True)
@@ -37,6 +40,11 @@ class PillTabs(QWidget):
         self._anim.setDuration(180)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._anim.valueChanged.connect(self._on_anim)
+
+    def minimumSizeHint(self):  # noqa: N802
+        hint = super().minimumSizeHint()
+        hint.setWidth(0)
+        return hint
 
     # ---------- 数据接口 ----------
 

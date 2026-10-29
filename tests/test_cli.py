@@ -19,15 +19,21 @@ def _msg(ts=1700000000, sid="u1", name="小李", content="你好"):
 
 class TestConfig(unittest.TestCase):
     def test_defaults_without_file(self):
-        cfg = config.load("")
-        # 默认库必须是用户目录下的 qq.db（和控制台/看板同一个），不是 CWD 里的 c2t.db
-        self.assertEqual(config.DEFAULTS["db_path"], cfg["db_path"])
-        self.assertTrue(os.path.isabs(cfg["db_path"]))
-        self.assertEqual(os.path.basename(cfg["db_path"]), "qq.db")
-        self.assertEqual(cfg["todo_threshold"], 4)
-        self.assertFalse(cfg["strict_dedupe"])
-        self.assertFalse(cfg["ai"]["enabled"])
-        self.assertFalse(cfg["ai"]["review"])
+        # 隔离本机真实配置：否则 ~/.config/chat2todo/config.toml 存在时会读到用户设置
+        saved = config._CANDIDATES
+        config._CANDIDATES = ()
+        try:
+            cfg = config.load("")
+            # 默认库必须是用户目录下的 qq.db，和控制台/看板同一个库
+            self.assertEqual(config.DEFAULTS["db_path"], cfg["db_path"])
+            self.assertTrue(os.path.isabs(cfg["db_path"]))
+            self.assertEqual(os.path.basename(cfg["db_path"]), "qq.db")
+            self.assertEqual(cfg["todo_threshold"], 4)
+            self.assertFalse(cfg["strict_dedupe"])
+            self.assertFalse(cfg["ai"]["enabled"])
+            self.assertFalse(cfg["ai"]["review"])
+        finally:
+            config._CANDIDATES = saved
 
     def test_sample_toml_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
