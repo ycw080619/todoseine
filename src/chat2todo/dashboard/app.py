@@ -626,6 +626,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         "pos_full": None,      # 展开态记住的位置（迷你胶囊有自己独立的位置）
         "pos_mini": None,
         "hover_open": False,   # 由悬停展开的：指针离开 0.8s 自动收回
+        "focus_idx": 0,        # 键盘导航焦点（Up/Down/Enter），visible 列表索引
         "query": "",           # 当前搜索词（大小写不敏感子串过滤）
         "top_n": 5,            # 每日上限：只显示置信度最高的 5 条；None=全量
         "top_n_full": False,   # 是否已展开全部（点「展开更多」后）
@@ -1800,6 +1801,32 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 cv.tag_bind(tag, "<Enter>", _on_enter)
                 cv.tag_bind(tag, "<Leave>", _on_leave)
 
+            # 键盘焦点框（WinUI Keyboard Focus Visual 风格）
+            try:
+                fidx = min(state.get("focus_idx", 0), len(state["visible"]) - 1)
+                if fidx >= 0 and fidx < len(state["visible"]):
+                    focus_item = state["visible"][fidx]
+                    focus_tag = f"row-{focus_item.todo_id}"
+                    items = cv.find_withtag(focus_tag)
+                    poly = next((iid for iid in items
+                                 if cv.type(iid) == "polygon"), None)
+                    if poly is not None:
+                        src = cv.coords(poly)
+                        cx = (min(src[0::2]) + max(src[0::2])) / 2
+                        cy = (min(src[1::2]) + max(src[1::2])) / 2
+                        out = []
+                        for i in range(0, len(src), 2):
+                            dx, dy = src[i] - cx, src[i + 1] - cy
+                            dist = (dx * dx + dy * dy) ** 0.5 or 1
+                            out.append(cx + dx * (dist + 2) / dist)
+                            out.append(cy + dy * (dist + 2) / dist)
+                        cv.create_polygon(out, smooth=True, fill="",
+                                          outline=ACCENT, width=2,
+                                          dash=(4, 2),
+                                          tags=("body", "focus_frame"))
+            except Exception:
+                pass
+
             # 勾选框完成弹簧动画：标记 → 渲染 → 给新画的 ✓ 过冲弹一下
             def _animate_tick_spring(iid):
                 frames = [(14, 8), (11, 16), (9, 24)]   # (font_size, delay_ms)
@@ -2550,6 +2577,42 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     root.bind("<Control-z>", lambda _e: undo())
     root.bind("<Control-n>", _new_todo)
     root.bind("<Control-f>", lambda _e: (search_open(), "break")[1])
+
+    # 键盘导航：↑/↓ 移动焦点、Enter 切换完成、←/→ 切换 tab
+    def _focus_up(_e=None):
+        n = len(state.get("visible", []))
+        if n <= 0:
+            return
+        state["focus_idx"] = max(0, state.get("focus_idx", 0) - 1)
+        render()
+    def _focus_down(_e=None):
+        n = len(state.get("visible", []))
+        if n <= 0:
+            return
+        state["focus_idx"] = min(n - 1, state.get("focus_idx", 0) + 1)
+        render()
+    def _focus_toggle(_e=None):
+        fidx = state.get("focus_idx", 0)
+        vis = state.get("visible", [])
+        if 0 <= fidx < len(vis):
+            toggle_item(vis[fidx])
+    def _focus_tab_left(_e=None):
+        for i, (k, _) in enumerate(TABS):
+            if k == state["tab"]:
+                switch_tab(TABS[(i - 1) % len(TABS)][0])
+                state["focus_idx"] = 0
+                break
+    def _focus_tab_right(_e=None):
+        for i, (k, _) in enumerate(TABS):
+            if k == state["tab"]:
+                switch_tab(TABS[(i + 1) % len(TABS)][0])
+                state["focus_idx"] = 0
+                break
+    root.bind("<Up>", _focus_up)
+    root.bind("<Down>", _focus_down)
+    root.bind("<Return>", _focus_toggle)
+    root.bind("<Left>", _focus_tab_left)
+    root.bind("<Right>", _focus_tab_right)
 
     tick()
     render()
