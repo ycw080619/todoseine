@@ -1,10 +1,14 @@
-"""看板的数据层：从库里挑出要显示的条目（纯数据，不碰界面，可单测）。"""
+"""看板的数据层：从库里挑出要显示的条目（纯数据，不碰界面，可单测）。
+
+原位于 dashboard/data.py；A 阶段删除 tkinter 看板后迁到 core，
+供 Qt 看板与测试共用，保持零第三方依赖。
+"""
 
 from __future__ import annotations
 
 from typing import List, Tuple
 
-from ..core import Store
+from . import Store
 from ..models import TodoItem
 
 
@@ -40,7 +44,7 @@ def load_items(db_path: str, status: str = "pending") -> List[TodoItem]:
 
 def _is_today_due(item: TodoItem, now=None) -> bool:
     """今日标签：截止时间落在今天或已经过期（只看还没做完的）。"""
-    from ..core.deadline import label, parse
+    from .deadline import label, parse
 
     due = parse(item.text, now)
     if not due:
@@ -66,7 +70,7 @@ def due_remindable(items, now=None, within: int = 3600) -> List[Tuple[TodoItem, 
     """
     from datetime import datetime
 
-    from ..core.deadline import parse
+    from .deadline import parse
 
     now = now or datetime.now()
     now_ts = now.timestamp()

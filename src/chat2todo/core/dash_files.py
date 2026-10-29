@@ -1,4 +1,8 @@
-"""看板的文件小工具：时间格式化、从文本识别文件名、在 QQ 下载目录里找文件。"""
+"""看板的文件小工具：时间格式化、从文本识别文件名、在 QQ 下载目录里找文件。
+
+原位于 dashboard/files.py；A 阶段删除 tkinter 看板后迁到 core，
+供 Qt 看板与测试共用，保持零第三方依赖。
+"""
 
 from __future__ import annotations
 

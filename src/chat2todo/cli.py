@@ -607,16 +607,8 @@ def cmd_adapters(_args) -> int:
     return 0
 
 
-def cmd_dash(args) -> int:
-    """置顶小窗看板；纯界面，不影响数据与命令行。"""
-    from .dashboard import run
-
-    status = args.status or "pending"
-    return run(_db(args), interval=int(args.interval), status=status)
-
-
-def cmd_dash_qt(args) -> int:
-    """Qt 版看板（托盘 / 玻璃 / 实时监听）。需 .[qt] 依赖。"""
+def cmd_dash(_args) -> int:
+    """置顶待办看板（Qt 版：托盘 / 玻璃 / 实时监听）。需 .[qt] 依赖。"""
     try:
         from .qt.main import main as qt_main
     except ImportError as exc:
@@ -1341,14 +1333,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("adapters", help="列出适配器")
     p.set_defaults(func=cmd_adapters)
 
-    p = sub.add_parser("dash", help="打开置顶待办看板（tkinter 版，零依赖）")
-    p.add_argument("--db", default="")
-    p.add_argument("--interval", type=int, default=30, help="自动刷新秒数")
-    p.add_argument("--status", default="pending", choices=["pending", "unconfirmed", "done"])
+    p = sub.add_parser("dash", help="打开置顶待办看板（Qt 版：托盘/玻璃/监听，需 .[qt]）")
     p.set_defaults(func=cmd_dash)
-
-    p = sub.add_parser("dash-qt", help="打开 Qt 版看板（托盘/玻璃/监听，需 .[qt]）")
-    p.set_defaults(func=cmd_dash_qt)
 
     p = sub.add_parser("db", help="检查数据库只读通道（引擎 / 密钥 / 试读）")
     p.set_defaults(func=cmd_db)

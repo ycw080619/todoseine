@@ -61,8 +61,7 @@ python -m PyInstaller --noconfirm --clean chat2todo_qt.spec
 - 无边框 + DWM 圆角 / Mica，位置尺寸自动记忆，拖边改宽、贴边吸附；
 - 托盘常驻，托盘菜单可暂停监听、立即同步、开关自启；
 - 全局热键：`Ctrl+Alt+D` 唤出/收起看板，`Ctrl+Shift+S` 框选截图建待办；
-- 旧的 tkinter 看板（`dashboard/app.py`）保留在仓库里做功能对照，
-  `c2t dash` 仍可用，但它不再接收实时监听的数据。
+- A 阶段起 `c2t dash` 直接启动 Qt 版看板，旧 tkinter 看板已从仓库移除。
 
 ## 版本与数据迁移
 

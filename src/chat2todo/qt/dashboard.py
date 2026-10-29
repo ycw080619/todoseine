@@ -7,7 +7,7 @@
   → 待办卡片列表（勾选、强调色竖条、到期 chip、改 / ⋯ 菜单、双击看原文）
   → 页脚（统计 + 展开 + 清除已完成）
 
-数据仍走 core.Store 与 dashboard.data，界面只读，勾选 / 编辑时才写回。
+数据仍走 core.Store 与 core.dash_data，界面只读，勾选 / 编辑时才写回。
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ from ..core import Store
 from ..core.deadline import label as due_label
 from ..core.deadline import parse as due_parse
 from ..core.privacy import redact_for_display
-from ..dashboard.data import _is_today_due, filter_items, load_items
-from ..dashboard.files import _extract_filenames, _find_downloaded_file, _fmt_ts
+from ..core.dash_data import _is_today_due, filter_items, load_items
+from ..core.dash_files import (_extract_filenames, _find_downloaded_file,
+                               _fmt_ts)
 from ..models import TodoItem
 from .widgets import theme
 from .widgets.card import CheckDot, RoundedCard

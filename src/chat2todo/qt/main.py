@@ -22,7 +22,7 @@ from PySide6.QtWidgets import QApplication
 from .. import config as c2t_config
 from ..core import Store
 from ..core.privacy import install_log_filter
-from ..dashboard.data import due_remindable
+from ..core.dash_data import due_remindable
 from .hotkey import HotkeyManager
 from .hotkey import resolve_specs as resolve_hotkey_specs
 from .monitor import Monitor
