@@ -78,6 +78,10 @@ a = Analysis(
         # Win11 OCR 主路径：winrt 子模块是运行期按需导入的，静态分析扫不到
         "PIL.ImageGrab",
         *collect_submodules("winrt"),
+        # QQ 库直连：sources/db.py 在函数内部 import，静态分析扫不到；
+        # 漏了它打包版会报 E4002「缺少 sqlcipher3 引擎」
+        "sqlcipher3",
+        "sqlcipher3.dbapi2",
     ],
     hookspath=[],
     hooksconfig={},

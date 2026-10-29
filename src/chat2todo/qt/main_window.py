@@ -450,16 +450,26 @@ class FramelessMainWindow(QMainWindow):
         self._geo_timer.start()
 
     def _on_size_anim_finished(self) -> None:
-        """迷你 ↔ 展开动画结束：按当前状态恢复最小尺寸约束。"""
+        """迷你 ↔ 展开动画结束：恢复最小尺寸约束，并把展开后的尺寸钉回原样。
+
+        只恢复最小尺寸是不够的：展开瞬间最小尺寸被临时放到 0，
+        布局会按内容 sizeHint 把窗口撑高（实测 700 → 1158），所以这里补一次 setGeometry。
+        """
         if self._mini:
             self.setMinimumSize(_MINI_W, _MINI_H)
         else:
             self.setMinimumSize(_MIN_WIDTH, _MIN_HEIGHT)
+            if self._mini_saved is not None:
+                self.setGeometry(self._mini_saved)
 
     def _animate_to_geometry(self, target: QRect) -> None:
-        """位置 + 尺寸并行动画（anim 关闭时退化为直接 set）。"""
+        """位置 + 尺寸并行动画；窗口不可见时直接落位（否则动画永不推进）。"""
         self._slide_anim.stop()
         self._size_anim.stop()
+        if not self.isVisible():
+            self.setGeometry(target)
+            self._on_size_anim_finished()
+            return
         self._slide_anim.setStartValue(self.pos())
         self._slide_anim.setEndValue(target.topLeft())
         self._size_anim.setStartValue(self.size())
