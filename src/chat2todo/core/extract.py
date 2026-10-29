@@ -30,7 +30,7 @@ QUESTION_HINTS = ("?", "？", "能不能", "可以吗", "行不行", "是否")
 NOTICE_WORDS = (
     "@全体成员", "全体成员", "通知", "收取", "提交", "报到", "务必", "必须",
 )
-TECH_HINTS = ("喵", "哈哈", "笑死", "草", "选课", "驱动", "跑分", "开播", "崩巴", "呜呜", "好耶",
+TECH_HINTS = ("喵", "哈哈", "笑死", "草", "跑分", "开播", "崩巴", "呜呜", "好耶",
               "666", "233", "哎", "emmm", "xd", "awsl", "吃瓜", "摸鱼")
 
 
@@ -70,8 +70,8 @@ def _noise_penalty(text: str) -> tuple:
     """技术闲聊、代码、表情语气——不该进待办。"""
     score = 0
     reasons = []
-    if _latin_ratio(text) > 0.5:
-        score -= 3
+    if _latin_ratio(text) > 0.7:
+        score -= 2
         reasons.append("疑似代码/技术闲聊")
     if [w for w in TECH_HINTS if w in text]:
         score -= 1
