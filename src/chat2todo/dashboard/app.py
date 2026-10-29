@@ -426,9 +426,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     FONT_ITEM_DONE = tkfont.Font(family="Microsoft YaHei UI", size=9,
                                  weight="bold", overstrike=1)
 
-    holder = tk.Frame(root, bg=_surface())
-    holder.pack(fill="both", expand=True)
-    cv = tk.Canvas(holder, width=W, height=H, bg=_surface(), highlightthickness=0)
+    cv = tk.Canvas(root, width=W, height=H, bg=_surface(), highlightthickness=0)
 
     def _on_hscroll(*args) -> None:
         """横向滚动条：拖动时只偏移待办条目，标题栏/页脚不动。"""
@@ -440,7 +438,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         state.pop("render_hash", None)     # 强制重画（debounce 会跳过）
         render()
 
-    hbar = ttk.Scrollbar(holder, orient="horizontal", command=_on_hscroll)
+    hbar = ttk.Scrollbar(root, orient="horizontal", command=_on_hscroll)
     cv.pack(side="top", fill="both", expand=True)
     hbar.pack(side="bottom", fill="x")
     root.after(150, lambda: _set_layer(root, False))
