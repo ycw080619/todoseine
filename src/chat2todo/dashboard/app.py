@@ -700,6 +700,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             state["sel"].discard(tid)
         else:
             state["sel"].add(tid)
+            state["_spring_sel"] = tid   # 标记：render 后给这张卡片弹一下
         render()
 
     def batch_select_all() -> None:
@@ -1295,6 +1296,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             return
         state["tab"] = key
         state["offset"] = 0
+        state["_old_tab_cx"] = state.get("_tab_cx")   # 传递给 render 后滑动动画
         render()
 
     # ---- 尺寸与列表 ----
@@ -1556,6 +1558,85 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 spring_items = cv.find_withtag(f"tick-{tid}")
                 if spring_items:
                     _animate_tick_spring(spring_items[0])
+
+            # 选中卡片弹一下（toggle_sel 从批量模式勾选时触发）
+            def _animate_card_spring(row_tag):
+                """卡片背景 polygon 做一次过冲：scale 1.0 → 1.04 → 0.98 → 1.0。"""
+                items = cv.find_withtag(row_tag)
+                poly = next((iid for iid in items if cv.type(iid) == "polygon"), None)
+                if poly is None:
+                    return
+                base = cv.coords(poly)
+                cx = (base[0] + base[2]) / 2
+                cy = (base[1] + base[5]) / 2
+                def _scale_coords(factor):
+                    out = []
+                    for i in range(0, len(base), 2):
+                        dx, dy = base[i] - cx, base[i + 1] - cy
+                        out.append(cx + dx * factor)
+                        out.append(cy + dy * factor)
+                    return out
+                # 3 帧过冲：40ms / 帧
+                def _step(fidx):
+                    stages = [1.04, 0.98, 1.0]
+                    if fidx >= len(stages):
+                        return
+                    try:
+                        cv.coords(poly, *_scale_coords(stages[fidx]))
+                    except Exception:
+                        return
+                    cv.after(40, lambda: _step(fidx + 1))
+                _step(0)
+
+            sel_tid = state.pop("_spring_sel", None)
+            if sel_tid is not None:
+                _animate_card_spring(f"row-{sel_tid}")
+
+            # Tab 下划线滑动：记住上一帧 tab cx，render 后从旧位置缓动到新位置
+            def _animate_tab_slide(old_cx):
+                """新下划线在新位置已画好，给它加 slide 动画：先挪到 old_cx 再缓动过来。"""
+                # 找新 tab 下划线：刚画的那条 line，带 tab{N} tag，且是当前 active
+                active_idx = None
+                for idx, (key, _) in enumerate(TABS):
+                    if key == state["tab"]:
+                        active_idx = idx
+                        break
+                if active_idx is None:
+                    return
+                line_tag = f"tab{active_idx}"
+                line_ids = cv.find_withtag(line_tag)
+                line_id = next((iid for iid in line_ids if cv.type(iid) == "line"), None)
+                if line_id is None:
+                    return
+                cur = cv.coords(line_id)     # [cx-11, 126, cx+11, 126]
+                cur_cx = (cur[0] + cur[2]) / 2
+                if abs(cur_cx - old_cx) < 1:
+                    return  # 没动过
+                # 先把下划线挪到 old_cx
+                offset = old_cx - cur_cx
+                cv.coords(line_id, cur[0] + offset, cur[1], cur[2] + offset, cur[3])
+                # 8 帧 ease-out cubic 滑回 cur
+                frames = 8
+                delay = 10
+                def _slide(fidx):
+                    if fidx > frames:
+                        return
+                    t = _ease_out_cubic(fidx / frames)
+                    target_offset = offset * (1 - t)
+                    try:
+                        cv.coords(line_id,
+                                  cur[0] + target_offset, cur[1],
+                                  cur[2] + target_offset, cur[3])
+                    except Exception:
+                        return
+                    cv.after(delay, lambda: _slide(fidx + 1))
+                cv.after(20, lambda: _slide(1))   # render 后让主线程喘口气
+
+            old_tab_cx = state.pop("_old_tab_cx", None)
+            if old_tab_cx is not None:
+                _animate_tab_slide(old_tab_cx)
+            # 滚动滑入淡入：已有 _slide_scroll 做整体 rows 平移，不再叠加颜色
+            # （Canvas 无真正 alpha，颜色从 PANEL→CARD_BG 插值会在材质模式下看到颜色跳变）
 
         finally:
             state["busy"] = False
@@ -1837,6 +1918,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             if active:
                 cv.create_line(cx - 11, 126, cx + 11, 126, fill=ACCENT, width=2,
                                capstyle="round", tags=("body", f"tab{idx}"))
+                state["_tab_cx"] = cx  # 记住当前 active tab 的中心，供下次切换时滑动用
             cv.tag_bind(f"tab{idx}", "<Button-1>", lambda _e, k=key: switch_tab(k))
 
         rows_room = max(1, (h - TOP - FOOT) // ROW)
