@@ -17,8 +17,9 @@ from .files import _extract_filenames, _find_downloaded_file, _fmt_ts
 from .geom import (SNAP_PX, _anchor_of, _apply_anchor, _clamp_to_rects,
                    _ease_out_cubic, _monitor_work_areas, _slide_offset,
                    _snap_to_edges)
-from .win32 import (_apply_blur, _set_acrylic, _set_layer, _set_round_corners,
-                    _set_system_backdrop, _single_instance, _start_hotkey)
+from .win32 import (_apply_blur, _set_acrylic, _set_child_colorkey, _set_layer,
+                    _set_round_corners, _set_system_backdrop, _single_instance,
+                    _start_hotkey)
 
 logger = logging.getLogger("chat2todo.dashboard")
 
@@ -141,12 +142,16 @@ def _panel_bgr() -> int:
     return (b << 16) | (g << 8) | r
 
 
-def _apply_material(root) -> bool:
+def _apply_material(root, cv=None) -> bool:
     """应用系统材质：原生圆角 + Acrylic/Mica 背景（DeskBox 式质感）。
 
     acrylic 走未公开属性 30 + AccentState 3（Win10 1803+，与 pywinstyles 同配方）；
     mica 走 DWMWA_SYSTEMBACKDROP_TYPE（Win11 22H2+），不支持时退回 acrylic。
     全部失败返回 False，窗口退回普通不透明面板，不影响功能。
+
+    cv 传入时，给 Canvas 子窗口单独挂颜色键（黑→透明）：主窗口不能用
+    -transparentcolor（会破坏 Acrylic），但 Canvas 不透明黑底会挡住磨砂面，
+    所以只在 Canvas 子窗口上抠透明，让主窗口的 Acrylic 透出来。
     """
     ok = _set_round_corners(root)
     if MATERIAL == "mica":
@@ -156,6 +161,11 @@ def _apply_material(root) -> bool:
         _set_acrylic(root, _panel_bgr())
     else:
         ok = _set_acrylic(root, _panel_bgr()) or ok
+    if cv is not None:
+        try:
+            _set_child_colorkey(cv.winfo_id(), 0x000000)
+        except Exception:  # noqa: BLE001
+            pass
     return ok
 
 
@@ -435,7 +445,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
     hbar.pack(side="bottom", fill="x")
     root.after(150, lambda: _set_layer(root, False))
     if MATERIAL != "off":
-        root.after(300, lambda: _apply_material(root))
+        root.after(300, lambda: _apply_material(root, cv))
     elif BLUR_ON:
         root.after(300, lambda: _apply_blur(root, True))
     _draw_bg(cv, W, H)
@@ -1261,7 +1271,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
         _draw_bg(cv, w, cv_h)
         if MATERIAL != "off":
             # 改尺寸会重置 DWM 玻璃帧扩展，Acrylic 表面随之丢失 → 每次重设尺寸后回刷
-            _apply_material(root)
+            _apply_material(root, cv)
 
     def _resize(h: int, w: int = W) -> None:
         if h == state["h"] and w == state["w"]:
@@ -1333,7 +1343,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 state["fade_gen"] = state.get("fade_gen", 0) + 1   # 打断进行中的淡入
                 _draw_bg(cv, W, state.get("h", H))
                 if MATERIAL != "off":
-                    _apply_material(root)
+                    _apply_material(root, cv)
                 else:
                     _apply_blur(root, BLUR_ON)
                 render()

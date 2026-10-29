@@ -218,3 +218,30 @@ def _set_acrylic(root, tint_bgr: int = 0x292929) -> bool:
         return ok
     except Exception:  # noqa: BLE001
         return False
+
+
+# 子窗口颜色键：给 Canvas 等子控件单独抠透明，不影响主窗口的 Acrylic
+_WS_EX_LAYERED = 0x80000
+_LWA_COLORKEY = 1
+_GWL_EXSTYLE = -20
+
+
+def _set_child_colorkey(child_hwnd: int, color_bgr: int = 0x000000) -> bool:
+    """给子窗口（如 Tk Canvas）单独加 WS_EX_LAYERED + 颜色键。
+
+    主窗口不能用 -transparentcolor（会破坏 Acrylic），但 Canvas 的不透明
+    黑底会挡住 Acrylic。解决：只给 Canvas 子窗口挂颜色键，黑色像素变透明，
+    主窗口的 Acrylic 磨砂面就透出来了。color_bgr 是 0x00BBGGRR。
+    """
+    if os.name != "nt" or not child_hwnd:
+        return False
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        ex = user32.GetWindowLongW(child_hwnd, _GWL_EXSTYLE)
+        user32.SetWindowLongW(child_hwnd, _GWL_EXSTYLE, ex | _WS_EX_LAYERED)
+        return bool(user32.SetLayeredWindowAttributes(
+            child_hwnd, color_bgr, 0, _LWA_COLORKEY))
+    except Exception:  # noqa: BLE001
+        return False
