@@ -152,13 +152,16 @@ def test_trash_roundtrip(qapp, cfg_file):
     db = config.load()["db_path"]
     store = Store(db)
     todo_id = store.add_todo("回收站测试", session="测试", sender="我")
-    assert store.trash_item(todo_id)
+    trash_id = store.trash_item(todo_id)
+    # 返回回收站记录 id（撤销要用），不再是裸 bool
+    assert isinstance(trash_id, int) and trash_id > 0
     assert store.count_trash() == 1
     store.close()
 
     page = TrashPage(db)
     try:
         row_id = Store(db).list_trash(1)[0]["id"]
+        assert row_id == trash_id
         page._restore(row_id)
         check = Store(db)
         try:
@@ -170,6 +173,76 @@ def test_trash_roundtrip(qapp, cfg_file):
     finally:
         page.deleteLater()
         qapp.processEvents()
+
+
+def test_restore_keeps_done_status(cfg_file):
+    """已完成的任务删进回收站，还原后不该变回待办再提醒一遍。"""
+    from chat2todo import config
+    from chat2todo.core import Store
+
+    db = config.load()["db_path"]
+    store = Store(db)
+    todo_id = store.add_todo("已完成再还原", session="测试", sender="我")
+    store.set_status(todo_id, "done")
+    trash_id = store.trash_item(todo_id)
+    assert store.restore(trash_id)
+    todo = store.conn.execute(
+        "SELECT status FROM todos WHERE text='已完成再还原'").fetchone()
+    assert todo["status"] == "done"
+    store.close()
+
+
+def test_trash_missing_todo_returns_none(cfg_file):
+    from chat2todo import config
+    from chat2todo.core import Store
+
+    store = Store(config.load()["db_path"])
+    assert store.trash_item(999_999) is None
+    store.close()
+
+
+def test_mini_parser_roundtrip(tmp_path):
+    """save() 写出的 TOML 必须能被 3.9/3.10 的极简解析器原样读回。
+
+    之前引号里的反斜杠不回解，Windows 路径读出来是双反斜杠，库直接打不开。
+    """
+    from chat2todo import config
+
+    cfg = {
+        "db_path": r"C:\Users\someone\Chat2Todo\qq.db",
+        "todo_threshold": 4,
+        "vector": {"sim_threshold": 0.92, "enabled": True},
+        "filter": {"ignore_groups": ["群, 带逗号", "123456"]},
+        "config_file": str(tmp_path / "c.toml"),
+    }
+    path = config.save(cfg, str(tmp_path / "c.toml"))
+    back = config._mini_parse_text(open(path, encoding="utf-8").read())
+    assert back["db_path"] == r"C:\Users\someone\Chat2Todo\qq.db"
+    assert back["vector"]["sim_threshold"] == 0.92
+    assert back["filter"]["ignore_groups"] == ["群, 带逗号", "123456"]
+
+
+def test_monitor_stop_is_clean(cfg_file, qapp, monkeypatch):
+    """重复 start 不能起第二个线程；stop 后引用必须清掉，不留正在跑的 QThread。
+
+    stop 超时还把引用置空会让线程在运行中被析构，Qt 直接 abort，
+    所以这里盯着 _worker 的归属和状态。
+    """
+    import chat2todo.qt.monitor as mon
+
+    monkeypatch.setattr(mon, "fetch_messages", lambda **kwargs: [])
+
+    from chat2todo import config
+
+    monitor = mon.Monitor(cfg=config.load())
+    monitor.start()
+    first = monitor._worker
+    monitor.start()                    # 重复按「启用监视」
+    assert monitor._worker is first
+    assert first is not None and first.isRunning()
+    monitor.stop()
+    assert monitor._worker is None
+    assert monitor.status() == "已停止"
 
 
 def test_normalize_cjk_spaces():

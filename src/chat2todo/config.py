@@ -13,7 +13,7 @@ Python 3.11+ 用标准库 tomllib；更低版本退回一个只认 `key = value`
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 DEFAULTS: Dict[str, Any] = {
     # 与控制台、看板、文档保持同一个库：%USERPROFILE%\Chat2Todo\qq.db。
@@ -140,15 +140,56 @@ def _coerce(value: str) -> Any:
     if (value.startswith('"') and value.endswith('"')) or (
         value.startswith("'") and value.endswith("'")
     ):
-        return value[1:-1]
+        return _unescape(value[1:-1])
     if value.startswith("[") and value.endswith("]"):
         # 内联数组：ignore_groups = ["123", "456"] / star_groups = []
         body = value[1:-1].strip()
-        return [_coerce(part.strip()) for part in body.split(",") if part.strip()]
+        return [_coerce(part) for part in _split_list(body)]
     try:
         return int(value)
     except ValueError:
+        pass
+    try:
+        return float(value)          # 0.92 这类阈值不能留成字符串
+    except ValueError:
         return value
+
+
+def _unescape(text: str) -> str:
+    """还原 save() 写出的转义（\\\\ / \\" / \\n 等）。
+
+    Python 3.11+ 走 tomllib 不需要这段；3.9/3.10 走极简解析器时必须还原，
+    否则 Windows 路径会被读成双反斜杠、库直接打不开。
+    """
+    import re
+
+    table = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f",
+             '"': '"', "\\": "\\"}
+    return re.sub(r"\\(.)", lambda m: table.get(m.group(1), m.group(1)), text)
+
+
+def _split_list(body: str) -> List[str]:
+    """按逗号切内联数组，但不动引号里的逗号（来源名里可能有）。"""
+    parts: List[str] = []
+    buf: List[str] = []
+    quote = ""
+    for ch in body:
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+            buf.append(ch)
+        elif ch == ",":
+            parts.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        parts.append(tail)
+    return [p for p in parts if p]
 
 
 def _nest(flat: Dict[str, Any]) -> Dict[str, Any]:

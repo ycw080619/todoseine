@@ -214,6 +214,7 @@ class Monitor(QObject):
         self._interval = max(1, int(uia.get("interval") or 5))
         self._worker: Optional[_Worker] = None
         self._paused = False
+        self._stopping = False
         self._last: Dict = {}
         self._status = "未启动"
 
@@ -226,8 +227,13 @@ class Monitor(QObject):
         return self._status
 
     def start(self) -> None:
-        if self._worker is not None and self._worker.isRunning():
-            return
+        if self._worker is not None:
+            if self._worker.isRunning():
+                return
+            # 上次 stop 超时、线程后来自己收尾完的，先释放旧引用
+            self._worker.deleteLater()
+            self._worker = None
+        self._stopping = False
         self._worker = _Worker(self._db_path, self._cfg, self._interval, self)
         self._worker.ticked.connect(self._on_ticked)
         self._worker.new_todos.connect(self.todos_added.emit)
@@ -236,12 +242,27 @@ class Monitor(QObject):
         self._set_status("监听中")
 
     def stop(self) -> None:
-        if self._worker is None:
+        w = self._worker
+        if w is None:
             return
-        self._worker.stop()
-        self._worker.wait(4000)
-        self._worker = None
-        self._set_status("已停止")
+        w.stop()
+        if w.wait(1500):
+            self._worker = None
+            w.deleteLater()
+            self._set_status("已停止")
+            return
+        # OCR 偶发要两三秒，不在 GUI 线程干等；线程退出后自己收尾。
+        # 这里不能把引用置空，否则线程还在跑就被析构，Qt 会直接 abort。
+        self._stopping = True
+        self._set_status("正在停止…")
+        w.finished.connect(lambda: self._on_worker_finished(w))
+
+    def _on_worker_finished(self, w: "_Worker") -> None:
+        if self._worker is w:
+            self._worker = None
+            self._stopping = False
+            self._set_status("已停止")
+        w.deleteLater()
 
     def pause(self) -> None:
         self._paused = True
@@ -251,9 +272,9 @@ class Monitor(QObject):
 
     def resume(self) -> None:
         self._paused = False
-        if self._worker:
+        if self._worker is not None:
             self._worker.resume()
-        self._set_status("监听中")
+            self._set_status("监听中")
 
     def toggle(self) -> bool:
         """暂停 ↔ 恢复，返回切换后是否仍在监听。"""
@@ -289,6 +310,8 @@ class Monitor(QObject):
         self.status_changed.emit(text)
 
     def _on_ticked(self, info: dict) -> None:
+        if self._stopping:
+            return          # 正在停：旧线程最后一轮的结果不能把状态改回「监听中」
         self._last = info
         self.ticked.emit(info)
         if info.get("error"):

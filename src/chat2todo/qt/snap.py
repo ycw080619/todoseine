@@ -231,11 +231,19 @@ class SnapController(QObject):
         self._overlay: Optional[_SelectOverlay] = None
         self._worker: Optional[_OcrWorker] = None
         self._dialog: Optional[_ConfirmDialog] = None
+        self._pending = False      # 已按热键但还没抓屏，挡住连按
 
     def trigger(self) -> None:
-        """热键入口：立刻拉起遮罩，重复按下不叠层。"""
-        if self._overlay is not None or self._dialog is not None:
+        """热键入口：立刻拉起遮罩，重复按下不叠层。
+
+        选区确认后到抓屏之间隔了 120ms，OCR 期间又有 1~3 秒，
+        这两段都不能再拉第二层遮罩（否则后一层会被截进图，识别全是噪声），
+        所以除了 overlay/dialog/worker，还要看 _pending 这个「已按下但还没抓屏」的窗口。
+        """
+        if (self._overlay is not None or self._dialog is not None
+                or self._worker is not None or self._pending):
             return
+        self._pending = True
         overlay = _SelectOverlay()
         overlay.finished.connect(self._on_selection)
         self._overlay = overlay
@@ -248,6 +256,7 @@ class SnapController(QObject):
     def _on_selection(self, rect) -> None:
         overlay = self._overlay
         self._overlay = None
+        self._pending = False
         if overlay is not None:
             overlay.deleteLater()
         if not isinstance(rect, QRect):
@@ -257,14 +266,28 @@ class SnapController(QObject):
         QTimer.singleShot(120, lambda: self._capture(rect))
 
     def _capture(self, rect: QRect) -> None:
-        screen = QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
-        if screen is None:
+        screens = [s for s in QGuiApplication.screens()
+                   if s.geometry().intersects(rect)]
+        if not screens:
             self.failed.emit("找不到屏幕")
             return
-        offset = screen.geometry().topLeft()
-        local = rect.translated(-offset.x(), -offset.y())
-        pixmap: QPixmap = screen.grabWindow(0, local.x(), local.y(),
-                                            local.width(), local.height())
+        # 选区可能横跨两块屏（混合 DPI 也一样）：逐屏抓相交部分，再拼回一张图
+        dpr = max(s.devicePixelRatio() for s in screens)
+        canvas = QPixmap(int(rect.width() * dpr), int(rect.height() * dpr))
+        canvas.setDevicePixelRatio(dpr)
+        canvas.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(canvas)
+        for screen in screens:
+            geo = screen.geometry()
+            part = rect.intersected(geo)
+            if part.isEmpty():
+                continue
+            shot = screen.grabWindow(0, part.x() - geo.x(), part.y() - geo.y(),
+                                     part.width(), part.height())
+            if not shot.isNull():
+                painter.drawPixmap(part.topLeft() - rect.topLeft(), shot)
+        painter.end()
+        pixmap = canvas
         if pixmap.isNull():
             self.failed.emit("截图失败")
             return
@@ -272,6 +295,10 @@ class SnapController(QObject):
         fd, tmp = tempfile.mkstemp(suffix=".png", prefix="c2t_snap_")
         os.close(fd)
         if not pixmap.save(tmp, "PNG"):
+            try:
+                os.unlink(tmp)          # 存不下就别留垃圾文件
+            except OSError:
+                pass
             self.failed.emit("截图保存失败")
             return
 

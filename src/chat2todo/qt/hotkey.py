@@ -116,6 +116,7 @@ class HotkeyManager(QAbstractNativeEventFilter):
             ctypes.windll.user32.UnregisterHotKey(None, hotkey_id)
         self._callbacks.clear()
         self._specs.clear()
+        self._next_id = 0xA000      # id 回收，避免反复保存配置把 id 耗尽
 
     def _ensure_filter(self) -> None:
         if self._installed:

@@ -316,7 +316,7 @@ class FramelessMainWindow(QMainWindow):
                      "width": geo.width(), "height": geo.height()})
         cfg["dash"] = dash
         try:
-            c2t_config.save(cfg)
+            c2t_config.save(cfg, cfg.get("config_file") or None)
         except Exception:  # noqa: BLE001 - 写配置失败不该影响窗口
             pass
 
@@ -401,7 +401,7 @@ class FramelessMainWindow(QMainWindow):
             dash = dict(cfg.get("dash") or {})
             dash["lock"] = locked
             cfg["dash"] = dash
-            c2t_config.save(cfg)
+            c2t_config.save(cfg, cfg.get("config_file") or None)
         except Exception:  # noqa: BLE001
             pass
 

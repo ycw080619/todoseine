@@ -549,7 +549,7 @@ class SettingsPanel(QWidget):
             QMessageBox.warning(self, "配置", "数据库路径不能为空。")
             return
         try:
-            c2t_config.save(cfg)
+            c2t_config.save(cfg, cfg.get("config_file") or None)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "配置", f"保存失败：{exc}")
             return

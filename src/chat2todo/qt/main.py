@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import signal
 import sys
 import time
 
@@ -162,6 +163,8 @@ def main() -> int:
                      if i.todo_id not in reminded]
         except Exception:  # noqa: BLE001
             return
+        # 已完成/已删除的条目从集合里摘掉，常驻一整天也不会无限增长
+        reminded.intersection_update({i.todo_id for i in items})
         if not pairs:
             return
         reminded.update(i.todo_id for i, _ in pairs)
@@ -201,11 +204,31 @@ def main() -> int:
         monitor.start()
 
     # ---------- 退出 ----------
+    # 托盘退出、系统注销、Ctrl+C、热键窗口被强关……都从这里收尾一次
+    done = {"v": False}
+
+    def cleanup() -> None:
+        if done["v"]:
+            return
+        done["v"] = True
+        try:
+            monitor.stop()
+        finally:
+            hotkeys.unbind_all()
+            window._save_geometry()   # noqa: SLF001
+            tray.icon.hide()          # 不 hide 会在通知区留一个幽灵图标
+
+    app.aboutToQuit.connect(cleanup)
+
     def quit_app() -> None:
-        monitor.stop()
-        hotkeys.unbind_all()
-        window._save_geometry()  # noqa: SLF001
         app.quit()
+
+    # 控制台里 Ctrl+C 也要能走到 cleanup：Qt 事件循环只在回到解释器时处理信号，
+    # 用一个 300ms 的空定时器定期把控制权交回 Python。
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
+    tick = QTimer()
+    tick.timeout.connect(lambda: None)
+    tick.start(300)
 
     tray.quit_requested.connect(quit_app)
     window.minimized_to_tray.connect(lambda: tray.notify(

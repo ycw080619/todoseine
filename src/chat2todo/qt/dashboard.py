@@ -716,13 +716,8 @@ class Dashboard(QWidget):
         return action
 
     def _trash(self, item: TodoItem) -> None:
-        def action(store: Store):
-            if not store.trash_item(item.todo_id):
-                return None
-            rows = store.list_trash(1)
-            return rows[0]["id"] if rows else None
-
-        trash_id = self._write(action)
+        # trash_item 直接返回回收站记录 id，撤销时不必再猜「最后插入的是哪条」
+        trash_id = self._write(lambda store: store.trash_item(item.todo_id))
         if trash_id:
             Toast.show_toast(self, "已移入回收站", "撤销",
                              lambda: self._write(lambda s: s.restore(trash_id)), 5000)
@@ -748,8 +743,12 @@ class Dashboard(QWidget):
         label = {"text": "同类消息", "sender": "这个人的消息",
                  "session": "这个来源的消息"}[scope]
         extra = f"（顺带收起 {moved} 条）" if moved else ""
-        Toast.show_toast(self, f"以后不再提醒{label}{extra}", "撤销",
-                         lambda: self._write(lambda s: s.unmute(rule_id)), 6000)
+        if result.get("created"):
+            Toast.show_toast(self, f"以后不再提醒{label}{extra}", "撤销",
+                             lambda: self._write(lambda s: s.unmute(rule_id)), 6000)
+        else:
+            # 规则本来就有（本次是命中旧规则），给撤销会误删你以前设的静音
+            Toast.show_toast(self, f"以后不再提醒{label}{extra}（沿用原有规则）")
 
     def _show_reason(self, item: TodoItem) -> None:
         """展示判定依据：命中规则、加权分、阈值、校准影响。"""

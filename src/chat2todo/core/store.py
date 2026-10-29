@@ -1289,12 +1289,15 @@ class Store:
         self.conn.commit()
         return len(rows)
 
-    def trash_item(self, todo_id: int) -> bool:
-        """手动把一条待办丢进回收站。"""
+    def trash_item(self, todo_id: int) -> Optional[int]:
+        """手动把一条待办丢进回收站，返回新回收站记录 id（撤销要用）。
+
+        找不到这条待办时返回 None；调用方按真值判断即可，和旧版返回 bool 兼容。
+        """
         r = self.conn.execute("SELECT * FROM todos WHERE id=?", (todo_id,)).fetchone()
         if not r:
-            return False
-        self.conn.execute(
+            return None
+        cur = self.conn.execute(
             "INSERT INTO trash (text, session, sender, ts, reason, confidence, "
             "status, created_at, done_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (r["text"], r["session"], r["sender"], r["ts"], r["reason"],
@@ -1304,7 +1307,7 @@ class Store:
         self.conn.execute("DELETE FROM todos WHERE id=?", (todo_id,))
         self._heal_feedback_orphans()          # 待办没了，对应校准样本解绑
         self.conn.commit()
-        return True
+        return int(cur.lastrowid) if cur.lastrowid else None
 
     def list_trash(self, limit: int = 200) -> List[dict]:
         rows = self.conn.execute(
@@ -1316,7 +1319,7 @@ class Store:
         return int(self.conn.execute("SELECT COUNT(*) FROM trash").fetchone()[0])
 
     def restore(self, trash_id: int) -> bool:
-        """从回收站还原成待办（状态回到 pending）。
+        """从回收站还原成待办（状态沿用删除前的状态）。
 
         同一条待办已存在（text/ts/sender 撞 UNIQUE）时 INSERT OR IGNORE 会静默丢弃，
         此时必须保留回收站记录并返回 False，否则待办彻底消失且界面还报成功。
@@ -1324,12 +1327,17 @@ class Store:
         r = self.conn.execute("SELECT * FROM trash WHERE id=?", (trash_id,)).fetchone()
         if not r:
             return False
+        # 回收站里存了删除前的状态：已完成的不该还原成待办再提醒一遍
+        status = (r["status"] or "pending").strip().lower()
+        if status not in ("pending", "done", "muted"):
+            status = "pending"
+        done_at = (r["done_at"] or "") if status == "done" else ""
         cur = self.conn.execute(
             "INSERT OR IGNORE INTO todos (text, session, sender, ts, reason, "
             "confidence, status, created_at, done_at, reviewed) "
-            "VALUES (?,?,?,?,?,?,'pending',?,'',1)",
+            "VALUES (?,?,?,?,?,?,?,?,?,1)",
             (r["text"], r["session"], r["sender"], r["ts"], r["reason"],
-             r["confidence"], r["created_at"]),
+             r["confidence"], status, r["created_at"], done_at),
         )
         if not cur.rowcount:
             return False        # 已有同一条待办，回收站记录不动
