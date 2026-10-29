@@ -1,0 +1,36 @@
+# 可选后端服务（Ollama / AnythingLLM），仅映射到本机回环地址。
+# Chat2Todo 主程序不需要 Docker，这里是进阶用户的容器化选项。
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: c2t-ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  anythingllm:
+    image: mintplexlabs/anythingllm:latest
+    container_name: c2t-anythingllm
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      STORAGE_DIR: /app/server/storage
+      LLM_PROVIDER: ollama
+      OLLAMA_BASE_PATH: http://ollama:11434
+      OLLAMA_MODEL_PREF: qwen2.5:7b
+    volumes:
+      - anythingllm:/app/server/storage
+    depends_on:
+      - ollama
+
+volumes:
+  ollama:
+  anythingllm:

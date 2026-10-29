@@ -58,6 +58,13 @@ Chat2Todo 把这些话自动挑出来，汇成一份待办清单，放在桌面�
 - **可被别的工具调用**：`c2t serve` 起一个只听本机的 HTTP API，脚本 / 浏览器页面 / 自动化工具都能读写待办
 - **插件注册协议**：`plugin.manifest.json` 声明插件能力与权限级别（file / db / uia），`c2t plugins` 一键列出已装插件
 - **隐私守门**：口令 DPAPI 加密存放；QQ 库纯只读；默认零网络请求（除 127.0.0.1 本机 Ollama）
+- **全链路脱敏**：手机号 / 身份证 / 银行卡 / 邮箱默认打码，日志、看板、归档、导出、AI 请求统一走同一套规则；白名单群只豁免「归档与看板展示」，AI 请求仍强制脱敏；确需发明文到云端 AI 时，得单独打开「AI 明文」开关（二次确认，可再按群号收窄）
+- **数据可带走**：消息按「群名/年/月/日.md」归档 + `manifest.json` 去重；Obsidian 双向同步（勾选回写、MD5 增量、冲突留 `.conflict.bak`）
+- **自动备份与清空**：每天一次 DPAPI 加密备份（保留 7 份）、回收站 7 天自动清理、一键清空程序数据（库 / 归档 / 备份 / 日志，保留插件与选择器）
+- **桌面美化联动（可选）**：输出脱敏 `todos.json` / `todos.ics`，1~2 秒防抖；小组件勾选、编辑、删除通过 `127.0.0.1` 本地接口（随机端口 + token + Host/Origin 校验）回写数据库
+- **Hermes 运维（可选）**：本机 token 鉴权（DPAPI 加密存储、设置页复制/轮换）、状态查询、巡检自动重启采集、每日汇总 Markdown；对外协议见 [docs/hermes-skill.md](docs/hermes-skill.md)
+- **插件隔离**：插件跑在独立子进程，权限按 manifest 白名单授予；7 天内崩溃 2 次自动进安全模式，一键回滚到安装前快照
+
 
 ---
 
@@ -79,6 +86,18 @@ c2t export --format md --out out    # 导出 md / csv / json
 c2t export-chatlab out.json         # 反向导出为 ChatLab Format（.json / .jsonl）
 c2t export-calibration my.json      # 导出校准档案（换机迁移）
 c2t plugins                         # 列出已装插件（读 plugin.manifest.json）
+c2t plugin-status                   # 插件运行状态：启用列表 / 崩溃次数 / 安全模式
+c2t plugin-enable snap_todo         # 启用插件（自动打快照，可回滚）
+c2t plugin-rollback                 # 回滚到安装前快照并退出安全模式
+c2t migrate --dry-run               # 看库版本；去掉 --dry-run 执行（迁移前自动备份）
+c2t backup                          # 手动备份一次（默认 DPAPI 加密）
+c2t wipe --yes                      # 清空程序数据（库 / 归档 / 备份 / 日志）
+c2t obsidian-sync                   # 与 Obsidian 库双向同步待办
+c2t desktop-export --serve          # 输出脱敏 JSON/ICS 并起本机回写接口
+c2t desktop-token --rotate          # 轮换桌面联动 token
+c2t hermes-token                    # 查看 Hermes token（--rotate 轮换）
+c2t hermes-summary --out 今日.md     # 生成当日汇总
+c2t sbom                            # 生成 SBOM 与第三方许可证清单
 c2t serve --port 8765               # 起本地 HTTP API（仅 127.0.0.1）
 c2t dash --db qq.db                 # 悬浮待办看板
 c2t doctor                          # 环境自检
@@ -91,6 +110,24 @@ snap.py                 # 处理一次剪贴板截图
 snap.py --hotkey        # 常驻：Ctrl+Alt+S 唤出
 snap.py --watch         # 监视剪贴板，截一张处理一张
 ```
+
+---
+
+## 可选增强模块（一键开关，按需启用）
+
+| 模块 | 功能说明 | 默认 |
+|---|---|---|
+| WebDAV / 本地 HTTP 看板 | 浏览器打开看板，只监听 `127.0.0.1` | 关 |
+| AI 复核 | 本地 Ollama 或云端 OpenAI 兼容 API，多档案 + 预设模板 + 连接测试 + 每日 token 额度 | 关 |
+| 数据看板 | Qt 悬浮看板：不抢焦点、透明度、贴边收起、待办编辑 | 随 Qt 版启用 |
+| 桌面美化联动 | 脱敏 `todos.json` / `todos.ics` + 本机回写接口（随机端口 + token） | 关 |
+| Obsidian 双向同步 | 待办镜像进库、勾选回写、冲突留档 | 关（需填库路径） |
+| Hermes 运维 | 本机 token 鉴权 / 巡检自动重启 / 每日汇总 | 开（仅本机） |
+| 插件平台 | 子进程隔离、权限白名单、安全模式、一键回滚 | 开（空插件列表） |
+| Docker 部署方案 | 仅 Ollama / AnythingLLM 等纯后端服务容器化，主程序通过本地 HTTP 对接 | 进阶可选，见 [deploy/](deploy/) |
+
+> 首次运行未签名版本时 Windows SmartScreen 会提示「Windows 已保护你的电脑」，
+> 点「更多信息 → 仍要运行」即可。若被杀软误报，参见 [SECURITY.md](SECURITY.md)。
 
 ---
 
