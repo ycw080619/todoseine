@@ -65,19 +65,19 @@ class _StubAI:
     def on(self, feature: str) -> bool:
         return feature in ("intent", "merge")
 
-    def intent(self, text: str) -> bool:
+    def intent(self, text: str, session: str = "") -> bool:
         # 注意：空字符串 is in 任何字符串，所以必须先判空再判断包含
         if not self.filter_out:
             return True
         return self.filter_out not in text
 
-    def merge(self, texts):
+    def merge(self, texts, session: str = ""):
         return ["合并后的一条待办"] if len(texts) > 1 else None
 
-    def review(self, text):
+    def review(self, text, session: str = ""):
         return True
 
-    def rewrite(self, text):
+    def rewrite(self, text, session: str = ""):
         return None
 
 

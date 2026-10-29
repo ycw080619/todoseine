@@ -1345,7 +1345,7 @@ class Store:
         self.conn.commit()
         return True
 
-    def purge_trash(self, days: int = 30) -> int:
+    def purge_trash(self, days: int = 7) -> int:
         """清掉回收站里超过 days 天的记录；days<=0 表示永久保留。"""
         if days is None or int(days) <= 0:
             return 0
@@ -1360,6 +1360,20 @@ class Store:
         cur = self.conn.execute("DELETE FROM trash")
         self.conn.commit()
         return cur.rowcount or 0
+
+    def checkpoint(self) -> None:
+        """WAL 并回主库；一键清空前必须调用。"""
+        try:
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            pass
+
+    def vacuum(self) -> None:
+        """重写库文件，擦掉删除后残留的空闲页。"""
+        try:
+            self.conn.execute("VACUUM")
+        except sqlite3.Error:
+            pass
 
     def stats(self, since_ts: Optional[int] = None) -> dict:
         """统计。since_ts 给定时只统计该时间点之后的数据（c2t stats --since 7d）。"""

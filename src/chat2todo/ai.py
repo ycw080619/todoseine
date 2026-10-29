@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import time
 import urllib.error
 import urllib.request
@@ -24,6 +25,71 @@ from typing import Callable, Optional
 from urllib.parse import urlparse
 
 from .config import AI_DEFAULTS, _as_bool
+from .core.privacy import redact_for_ai
+
+log = logging.getLogger("chat2todo.ai")
+
+#: 预设模板：只回填「地址 + 模型」，密钥永远由用户自己填。
+#: 只承诺兼容标准 OpenAI /v1/chat/completions，厂商私有扩展不做适配。
+PRESETS: dict[str, dict[str, str]] = {
+    "豆包": {"base_url": "https://ark.cn-beijing.volces.com/api/v3",
+             "model": "doubao-pro-32k"},
+    "ChatGPT": {"base_url": "https://api.openai.com/v1", "model": "gpt-4o-mini"},
+    "DeepSeek": {"base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat"},
+    "通义千问": {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "model": "qwen-plus"},
+    "Ollama": {"base_url": "http://127.0.0.1:11434/v1", "model": "qwen2.5:7b"},
+    "自定义": {"base_url": "", "model": ""},
+}
+
+
+def probe(base_url: str, api_key: str, model: str, timeout: int = 15,
+          temperature: float = 0.0, top_p: float = 1.0,
+          max_tokens: int = 32) -> tuple[bool, str]:
+    """连接测试：发一条最小请求，返回 (是否可用, 给人看的说明)。
+
+    复用与正式调用相同的出口白名单与「不跟随重定向」策略，
+    避免测试通过、实际调用却被拦。
+    """
+    base = (base_url or "").rstrip("/")
+    if not base or not url_allowed(base):
+        return False, "Base URL 不合法：必须是 https，或本机 / 内网 http 地址"
+    if not api_key and "127.0.0.1" not in base and "localhost" not in base:
+        return False, "API Key 为空"
+    payload = {
+        "model": model or "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": "只回一个字：好"},
+            {"role": "user", "content": "连接测试"},
+        ],
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": max_tokens,
+    }
+    req = urllib.request.Request(
+        f"{base}/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+    t0 = time.monotonic()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        latency = int((time.monotonic() - t0) * 1000)
+        content = body["choices"][0]["message"]["content"]
+        return True, f"连接成功 · {latency} ms · 返回「{content.strip()[:20]}」"
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return False, f"鉴权失败（HTTP {exc.code}）：请检查 API Key"
+        if exc.code == 404:
+            return False, "接口不存在（HTTP 404）：请检查 Base URL 是否以 /v1 结尾"
+        return False, f"接口返回 HTTP {exc.code}"
+    except urllib.error.URLError as exc:
+        return False, f"连接失败：{exc.reason}"
+    except (KeyError, IndexError, ValueError, TypeError, OSError) as exc:
+        return False, f"响应解析失败：{type(exc).__name__}"
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -70,6 +136,12 @@ class AI:
                  on_call: Optional[Callable[[dict], None]] = None) -> None:
         ai = dict(AI_DEFAULTS)
         ai.update(cfg.get("ai") or {})
+        # 多档案：当前生效的档案覆盖上面的默认值（密钥等字段一并覆盖）
+        profile_name = str(ai.get("profile") or "default")
+        profiles = ai.get("profiles") or {}
+        if isinstance(profiles, dict) and isinstance(profiles.get(profile_name), dict):
+            ai.update(profiles[profile_name])
+        self.profile = profile_name
         self.cfg = ai
         self.enabled = _as_bool(ai.get("enabled"))
         raw_base = str(ai.get("base_url") or "").rstrip("/")
@@ -86,8 +158,28 @@ class AI:
         self.api_key = self.api_key or os.environ.get("C2T_AI_KEY", "")
         self.model = str(ai.get("model") or "gpt-4o-mini")
         self.timeout = int(ai.get("timeout") or 15)
+        # 采样参数：文档要求可调；默认 temperature=0 保证判定可复现
+        try:
+            self.temperature = float(ai.get("temperature") or 0.0)
+        except (TypeError, ValueError):
+            self.temperature = 0.0
+        try:
+            self.top_p = float(ai.get("top_p") or 1.0)
+        except (TypeError, ValueError):
+            self.top_p = 1.0
+        try:
+            self.max_tokens = max(16, int(ai.get("max_tokens") or 600))
+        except (TypeError, ValueError):
+            self.max_tokens = 600
+        try:
+            self.token_limit = max(0, int(ai.get("tokens_per_day") or 0))
+        except (TypeError, ValueError):
+            self.token_limit = 0
+        self.used_tokens = 0          # 本进程累计，用于每日上限降级
+        self.quota_exhausted = False
         self.calls = 0
         self.on_call = on_call
+        self._privacy_cfg = cfg
 
     def _fire(self, record: dict) -> None:
         """触发 on_call 回调；任何异常吞掉，绝不阻塞主流程。"""
@@ -108,8 +200,18 @@ class AI:
 
     # --- 底层调用 -------------------------------------------------
     def _chat(self, system: str, user: str, max_tokens: int = 256,
-              timeout: Optional[int] = None, feature: str = "") -> Optional[str]:
+              timeout: Optional[int] = None, feature: str = "",
+              session: str = "") -> Optional[str]:
         if not self.usable:
+            return None
+        # 云端调用前强制二次脱敏：白名单群也不例外，这是文档写死的红线；
+        # 只有用户显式开启「AI 明文」开关（可再按群号收窄）时才放行原文
+        user = redact_for_ai(user, self._privacy_cfg, session)
+        # 每日 token 上限：超了就静默降级成关键词分类（返回 None 即回落）
+        if self.token_limit and self.used_tokens >= self.token_limit:
+            if not self.quota_exhausted:
+                self.quota_exhausted = True
+                log.warning("AI token 用量已达每日上限 %d，降级为关键词规则", self.token_limit)
             return None
         payload = {
             "model": self.model,
@@ -117,8 +219,9 @@ class AI:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "temperature": 0,
-            "max_tokens": max_tokens,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "max_tokens": min(max_tokens, self.max_tokens),
         }
         req = urllib.request.Request(
             f"{self.base_url}/chat/completions",
@@ -136,11 +239,14 @@ class AI:
             latency_ms = int((time.monotonic() - t0) * 1000)
             self.calls += 1
             usage = body.get("usage") or {}
+            in_tok = int(usage.get("prompt_tokens") or 0)
+            out_tok = int(usage.get("completion_tokens") or 0)
+            self.used_tokens += in_tok + out_tok
             self._fire({
                 "feature": feature,
                 "model": self.model,
-                "in_tokens": int(usage.get("prompt_tokens") or 0),
-                "out_tokens": int(usage.get("completion_tokens") or 0),
+                "in_tokens": in_tok,
+                "out_tokens": out_tok,
                 "latency_ms": latency_ms,
                 "failed": 0,
             })
@@ -159,20 +265,20 @@ class AI:
             return None
 
     # --- 五个环节 -------------------------------------------------
-    def review(self, text: str) -> Optional[bool]:
+    def review(self, text: str, session: str = "") -> Optional[bool]:
         """是不是真的要我做？返回 None 表示无法判断，调用方保留原结论。"""
         out = self._chat(
             "你是待办判定器。只回一个字：是 或 否。"
             "判定标准：只要这句话在提醒、通知或要求读者去做某件事，就算“是”；"
             "面向全体的通知（如“大家记得报名”）也算；纯闲聊、纯陈述事实算“否”。",
             f"这句话是否包含需要读者去做的事：\n{text}",
-            max_tokens=4, feature="review",
+            max_tokens=4, feature="review", session=session,
         )
         if not out:
             return None
         return out.startswith("是")
 
-    def intent(self, text: str) -> Optional[bool]:
+    def intent(self, text: str, session: str = "") -> Optional[bool]:
         """True 表示「有需要我去做的事」，False 表示「只是说话人自己的事」。"""
         out = self._chat(
             "判断这句话里有没有需要读者（我）去做的事。"
@@ -180,18 +286,18 @@ class AI:
             "只有纯粹是说话人陈述自己要做什么时才回 B。只回 A 或 B。"
             "A=有我该做的事，B=只是说话人自己的事。",
             text,
-            max_tokens=4, feature="intent",
+            max_tokens=4, feature="intent", session=session,
         )
         if not out:
             return None
         return out.strip().upper().startswith("A")
 
-    def rewrite(self, text: str) -> Optional[str]:
+    def rewrite(self, text: str, session: str = "") -> Optional[str]:
         out = self._chat(
             "把口语化的要求改写成一条可执行待办，格式：时间 + 动作 + 对象。"
             "保留原文信息，不要编造。只输出改写结果一行。",
             text,
-            max_tokens=80, feature="rewrite",
+            max_tokens=80, feature="rewrite", session=session,
         )
         return out.strip() if out else None
 
@@ -212,7 +318,7 @@ class AI:
         )
         return out.strip() if out else None
 
-    def merge(self, texts: list[str]) -> Optional[list[str]]:
+    def merge(self, texts: list[str], session: str = "") -> Optional[list[str]]:
         """把讲同一件事的多条合并；返回合并后的列表。"""
         if len(texts) < 2:
             return None
@@ -221,7 +327,7 @@ class AI:
             "下面若干条待办里，有些其实在说同一件事。请把说同一件事的合并成一条，"
             "其余原样保留。只输出 JSON 数组，例如 [\"合并后的待办\"]。",
             numbered,
-            max_tokens=300, feature="merge",
+            max_tokens=300, feature="merge", session=session,
         )
         if not out:
             return None

@@ -26,6 +26,7 @@ DEFAULTS: Dict[str, Any] = {
     "obsidian_vault": "",
     "language": "zh",
     "log_level": "info",
+    "onboarded": False,       # 首次三步引导是否已完成
 }
 
 DB_DEFAULTS: Dict[str, Any] = {
@@ -48,8 +49,10 @@ FILTER_DEFAULTS = {
 # 实时监听（qt 看板常驻采集）
 UIA_DEFAULTS: Dict[str, Any] = {
     "enabled": True,
-    "interval": 5,            # 两轮抓取之间的间隔（秒）
+    "interval": 2,            # 两轮抓取之间的间隔（秒）；文档要求采集延迟 ≤2s
     "ocr_enabled": True,
+    "ocr_min_confidence": 0.5,    # 低于此值不写事实源、不参与待办提取
+    "keep_low_confidence": False,  # 用户选择保留时打「仅供参考」标记
     "session": "QQ实时",      # OCR 通道读不出群名，统一用这个来源名
     "hwnd": 0,                # 0 = 自动取面积最大的 QQ 主窗口
 }
@@ -68,6 +71,10 @@ DASH_DEFAULTS: Dict[str, Any] = {
     "material": True,
     "snap": True,
     "lock": False,
+    "opacity": 0.94,        # 窗口不透明度 0.5~1.0
+    "no_activate": True,    # WS_EX_NOACTIVATE：点击/拖拽/勾选都不抢前台焦点
+    "auto_hide": True,      # 贴左/右边缘时鼠标离开自动收起，只留一条边
+    "show_on_start": True,  # 启动时是否直接显示看板（首次引导里可关掉）
 }
 
 # 全局热键
@@ -93,6 +100,64 @@ AI_DEFAULTS: Dict[str, Any] = {    "enabled": False,
     "api_key": "",
     "model": "gpt-4o-mini",
     "timeout": 15,
+    "temperature": 0.0,       # 文档要求可配置；默认 0 保证判定稳定
+    "top_p": 1.0,
+    "max_tokens": 600,        # 单次请求上限
+    "stream": False,          # 预留：当前走一次性返回
+    "tokens_per_day": 0,      # 0 = 不限；超限后自动降级为关键词分类
+    "profile": "default",     # 当前生效的档案名
+    "profiles": {},           # 多套档案：{名称: {base_url/model/api_key/...}}
+}
+
+# 隐私与数据保护（脱敏、白名单、展示开关）
+PRIVACY_DEFAULTS: Dict[str, Any] = {
+    "enabled": True,
+    "mask_logs": True,              # 日志始终脱敏
+    "board_show_original": False,   # 看板默认脱敏，这里是「显示原文」开关
+    "whitelist_groups": [],         # 白名单群：只跳过归档/展示，AI 请求仍强制脱敏
+    "allow_raw_ai": False,          # AI 明文开关：默认关，开启需界面二次确认
+    "raw_ai_groups": [],            # 仅这些群发明文；留空 = 开启后全部放行
+    "custom_rules": [],             # 自定义打码规则，写法「名称::正则」
+}
+
+# 本地备份（每日自动、加密存储）
+BACKUP_DEFAULTS: Dict[str, Any] = {
+    "enabled": True,
+    "dir": "",              # 空 = 库文件同目录下的 backups/
+    "keep": 7,              # 保留最近 N 份
+    "encrypt": True,        # 用 DPAPI 加密（仅 Windows 11）
+}
+
+# 归档（消息 Markdown 事实源）
+ARCHIVE_DEFAULTS: Dict[str, Any] = {
+    "enabled": True,
+    "dir": "",              # 空 = 库文件同目录下的 archive/
+    "screenshots": False,   # 截图归档默认关闭
+    "screenshot_days": 7,   # 截图保留期
+}
+
+# 桌面美化联动（待办 JSON/ICS 输出 + 本地回写接口）
+DESKTOP_DEFAULTS: Dict[str, Any] = {
+    "enabled": False,       # 可选功能，默认关闭
+    "dir": "",              # 空 = 库文件同目录下的 desktop/
+    "json": True,           # 输出 todos.json
+    "ics": True,            # 输出 todos.ics
+    "port": 0,              # 0 = 随机端口（永远只绑 127.0.0.1）
+    "debounce_ms": 1500,    # 变更防抖，文档要求 1~2 秒
+}
+
+# Hermes 运维服务（本地 token 鉴权 + 巡检 + 每日汇总）
+HERMES_DEFAULTS: Dict[str, Any] = {
+    "enabled": True,
+    "port": 0,              # 0 = 随机端口，只绑 127.0.0.1
+    "auto_restart": True,   # 巡检发现采集停了自动重启
+    "daily_summary": True,  # 每日固定时间生成汇总
+    "summary_time": "21:30",
+}
+
+# 半自动转发（高风险，默认关闭；开启需要二次确认）
+FORWARD_DEFAULTS: Dict[str, Any] = {
+    "enabled": False,
 }
 
 _HOME_CONFIG = os.path.join(
@@ -193,15 +258,18 @@ def _split_list(body: str) -> List[str]:
 
 
 def _nest(flat: Dict[str, Any]) -> Dict[str, Any]:
+    """把 "a.b.c" = v 还原成嵌套字典（支持 [ai.profiles."工作"] 这类多层表）。"""
     out: Dict[str, Any] = {}
     for key, value in flat.items():
-        if "." in key:
-            head, rest = key.split(".", 1)
-            out.setdefault(head, {})
-            if isinstance(out[head], dict):
-                out[head][rest] = value
-        else:
+        if "." not in key:
             out[key] = value
+            continue
+        head, rest = key.split(".", 1)
+        sub = out.get(head)
+        if not isinstance(sub, dict):
+            sub = {}
+            out[head] = sub
+        sub.update(_nest({rest: value}))
     return out
 
 
@@ -252,6 +320,12 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
     cfg["dash"] = dict(DASH_DEFAULTS)
     cfg["hotkey"] = dict(HOTKEY_DEFAULTS)
     cfg["notify"] = dict(NOTIFY_DEFAULTS)
+    cfg["privacy"] = dict(PRIVACY_DEFAULTS)
+    cfg["backup"] = dict(BACKUP_DEFAULTS)
+    cfg["archive"] = dict(ARCHIVE_DEFAULTS)
+    cfg["desktop"] = dict(DESKTOP_DEFAULTS)
+    cfg["hermes"] = dict(HERMES_DEFAULTS)
+    cfg["forward"] = dict(FORWARD_DEFAULTS)
 
     real = find_file(path)
     if real:
@@ -259,7 +333,8 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
         cfg["config_file"] = real
         for key, value in raw.items():
             if key in ("ai", "db", "vector", "filter", "uia", "dash",
-                       "hotkey", "notify") and isinstance(value, dict):
+                       "hotkey", "notify", "privacy", "backup", "archive",
+                       "desktop", "hermes", "forward") and isinstance(value, dict):
                 cfg[key].update(value)
             else:
                 cfg[key] = value
@@ -300,7 +375,9 @@ def save(cfg: Dict[str, Any], path: Optional[str] = None) -> str:
     target = path or _HOME_CONFIG
     os.makedirs(os.path.dirname(target), exist_ok=True)
 
-    sections = ("ai", "vector", "db", "filter", "uia", "dash", "hotkey", "notify")
+    sections = ("ai", "vector", "db", "filter", "uia", "dash", "hotkey",
+                "notify", "privacy", "backup", "archive", "desktop", "hermes",
+                "forward")
     lines = ["# Chat2Todo 配置（由设置面板写入，可手工编辑）"]
 
     def emit(prefix: str, key: str, value: Any) -> str:
@@ -327,10 +404,21 @@ def save(cfg: Dict[str, Any], path: Optional[str] = None) -> str:
             continue
         lines.append("")
         lines.append(f"[{section}]")
+        nested: List[tuple] = []
         for key, value in data.items():
             if value is None:
                 continue
+            if isinstance(value, dict):
+                nested.append((key, value))     # 多套 AI 档案这类子表
+                continue
             lines.append(emit("", key, value))
+        for name, sub in nested:
+            lines.append("")
+            lines.append(f"[{section}.{_quote_key(name)}]")
+            for key, value in sub.items():
+                if value is None:
+                    continue
+                lines.append(emit("", key, value))
 
     with open(target, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(lines) + "\n")
@@ -340,6 +428,14 @@ def save(cfg: Dict[str, Any], path: Optional[str] = None) -> str:
 def _quote(text: str) -> str:
     escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
     return f'"{escaped}"'
+
+
+def _quote_key(text: str) -> str:
+    """TOML 表名：纯字母数字下划线不加引号，否则加双引号（中文档案名要引起来）。"""
+    name = str(text)
+    if name and all(ch.isalnum() or ch == "_" or ch == "-" for ch in name):
+        return name
+    return _quote(name)
 
 
 _FALSE_WORDS = ("", "0", "false", "no", "off", "none", "null")

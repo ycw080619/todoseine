@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta
 
 from . import __version__
@@ -18,6 +19,7 @@ from .adapters import REGISTRY, get_adapter
 from .ai import AI
 from .config import ConfigError, load, sample_toml
 from .core import Store, dedupe, extract_todos, merge_events, render_markdown, to_csv, to_json
+from .core.privacy import install_log_filter
 from .errors import C2TError
 from .models import TodoItem
 
@@ -196,21 +198,21 @@ def _run_extraction(messages, cfg: dict, session: str,
         else:
             ai_note = "（AI 已启用但缺少 base_url/api_key，本次未调用）"
     if ai.on("review"):
-        kept = [t for t in todos if ai.review(t.text) is not False]
+        kept = [t for t in todos if ai.review(t.text, t.session) is not False]
         ai_note = f"{ai_note}（AI 复核 {len(todos)}→{len(kept)}）".strip()
         todos = kept
     if ai.on("intent"):
-        kept = [t for t in todos if ai.intent(t.text) is not False]
+        kept = [t for t in todos if ai.intent(t.text, t.session) is not False]
         ai_note = f"{ai_note}（意图过滤 {len(todos)}→{len(kept)}）".strip()
         todos = kept
     if ai.on("rewrite"):
         for t in todos:
-            better = ai.rewrite(t.text)
+            better = ai.rewrite(t.text, t.session)
             if better:
                 t.text = better
         ai_note = f"{ai_note}（AI 改写）".strip()
     if ai.on("merge") and len(todos) >= 2:
-        merged = ai.merge([t.text for t in todos])
+        merged = ai.merge([t.text for t in todos], todos[0].session)
         if merged and len(merged) < len(todos):
             by_text = {t.text: t for t in todos}
             rebuilt = []
@@ -776,6 +778,281 @@ def cmd_db_backfill(args) -> int:
     return 0
 
 
+def cmd_backup(args) -> int:
+    """立即做一次库备份（默认 DPAPI 加密，保留最近 7 份）。"""
+    from .core.backup import backup_database
+
+    db = _db(args)
+    path = backup_database(
+        db,
+        backup_dir=str(getattr(args, "dir", "") or ""),
+        keep=int(getattr(args, "keep", 7) or 7),
+        encrypt=not getattr(args, "no_encrypt", False),
+    )
+    if not path:
+        print("备份失败：数据库不存在或写入出错")
+        return 1
+    print(f"备份完成：{path}")
+    return 0
+
+
+def cmd_wipe(args) -> int:
+    """一键清空程序生成内容；必须显式 --yes，且不会碰插件本体与 Obsidian 其他笔记。"""
+    from .core.maintenance import wipe_all
+
+    if not getattr(args, "yes", False):
+        print("一键清空会删除：数据库、Markdown 归档、备份、日志、缓存、插件配置。")
+        print("插件本体与 Obsidian 库中的其他笔记不会被删除。")
+        print("确认要执行请追加 --yes")
+        return 1
+    cfg = _cfg(args)
+    removed = wipe_all(cfg)
+    print(f"已清空 {len(removed)} 项：")
+    for path in removed:
+        print(f"  - {path}")
+    return 0
+
+
+def cmd_obsidian_sync(args) -> int:
+    """双向同步：先回写 Obsidian 勾选状态，再把本地待办镜像过去。"""
+    from .core.obsidian import make_sync
+
+    cfg = _cfg(args)
+    if not str(cfg.get("obsidian_vault") or ""):
+        print("未配置 obsidian_vault，请先在设置里指定 Obsidian 库路径")
+        return 1
+    store = Store(cfg["db_path"])
+    try:
+        sync = make_sync(cfg, store)
+        if sync is None:
+            print(f"Obsidian 库不存在或不可写：{cfg.get('obsidian_vault')}")
+            return 1
+        result = sync.sync()
+        print(f"完成回写 {result['done']} 条 · 镜像文件 {sync.note}")
+        return 0
+    finally:
+        store.close()
+
+
+def cmd_desktop_export(args) -> int:
+    """一次性输出脱敏 JSON/ICS；--serve 时同时起本地回写接口直到 Ctrl+C。"""
+    from .core.desktop_link import DesktopLink
+
+    cfg = _cfg(args)
+    cfg.setdefault("desktop", {})["enabled"] = True
+    if args.dir:
+        cfg["desktop"]["dir"] = args.dir
+    link = DesktopLink(cfg, cfg["db_path"])
+    if not link.export():
+        print("输出失败：请检查数据库与输出目录")
+        return 1
+    print(f"待办文件    : {link.folder}")
+    if not args.serve:
+        return 0
+    url = link.start_server()
+    if not url:
+        print("本地回写接口启动失败")
+        return 1
+    print(f"回写接口    : {url}")
+    print(f"token 文件  : {os.path.join(link.folder, 'token.txt')}")
+    print("按 Ctrl+C 结束")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n已停止")
+    finally:
+        link.stop_server()
+    return 0
+
+
+def cmd_desktop_token(args) -> int:
+    """查看 / 轮换桌面联动回写 token。"""
+    from .core.desktop_link import ensure_token, out_dir
+
+    cfg = _cfg(args)
+    folder = out_dir(cfg, cfg["db_path"])
+    token = ensure_token(folder, rotate=bool(args.rotate))
+    if not token:
+        print("token 生成失败：请检查输出目录权限")
+        return 1
+    print(token)
+    if args.rotate:
+        print("旧 token 已失效；重启程序后本地接口才会使用新 token。")
+    return 0
+
+
+def cmd_migrate(args) -> int:
+    """数据库 schema 迁移：迁移前自动备份，失败自动放弃（正式库不动）。"""
+    from .core.migrate import plan, run
+
+    cfg = _cfg(args)
+    db = cfg["db_path"]
+    info = plan(db)
+    print(f"数据库      : {db}")
+    print(f"当前版本    : {info['current'] or '（空库/无 meta）'}")
+    print(f"目标版本    : {info['target']}")
+    if not info["exists"]:
+        print("库文件还不存在；首次运行程序时会自动建库。")
+        return 1
+    if not info["needed"]:
+        print("已是最新版本，无需迁移。")
+        return 0
+    if args.dry_run:
+        print("（--dry-run：只展示，不做任何改动）")
+        return 0
+    result = run(db, str(cfg.get("backup", {}).get("dir") or ""))
+    if not result["ok"]:
+        print(f"迁移失败    : {result['error']}", file=sys.stderr)
+        print("正式库未被修改，可直接继续使用。")
+        return 1
+    print(f"迁移完成    : {result['from']} → {result.get('after') or result['to']}")
+    if result["backup"]:
+        print(f"迁移前备份  : {result['backup']}")
+    return 0
+
+
+def cmd_plugin_status(args) -> int:
+    """插件运行状态：启用列表、7 天崩溃次数、是否处于安全模式。"""
+    from .core.plugins import PluginManager, crash_count
+
+    mgr = PluginManager()
+    plugins = mgr.scan()
+    state = mgr._load()  # noqa: SLF001 - 只读展示
+    print(f"插件目录    : {mgr.folder}")
+    print(f"安全模式    : {'是（全部插件已禁用）' if mgr.safe_mode else '否'}")
+    if mgr.safe_mode and state.get("safe_mode_reason"):
+        print(f"触发原因    : {state['safe_mode_reason']}")
+    if not plugins:
+        print("（未安装插件，把 manifest.json + entry.py 放进 "
+              f"{mgr.folder}/<插件ID>/）")
+        return 0
+    print()
+    for plugin in plugins:
+        mark = "启用" if mgr.is_enabled(plugin.id) else "停用"
+        crashes = crash_count(state, plugin.id)
+        perms = ", ".join(plugin.permissions) or "-"
+        print(f"{plugin.id:<20} {plugin.manifest.name:<16} v{plugin.manifest.version} "
+              f"{mark} 崩溃{crashes}/7天 权限：{perms}")
+    for path in state.get("snapshots") or []:
+        print(f"可回滚快照 : {path}")
+    return 0
+
+
+def cmd_plugin_toggle(args) -> int:
+    """启用 / 停用插件；启用前自动打包快照，可随时回滚。"""
+    from .core.plugins import PluginError, PluginManager
+
+    mgr = PluginManager()
+    try:
+        result = mgr.set_enabled(args.id, enabled=bool(args.enable),
+                                 cfg_file=_cfg(args).get("config_file") or "")
+    except PluginError as exc:
+        print(f"操作失败：{exc}", file=sys.stderr)
+        return 1
+    print(f"{args.id} 已{'启用' if args.enable else '停用'}")
+    if result.get("snapshot"):
+        print(f"快照      : {result['snapshot']}")
+    return 0
+
+
+def cmd_plugin_rollback(args) -> int:
+    """回滚到最近一次插件快照（配置 + 插件目录），同时退出安全模式。"""
+    from .core.plugins import PluginManager
+
+    mgr = PluginManager()
+    cfg = _cfg(args)
+    cfg_file = str(cfg.get("config_file") or "")
+    cfg_dir = os.path.dirname(cfg_file) if cfg_file else ""
+    snapshot = mgr.rollback(cfg_dir)
+    if not snapshot:
+        print("没有可回滚的快照", file=sys.stderr)
+        return 1
+    print(f"已回滚      : {snapshot}")
+    print("安全模式已退出；重新启动程序即可加载回滚后的插件。")
+    return 0
+
+
+def cmd_hermes_token(args) -> int:
+    """查看 / 轮换 Hermes 服务 token（存加密配置）。"""
+    from .core.hermes import ensure_token, token_path
+
+    token = ensure_token(rotate=bool(args.rotate))
+    if not token:
+        print("token 生成失败：请检查 ~/.chat2todo/hermes 权限", file=sys.stderr)
+        return 1
+    print(token)
+    print(f"（保存在 {token_path()}，Windows 下用 DPAPI 加密）")
+    if args.rotate:
+        print("旧 token 已失效。")
+    return 0
+
+
+def cmd_hermes_serve(args) -> int:
+    """以 CLI 方式起 Hermes 服务（不使用 Qt），供排障与自测。"""
+    from .core.hermes import HermesService, MemoryHost
+
+    cfg = _cfg(args)
+    host = MemoryHost(cfg["db_path"], cfg)
+    service = HermesService(host, port=args.port)
+    url = service.start()
+    if not url:
+        print("Hermes 服务启动失败", file=sys.stderr)
+        return 1
+    print(f"服务地址    : {url}")
+    print(f"token       : {service.token}")
+    print("指令示例    : POST /command  {\"command\": \"todos\"}")
+    print("按 Ctrl+C 结束")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n已停止")
+    finally:
+        service.stop()
+    return 0
+
+
+def cmd_hermes_summary(args) -> int:
+    """生成当日汇总；--out 写入文件，否则打印到终端。"""
+    from .core.hermes import daily_summary
+
+    cfg = _cfg(args)
+    store = Store(cfg["db_path"])
+    try:
+        text = daily_summary(store, cfg)
+    finally:
+        store.close()
+    if args.out:
+        try:
+            with open(args.out, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        except OSError as exc:
+            print(f"写入失败：{exc}", file=sys.stderr)
+            return 1
+        print(f"已写入      : {args.out}")
+        return 0
+    print(text, end="")
+    return 0
+
+
+def cmd_sbom(args) -> int:
+    """生成 SBOM（sbom.json）与许可证清单（licenses.md）。"""
+    from .core.sbom import write_all
+
+    project = args.project or ""
+    if not project:
+        project = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))), "pyproject.toml")
+    if not os.path.isfile(project):
+        print(f"找不到 pyproject.toml：{project}", file=sys.stderr)
+        return 1
+    bom, lic = write_all(args.out, project)
+    print(f"SBOM        : {bom}")
+    print(f"许可证清单  : {lic}")
+    return 0
+
+
 def cmd_purge_chat(args) -> int:
     """按群清理历史：--list 看有哪些来源群，--chat 指定清理。"""
     store = Store(_db(args))
@@ -1079,6 +1356,33 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", default="")
     p.set_defaults(func=cmd_db_backfill)
 
+    p = sub.add_parser("backup", help="立即备份一次数据库（默认 DPAPI 加密）")
+    p.add_argument("--dir", default="", help="备份目录，默认库文件同目录下的 backups/")
+    p.add_argument("--keep", type=int, default=7, help="保留最近 N 份（默认 7）")
+    p.add_argument("--no-encrypt", action="store_true", help="不加密（仅调试用）")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_backup)
+
+    p = sub.add_parser("wipe", help="一键清空程序生成内容（数据库 / 归档 / 备份 / 日志 / 缓存）")
+    p.add_argument("--yes", action="store_true", help="确认执行；不加只打印范围")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_wipe)
+
+    p = sub.add_parser("obsidian-sync", help="与 Obsidian 库双向同步待办（需先配置库路径）")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_obsidian_sync)
+
+    p = sub.add_parser("desktop-export", help="输出脱敏待办 JSON/ICS（桌面美化联动）")
+    p.add_argument("--dir", default="", help="输出目录，默认库文件同目录下的 desktop/")
+    p.add_argument("--serve", action="store_true", help="同时启动本地回写接口，Ctrl+C 结束")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_desktop_export)
+
+    p = sub.add_parser("desktop-token", help="查看 / 轮换桌面联动回写 token")
+    p.add_argument("--rotate", action="store_true", help="立即轮换，旧 token 失效")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_desktop_token)
+
     p = sub.add_parser("purge-chat", help="按来源群清理历史消息（可一并删对应待办）")
     p.add_argument("--chat", default="", help="群号 / 会话号，先用 --list 查看")
     p.add_argument("--list", action="store_true", help="列出库里各来源群及条数")
@@ -1117,6 +1421,43 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("plugins", help="扫描 tools/* 下的插件 manifest 打表")
     p.set_defaults(func=cmd_plugins)
 
+    p = sub.add_parser("plugin-status", help="插件运行状态：启用列表 / 崩溃次数 / 安全模式")
+    p.set_defaults(func=cmd_plugin_status)
+
+    p = sub.add_parser("migrate", help="数据库 schema 迁移（迁移前自动备份）")
+    p.add_argument("--dry-run", action="store_true", help="只看版本，不做改动")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_migrate)
+
+    for _name, _enable in (("plugin-enable", True), ("plugin-disable", False)):
+        p = sub.add_parser(_name, help=f"{'启用' if _enable else '停用'}已安装插件")
+        p.add_argument("id", help="插件 ID（plugin-status 里能看到）")
+        p.add_argument("--db", default="")
+        p.set_defaults(func=cmd_plugin_toggle, enable=_enable)
+
+    p = sub.add_parser("plugin-rollback", help="回滚到最近一次插件快照并退出安全模式")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_plugin_rollback)
+
+    p = sub.add_parser("hermes-token", help="查看 / 轮换 Hermes 服务 token")
+    p.add_argument("--rotate", action="store_true", help="立即轮换，旧 token 失效")
+    p.set_defaults(func=cmd_hermes_token)
+
+    p = sub.add_parser("hermes-serve", help="以 CLI 方式启动 Hermes 服务（排障用）")
+    p.add_argument("--port", type=int, default=0, help="0 = 随机端口（只绑 127.0.0.1）")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_hermes_serve)
+
+    p = sub.add_parser("hermes-summary", help="生成当日汇总（消息数 / 待办清单）")
+    p.add_argument("--out", default="", help="写入文件，留空则打印到终端")
+    p.add_argument("--db", default="")
+    p.set_defaults(func=cmd_hermes_summary)
+
+    p = sub.add_parser("sbom", help="生成 SBOM 与第三方许可证清单")
+    p.add_argument("--out", default="dist/sbom", help="输出目录，默认 dist/sbom")
+    p.add_argument("--project", default="", help="pyproject.toml 路径，默认自动定位")
+    p.set_defaults(func=cmd_sbom)
+
     p = sub.add_parser("serve", help="启动本地 HTTP API（仅本机 127.0.0.1）")
     p.add_argument("--host", default="127.0.0.1",
                    choices=["127.0.0.1", "localhost", "::1"],
@@ -1150,6 +1491,11 @@ def main(argv=None) -> int:
         level=logging.DEBUG if os.environ.get("C2T_DEBUG") else logging.WARNING,
         format="[%(levelname)s] %(name)s: %(message)s",
     )
+    # 日志脱敏：手机号 / 身份证 / 邮箱在落盘前统一打码
+    try:
+        install_log_filter(load())
+    except ConfigError:
+        install_log_filter({})
     try:
         return args.func(args)
     except C2TError as err:
