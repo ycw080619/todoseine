@@ -1352,7 +1352,6 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
 
     def _clock_jump() -> None:
         """分钟跳变时给时钟文字做一次 font-size 弹簧（DeskBox 时钟跳动感）。"""
-        # 标题栏 hclock：Consolas 10 → 13 → 11 → 10
         for tag, base_font in (("hclock", ("Consolas", 10)),
                                ("clock", ("Consolas", 30, "bold"))):
             items = cv.find_withtag(tag)
@@ -1360,17 +1359,17 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 continue
             iid = items[0]
             base_sz = base_font[1]
-            # 3 帧过冲：base → base+3 → base-2 → base（每帧 35ms）
             stages = [base_sz + 3, base_sz - 2, base_sz]
-            def _step(fidx, tag_=tag):
+            # ⚠️ iid / base_font 必须用默认参数绑定，否则循环结束后所有回调都用最后一次迭代的值
+            def _step(fidx, tag_=tag, iid_=iid, bf=base_font):
                 if fidx >= len(stages):
                     return
                 sz = stages[fidx]
                 try:
-                    cv.itemconfig(iid, font=(*base_font[:1], sz, *base_font[2:]))
+                    cv.itemconfig(iid_, font=(*bf[:1], sz, *bf[2:]))
                 except Exception:
                     return
-                cv.after(35, lambda: _step(fidx + 1, tag_=tag_))
+                cv.after(35, lambda: _step(fidx + 1, tag_=tag_, iid_=iid_, bf=bf))
             _step(0)
 
     def _welcome_breath() -> None:
@@ -1502,7 +1501,15 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             state["render_hash"] = debounce
 
             cv.delete("body")
-            state["slide_gen"] = state.get("slide_gen", 0) + 1   # 打断进行中的滑动动画
+            # ⚠️ tag_bind 是追加语义 + cv.delete 不清除 tag 绑定 → render 前统一解绑所有 body tag 的事件
+            for _evt in ("<Button-1>", "<Button-3>", "<Double-Button-1>",
+                         "<Enter>", "<Leave>", "<Motion>", "<B1-Motion>", "<ButtonRelease-1>"):
+                try:
+                    cv.tag_unbind("body", _evt)
+                except Exception:
+                    pass
+            # 同时打断所有进行中的 hover 动画
+            state["slide_gen"] = state.get("slide_gen", 0) + 1
             unconfirmed = sum(1 for i in todo_items if i.status == "unconfirmed")
 
             if state["mini"]:
@@ -1522,7 +1529,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
             HOVER_DELAY = 12   # ms/帧，总 ≈ 120ms（HIG 舒适区间）
             SCALE_PX = 1.2     # 卡片 hover 时向外扩张的像素（每边）
 
-            def _ease_color(tag_, src_, dst_, frame=1):
+            def _ease_color(tag_, src_, dst_, gen, frame=1):
+                if state.get(f"hover_gen_{tag_}") != gen:
+                    return   # gen 已过期（新的 Enter/Leave 打断了）
                 if frame > HOVER_FRAMES:
                     return
                 t = _ease_out_cubic(frame / HOVER_FRAMES)
@@ -1530,10 +1539,12 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     cv.itemconfig(tag_, fill=_interp_color(src_, dst_, t))
                 except Exception:
                     return  # cv.delete 已清掉，放弃
-                cv.after(HOVER_DELAY, lambda: _ease_color(tag_, src_, dst_, frame + 1))
+                cv.after(HOVER_DELAY, lambda: _ease_color(tag_, src_, dst_, gen, frame + 1))
 
-            def _ease_coords(tag_, id_, src_coords, dst_coords, frame=1):
+            def _ease_coords(tag_, id_, src_coords, dst_coords, gen, frame=1):
                 """逐帧插值 Canvas 元素的 coords（用于卡片微放大）。"""
+                if state.get(f"hover_gen_{tag_}") != gen:
+                    return
                 if frame > HOVER_FRAMES:
                     return
                 t = _ease_out_cubic(frame / HOVER_FRAMES)
@@ -1545,9 +1556,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 except Exception:
                     return
                 cv.after(HOVER_DELAY,
-                         lambda: _ease_coords(tag_, id_, src_coords, dst_coords, frame + 1))
+                         lambda: _ease_coords(tag_, id_, src_coords, dst_coords, gen, frame + 1))
 
-            def _play_scale(row_tag, enter, scale_px=SCALE_PX):
+            def _play_scale(row_tag, enter, gen, scale_px=SCALE_PX):
                 """卡片 hover 微放大：只动画背景圆角矩形的 coords，其他元素不动。
 
                 先 row_tag 下的 create_polygon 就是卡片底，用它做缩放基准。
@@ -1563,10 +1574,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 if bg_polygon is None:
                     return
                 src = cv.coords(bg_polygon)
-                # 矩形的四角顶点：(r,0) → (w-r,0) → (w,r) → ... 缩放坐标
-                # 简单做法：整体向四周偏移 scale_px
-                cx = (src[0] + src[2]) / 2   # 近似中心 x
-                cy = (src[1] + src[5]) / 2   # 近似中心 y
+                # ✅ 用 min/max 算真正的几何中心，比硬编码下标稳（Validator A/B 都算过 cy 用 src[1]+src[5] 偏下）
+                cx = (min(src[0::2]) + max(src[0::2])) / 2
+                cy = (min(src[1::2]) + max(src[1::2])) / 2
                 dst = []
                 for i in range(0, len(src), 2):
                     px, py = src[i], src[i + 1]
@@ -1577,7 +1587,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                     factor = (dist + scale_px) / dist if enter else (dist - scale_px) / dist
                     dst.append(cx + dx * factor)
                     dst.append(cy + dy * factor)
-                _ease_coords(row_tag, bg_polygon, list(src), dst)
+                _ease_coords(row_tag, bg_polygon, list(src), dst, gen)
 
             for item in state.get("visible", []):
                 tag = f"row-{item.todo_id}"
@@ -1586,13 +1596,21 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 hover_fill = CARD_PRESSED if picked else CARD_HOVER
 
                 def _on_enter(_e, t=tag, s=base_fill, d=hover_fill):
-                    _ease_color(t, s, d)
-                    _play_scale(t, enter=True)
+                    # gen 递增：新的 Enter/Leave 会打断旧的 after 链
+                    gen = state.setdefault("hover_gen_" + t, 0) + 1
+                    state["hover_gen_" + t] = gen
+                    _ease_color(t, s, d, gen)
+                    _play_scale(t, enter=True, gen=gen)
 
                 def _on_leave(_e, t=tag, s=hover_fill, d=base_fill):
-                    _ease_color(t, s, d)
-                    _play_scale(t, enter=False)
+                    gen = state.setdefault("hover_gen_" + t, 0) + 1
+                    state["hover_gen_" + t] = gen
+                    _ease_color(t, s, d, gen)
+                    _play_scale(t, enter=False, gen=gen)
 
+                # ⚠️ tag_bind 是追加语义，render 可能被调用多次——先 unbind 清旧绑定，否则事件触发 N 次
+                cv.tag_unbind(tag, "<Enter>")
+                cv.tag_unbind(tag, "<Leave>")
                 cv.tag_bind(tag, "<Enter>", _on_enter)
                 cv.tag_bind(tag, "<Leave>", _on_leave)
 
@@ -1624,8 +1642,9 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 if poly is None:
                     return
                 base = cv.coords(poly)
-                cx = (base[0] + base[2]) / 2
-                cy = (base[1] + base[5]) / 2
+                # ✅ 用 min/max 算几何中心，Validator A/B 都指出 base[1]+base[5] 硬编码 cy 偏下
+                cx = (min(base[0::2]) + max(base[0::2])) / 2
+                cy = (min(base[1::2]) + max(base[1::2])) / 2
                 def _scale_coords(factor):
                     out = []
                     for i in range(0, len(base), 2):
@@ -1976,6 +1995,7 @@ def _build(db_path: str, interval: int = 30, status: str = "pending",
                 cv.create_line(cx - 11, 126, cx + 11, 126, fill=ACCENT, width=2,
                                capstyle="round", tags=("body", f"tab{idx}"))
                 state["_tab_cx"] = cx  # 记住当前 active tab 的中心，供下次切换时滑动用
+            cv.tag_unbind(f"tab{idx}", "<Button-1>")
             cv.tag_bind(f"tab{idx}", "<Button-1>", lambda _e, k=key: switch_tab(k))
 
         rows_room = max(1, (h - TOP - FOOT) // ROW)
