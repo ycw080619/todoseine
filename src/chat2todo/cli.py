@@ -615,6 +615,17 @@ def cmd_dash(args) -> int:
     return run(_db(args), interval=int(args.interval), status=status)
 
 
+def cmd_dash_qt(args) -> int:
+    """Qt 版看板（托盘 / 玻璃 / 实时监听）。需 .[qt] 依赖。"""
+    try:
+        from .qt.main import main as qt_main
+    except ImportError as exc:
+        print(f"Qt 版依赖缺失：{exc}")
+        print("请先安装：pip install -e .[qt]")
+        return 1
+    return qt_main()
+
+
 def cmd_db_key(args) -> int:
     """数据库口令管理：DPAPI 加密存本机，只有当前 Windows 用户能解开。"""
     from .core import keybox
@@ -1330,11 +1341,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("adapters", help="列出适配器")
     p.set_defaults(func=cmd_adapters)
 
-    p = sub.add_parser("dash", help="打开置顶待办看板（需要图形环境）")
+    p = sub.add_parser("dash", help="打开置顶待办看板（tkinter 版，零依赖）")
     p.add_argument("--db", default="")
     p.add_argument("--interval", type=int, default=30, help="自动刷新秒数")
     p.add_argument("--status", default="pending", choices=["pending", "unconfirmed", "done"])
     p.set_defaults(func=cmd_dash)
+
+    p = sub.add_parser("dash-qt", help="打开 Qt 版看板（托盘/玻璃/监听，需 .[qt]）")
+    p.set_defaults(func=cmd_dash_qt)
 
     p = sub.add_parser("db", help="检查数据库只读通道（引擎 / 密钥 / 试读）")
     p.set_defaults(func=cmd_db)

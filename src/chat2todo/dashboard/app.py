@@ -63,6 +63,7 @@ SNAP_ON = True         # 拖动松手时吸附工作区边缘（[ui] snap）
 HOVER_ON = False       # 迷你胶囊悬停展开 / 离开自动收回（[ui] hover_expand，默认关）
 RESIZE_MARGIN = 6      # 左右边缘多宽的区域算「拖边框改宽度」
 W_MIN, W_MAX = 280, 560   # 看板宽度可调范围（与 [ui] width 的钳位一致）
+H_MIN, H_MAX = 300, 900   # 看板高度可调范围（与 [ui] height 的钳位一致）
 W_MINI, H_MINI = 200, 108
 PAD = 16
 TOP = 156              # 列表起始 y（顶部输入卡之下）
@@ -409,7 +410,7 @@ def _apply_ui_config() -> dict:
     global ACCENT, PANEL, BORDER, TEXT, SUB, LINE, FIELD, ACTIVE
     global CARD_BG, CARD_HOVER, CARD_PRESSED, CARD_BORDER, CARD_DIVIDER, CAPTION
     global DIALOG_INNER, DIALOG_BTN
-    global RADIUS, W, BORDER_ON, SHOW_CLOCK, BORDER_W, ANIM_ON, BLUR_ON, SNAP_ON
+    global RADIUS, W, H, BORDER_ON, SHOW_CLOCK, BORDER_W, ANIM_ON, BLUR_ON, SNAP_ON
     global HOVER_ON, MATERIAL
 
     ui = _ui_config()
@@ -458,6 +459,10 @@ def _apply_ui_config() -> dict:
         pass
     try:
         W = max(W_MIN, min(W_MAX, int(ui.get("width", W))))
+    except (TypeError, ValueError):
+        pass
+    try:
+        H = max(H_MIN, min(H_MAX, int(ui.get("height", H))))
     except (TypeError, ValueError):
         pass
     try:

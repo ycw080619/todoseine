@@ -75,7 +75,7 @@ def probe(base_url: str, api_key: str, model: str, timeout: int = 15,
     )
     t0 = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _NO_REDIRECT_OPENER.open(req, timeout=timeout) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         latency = int((time.monotonic() - t0) * 1000)
         content = body["choices"][0]["message"]["content"]
@@ -148,10 +148,6 @@ class AI:
         # 不安全的主机直接置空 → usable 为 False → 一个请求都不会发
         self.base_url = raw_base if raw_base and url_allowed(raw_base) else ""
         self.base_url_rejected = bool(raw_base and not self.base_url)
-        if self.base_url:
-            # 全局装上「不跟随重定向」的 opener：urlopen 之后一律拒绝 3xx，
-            # 避免 Authorization 头被带到别的地址去。
-            urllib.request.install_opener(_NO_REDIRECT_OPENER)
         self.api_key = str(ai.get("api_key") or "")
         import os
 
@@ -234,7 +230,7 @@ class AI:
         )
         t0 = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
+            with _NO_REDIRECT_OPENER.open(req, timeout=timeout or self.timeout) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
             latency_ms = int((time.monotonic() - t0) * 1000)
             self.calls += 1
