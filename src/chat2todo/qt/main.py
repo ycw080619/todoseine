@@ -459,6 +459,12 @@ def main() -> int:
             daily_backup(c2t_config.load())
         except Exception:  # noqa: BLE001 - 备份失败不能挡住启动
             log.exception("每日备份失败")
+        try:
+            from ..core.screenshot_archive import purge as purge_shots
+
+            purge_shots(c2t_config.load(), db_path())
+        except Exception:  # noqa: BLE001 - 截图清理失败不能挡住启动
+            log.exception("截图归档清理失败")
 
     QTimer.singleShot(8_000, startup_maintenance)
 

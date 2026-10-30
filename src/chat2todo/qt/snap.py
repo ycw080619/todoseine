@@ -299,6 +299,15 @@ class SnapController(QObject):
         png_bytes = bytes(buffer.data())
         buffer.close()
 
+        # 截图归档是可选功能（默认关闭）：只有用户显式开启才会落盘，
+        # 默认走「仅内存 OCR」链路，敏感画面不会留在磁盘上。
+        try:
+            from ..core import screenshot_archive
+
+            screenshot_archive.save(png_bytes, c2t_config.load(), self._db_path())
+        except Exception:  # noqa: BLE001 - 归档失败不能挡住截图建待办
+            logger.warning("截图归档写入异常", exc_info=True)
+
         worker = _OcrWorker(png_bytes, self)
         worker.done.connect(self._on_text)
         worker.failed.connect(self.failed.emit)

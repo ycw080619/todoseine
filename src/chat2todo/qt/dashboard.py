@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QInputDialog, QLabel, QLineEdit,
 
 from .. import config as c2t_config
 from ..core import Store
+from ..core import forward
 from ..core.deadline import label as due_label
 from ..core.deadline import parse as due_parse
 from ..core.privacy import redact_for_display
@@ -805,6 +806,12 @@ class Dashboard(QWidget):
             menu.addAction(self._action(menu, "定位下载文件",
                                         lambda: self._locate_file(item)))
 
+        # 半自动转发是高风险可选功能：只有用户在设置里显式开启才出现
+        if forward.enabled(self._cfg):
+            menu.addSeparator()
+            menu.addAction(self._action(menu, "转发…（预览后确认）",
+                                        lambda: self._forward(item)))
+
         menu.addSeparator()
         menu.addAction(self._action(menu, "移入回收站", lambda: self._trash(item)))
         menu.exec(pos)
@@ -849,6 +856,16 @@ class Dashboard(QWidget):
         else:
             # 规则本来就有（本次是命中旧规则），给撤销会误删你以前设的静音
             Toast.show_toast(self, f"以后不再提醒{label}{extra}（沿用原有规则）")
+
+    def _forward(self, item: TodoItem) -> None:
+        """半自动转发：弹预览窗，倒计时结束后由用户手动确认。"""
+        from .forward_dialog import run as run_forward
+
+        # 转发出去的是脱敏后的展示文本（与看板一致的对外口径）
+        text = redact_for_display(item.text or "", self._cfg, item.session or "")
+        target = item.session or item.sender or ""
+        if not run_forward(text, target, self._cfg, self):
+            Toast.show_toast(self, "已取消转发")
 
     def _show_reason(self, item: TodoItem) -> None:
         """展示判定依据：命中规则、加权分、阈值、校准影响。"""

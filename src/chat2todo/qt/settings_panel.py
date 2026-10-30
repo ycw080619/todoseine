@@ -716,7 +716,8 @@ class SettingsPanel(QWidget):
         fw_form.addRow("启用转发:", self._fw_enabled)
         fw_form.addRow("", _hint(
             "转发会向 QQ 群发送消息，存在发错群 / 发错人的风险，默认关闭。"
-            "当前版本只提供开关与接口占位，不实现自动发送；插件未启用时接口返回「功能未启用」。"))
+            "开启后仅能在看板右键单次触发：先弹预览窗，3 秒倒计时结束才可确认发送，"
+            "倒计时期间切换窗口自动取消；每次尝试都写审计日志（目标 / 内容哈希 / 结果）。"))
         lay.addWidget(fw_box)
         lay.addStretch(1)
         return page
@@ -762,7 +763,7 @@ class SettingsPanel(QWidget):
         answer = QMessageBox.warning(
             self, "启用半自动转发",
             "转发会向 QQ 群发送消息，可能发错群或发给不该看的人。\n\n"
-            "确认要继续吗？（当前版本仅提供开关，不会自动发送任何消息）",
+            "确认要继续吗？开启后每次发送仍会弹预览窗并倒计时 3 秒，需要手动确认。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

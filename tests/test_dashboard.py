@@ -117,6 +117,23 @@ class TestDashboardData(unittest.TestCase):
         self.assertIn("改之后的文字", texts)
         self.assertNotIn("改之前的文字", texts)
 
+    def test_star_items_sort_to_top(self) -> None:
+        """文档要求「按优先级从高到低」：★重点 必须浮到未完成条目最上面。"""
+        store = Store(self.db)
+        try:
+            store.add_todo("普通的一条")
+            store.add_todo("重点的一条")
+            # ★重点 标记来自规则层（reason 含「★重点」），这里直接写库模拟
+            store.conn.execute(
+                "UPDATE todos SET reason='★重点' WHERE text='重点的一条'")
+            store.conn.commit()
+        finally:
+            store.close()
+        items = load_items(self.db, "pending")
+        texts = [item.text for item in items]
+        self.assertEqual(texts[0], "重点的一条")
+        self.assertEqual(items[0].status, "pending")
+
 
 class TestExtractFilenames(unittest.TestCase):
     """从待办文字 / 原文消息里识别 QQ 下载文件的文件名。"""
