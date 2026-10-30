@@ -336,3 +336,69 @@ def test_snap_dialog_ingest(qapp, cfg_file, tmp_path):
         assert store.list_todos()
     finally:
         store.close()
+
+
+def test_smooth_scroll_step_is_pixels_not_singlestep(qapp):
+    """滚轮一格要滚几十像素，不是 QScrollBar.singleStep() 的默认 1px。
+
+    DeskBox 借鉴版误用 singleStep 当步长，滚一格只动 1px，体感就是滚不动。
+    这里钉住：一格(120)的目标位移 ≈72px。
+    """
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtWidgets import QWidget
+
+    from chat2todo.qt.dashboard import SmoothScrollArea
+
+    scroll = SmoothScrollArea()
+    try:
+        body = QWidget()
+        body.setMinimumHeight(2000)
+        scroll.setWidget(body)
+        scroll.resize(200, 200)
+        scroll.show()
+        qapp.processEvents()
+
+        event = QWheelEvent(QPointF(10, 10), QPointF(10, 10), QPoint(0, 0),
+                            QPoint(0, -120), Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier,
+                            Qt.ScrollPhase.NoScrollPhase, False)
+        scroll.wheelEvent(event)
+        # 动画异步执行，钉目标值即可；≈72px，绝不能退化成 singleStep 的 1px
+        assert 50 <= scroll._target <= 100
+        scroll._anim.stop()
+
+        # anim 关掉后退回原生瞬时滚动，不崩即可
+        scroll.anim_enabled = False
+        scroll.wheelEvent(event)
+    finally:
+        scroll.deleteLater()
+        qapp.processEvents()
+
+
+def test_todo_row_children_transparent_for_hover(qapp):
+    """文字/勾选点必须透传鼠标事件，否则 hover 进出判定被子控件截胡。
+
+    鼠标扫过标题文字时父卡片会收 leaveEvent，hover 底色与边框高亮瞬间消退，
+    体感就是「没有叠加效果」。按钮（改/⋯）不能透明——它们要自己收点击。
+    """
+    from PySide6.QtCore import Qt
+
+    from chat2todo.models import TodoItem
+    from chat2todo.qt.dashboard import TodoRow
+    from chat2todo.qt.widgets.text import ElidedLabel
+
+    row = TodoRow(TodoItem(text="明天交周报", session="测试", sender="老王",
+                           message_ts=1_700_000_000), 0)
+    try:
+        transparent = Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        assert row.dot.testAttribute(transparent)
+        labels = row.findChildren(ElidedLabel)
+        assert len(labels) == 2
+        assert all(lb.testAttribute(transparent) for lb in labels)
+        # 按钮保持可点击
+        assert not row.edit_btn.testAttribute(transparent)
+        assert not row.more_btn.testAttribute(transparent)
+    finally:
+        row.deleteLater()
+        qapp.processEvents()

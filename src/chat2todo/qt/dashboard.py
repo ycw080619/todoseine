@@ -72,10 +72,17 @@ class SmoothScrollArea(QScrollArea):
             super().wheelEvent(event)
             return
         bar = self.verticalScrollBar()
-        # 累计到目标值：动画进行中也续上，避免连续滚动丢步
         delta = event.angleDelta().y()
-        self._target -= int(delta * bar.singleStep() / 120)
+        if not delta:
+            return
+        # 动画不在跑时以滚动条当前值为基准，避免列表刷新后第一滚跳变
+        if self._anim.state() != QPropertyAnimation.State.Running:
+            self._target = bar.value()
+        # 滚轮一格(120)滚 ~72px（≈3 行文字）；不能用 bar.singleStep()，其默认值为 1px
+        self._target -= int(delta * 0.6)
         self._target = max(bar.minimum(), min(bar.maximum(), self._target))
+        if self._target == bar.value():
+            return
         self._anim.stop()
         self._anim.setStartValue(bar.value())
         self._anim.setEndValue(self._target)
@@ -177,6 +184,8 @@ class TodoRow(RoundedCard):
 
         self.dot = CheckDot(self)
         self.dot.setChecked(item.status == "done", animated=False)
+        # 勾选点击由 TodoRow.mousePressEvent 按 geometry 判定，CheckDot 自身不收事件
+        self.dot.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         row.addWidget(self.dot, 0, Qt.AlignmentFlag.AlignVCenter)
 
         col = QVBoxLayout()
@@ -191,6 +200,9 @@ class TodoRow(RoundedCard):
         title.setFont(title_font)
         title.setTextColor(theme.SUB if item.status != "pending" else theme.TEXT)
         title.setStyleSheet("background: transparent;")
+        # 透明传鼠标事件：hover 进出判定要落在卡片整体上，
+        # 否则鼠标扫过文字时父卡片收 leaveEvent，hover 底色/边框高亮闪烁失效
+        title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         col.addWidget(title)
 
         bits = []
@@ -218,6 +230,7 @@ class TodoRow(RoundedCard):
             meta_color = theme.SUB
         meta.setTextColor(meta_color)
         meta.setStyleSheet("background: transparent;")
+        meta.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         col.addWidget(meta)
         row.addLayout(col, 1)
 
