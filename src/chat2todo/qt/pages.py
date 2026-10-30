@@ -14,7 +14,6 @@ import sys
 from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
                                QMessageBox, QPushButton, QScrollArea,
                                QVBoxLayout, QWidget)
@@ -76,10 +75,8 @@ def _muted(text: str, size: int = 11) -> QLabel:
 
 def _title(text: str) -> QLabel:
     lab = QLabel(text)
-    f = QFont(theme.FONT_FAMILY)
-    f.setPointSize(10)
-    f.setBold(True)
-    lab.setFont(f)
+    # 标题字重走暗色令牌（550），不用 setBold 的 700：暗底粗字会外溢光晕
+    lab.setFont(theme.title_font(10))
     lab.setStyleSheet(f"color: {theme.TEXT.name()}; background: transparent;")
     return lab
 
@@ -176,9 +173,7 @@ class TrashPage(QWidget):
         top.setSpacing(8)
 
         text = ElidedLabel(row.get("text") or "")
-        f = QFont(theme.FONT_FAMILY)
-        f.setPointSize(9)
-        text.setFont(f)
+        text.setFont(theme.body_font(9))
         text.setTextColor(theme.TEXT)
         text.setStyleSheet("background: transparent;")
         top.addWidget(text, 1)
@@ -347,8 +342,9 @@ class StatsPage(QWidget):
             row.addWidget(_muted(str(name), 12))
             row.addStretch(1)
             val = QLabel(str(value))
-            val.setStyleSheet(f"color: {theme.TEXT.name()}; font-size: 13px;"
-                              " font-weight: 600; background: transparent;")
+            # 统计数值统一等宽数字：位数变化时列宽不呼吸
+            val.setFont(theme.tabular(theme.title_font(10)))
+            val.setStyleSheet(f"color: {theme.TEXT.name()}; background: transparent;")
             row.addWidget(val)
             lay.addLayout(row)
         return frame

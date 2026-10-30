@@ -1,0 +1,898 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-motion="on">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat2Todo · 界面设计系统（微明度）</title>
+<style>
+/* ============================================================
+   1. 设计令牌（Design Tokens）
+   规则：层级只靠 1%~3% 的明度差 + 1px 细线 + 微阴影，禁止粗黑边框
+   ============================================================ */
+:root{
+  color-scheme: light;
+
+  /* 表面阶梯：相邻层 ΔL 1.5%~2.5%，肉眼可辨但不抢戏 */
+  --bg-canvas:      #F4F5F7;   /* L 96.2% */
+  --bg-sunken:      #EDEFF3;   /* L 94.3%  Δ -1.9 */
+  --surface-1:      #FAFBFC;   /* L 98.5%  Δ +2.3 */
+  --surface-2:      #FFFFFF;   /* L 100%   Δ +1.5 */
+  --surface-hover:  #FFFFFF;   /* hover 只换阴影，不动底色 */
+
+  /* 细线：只用 1px，alpha ≤ 12%；线不承担层级，只做分隔 */
+  --line-hairline:  rgba(17,24,39,.07);
+  --line-soft:      rgba(17,24,39,.12);
+
+  /* 文本（对比度见页面下方实测表） */
+  --text-primary:   #15181D;
+  --text-secondary: #4B525C;
+  --text-tertiary:  #666D77;   /* 4.79:1 on canvas / 4.54:1 on sunken，最小也不低于 AA */
+
+  /* 主色：低饱和，只用于标记 / 聚焦，不做大面积铺色 */
+  --accent:         #4E8C76;
+  --accent-ink:     #2F6A57;
+  --accent-soft:    rgba(78,140,118,.10);
+  --accent-glow:    rgba(78,140,118,.22);
+
+  /* 阴影：用微阴影替代描边 */
+  --shadow-1:       0 1px 2px rgba(16,24,40,.05), 0 1px 1px rgba(16,24,40,.03);
+  --shadow-2:       0 4px 12px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
+  --shadow-drag:    0 10px 24px rgba(16,24,40,.12), 0 2px 6px rgba(16,24,40,.06);
+
+  /* 字重：浅色 500 打底；暗色整体降一档（见 [data-theme="dark"]） */
+  --fw-body:   500;
+  --fw-caption:500;
+  --fw-title:  600;
+
+  /* 圆角 / 间距（4 的倍数） */
+  --r-ctl: 8px; --r-card: 12px; --r-panel: 16px;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px; --sp-7:48px;
+
+  /* 动效：全部克制，最长的释放回弹也不超过 420ms */
+  --dur-hover: 120ms;
+  --dur-focus: 160ms;
+  --dur-press: 200ms;
+  --dur-spring:420ms;
+  --dur-toast: 2500ms;
+  --ease-std:   cubic-bezier(.22,.61,.36,1);
+  --ease-press: cubic-bezier(.2,.9,.25,1);
+  --ease-spring:cubic-bezier(.34,1.4,.64,1);
+}
+
+/* 暗色：表面整体下移，相邻差保持 2%~2.5%；字重减一档，规避光晕 */
+[data-theme="dark"]{
+  color-scheme: dark;
+
+  --bg-canvas:      #121417;   /* L 8.2% */
+  --bg-sunken:      #0E1013;   /* L 6.5%  Δ -1.7 */
+  --surface-1:      #171A1E;   /* L 10.8% Δ +2.6 */
+  --surface-2:      #1C2025;   /* L 13.1% Δ +2.3 */
+  --surface-hover:  #23272D;   /* L 15.9% Δ +2.8 */
+
+  --line-hairline:  rgba(255,255,255,.07);
+  --line-soft:      rgba(255,255,255,.12);
+
+  --text-primary:   #E7E9EC;
+  --text-secondary: #A9AFB8;
+  --text-tertiary:  #878E98;
+
+  --accent:         #6FA893;
+  --accent-ink:     #8FC5B1;
+  --accent-soft:    rgba(111,168,147,.12);
+  --accent-glow:    rgba(111,168,147,.26);
+
+  --shadow-1:       0 1px 2px rgba(0,0,0,.45);
+  --shadow-2:       0 6px 16px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
+  --shadow-drag:    0 12px 28px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
+
+  /* 关键：正文/说明 500→400，标题 600→550（不超过 600） */
+  --fw-body:   400;
+  --fw-caption:400;
+  --fw-title:  550;
+}
+
+/* ============================================================
+   2. 基础排版
+   ============================================================ */
+*,*::before,*::after{ box-sizing:border-box; }
+
+html{ -webkit-text-size-adjust:100%; }
+
+body{
+  margin:0;
+  padding:var(--sp-6) var(--sp-4) var(--sp-7);
+  font-family:"Inter","Segoe UI Variable Text","Segoe UI",system-ui,
+              "Microsoft YaHei","PingFang SC",sans-serif;
+  font-size:14px;
+  line-height:1.5;
+  font-weight:var(--fw-body);
+  color:var(--text-primary);
+  background:var(--bg-canvas);
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  transition:background-color var(--dur-focus) var(--ease-std),
+             color var(--dur-focus) var(--ease-std);
+}
+
+/* 暗色下字距微调 +0.01em，补偿细字重的视觉收紧 */
+[data-theme="dark"] body{ letter-spacing:.01em; }
+
+h1,h2,h3{ margin:0; text-wrap:balance; font-weight:var(--fw-title); line-height:1.25; letter-spacing:-.005em; }
+[data-theme="dark"] h1,[data-theme="dark"] h2,[data-theme="dark"] h3{ letter-spacing:.005em; }
+h1{ font-size:22px; }
+h2{ font-size:17px; }
+h3{ font-size:14px; }
+
+p{ margin:0; text-wrap:pretty; }
+
+/* 中文排版：避免标点行首、孤字行，给最小宽度保护 */
+.cn-prose{
+  max-width:38em;
+  word-break:normal;
+  line-break:strict;
+  overflow-wrap:break-word;
+  hanging-punctuation:allow-end;   /* Safari 生效，其余浏览器自动忽略 */
+  text-spacing-trim:space-first;   /* Chromium 131+，忽略也无害 */
+}
+
+.caption{ font-size:12px; color:var(--text-tertiary); font-weight:var(--fw-caption); }
+.muted{ color:var(--text-secondary); }
+.mono-num{ font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1,"lnum" 1; }
+
+/* ============================================================
+   3. 布局外壳
+   ============================================================ */
+.page{ max-width:1080px; margin:0 auto; display:grid; gap:var(--sp-5); }
+
+.topbar{
+  display:flex; align-items:center; justify-content:space-between; gap:var(--sp-4);
+  padding-bottom:var(--sp-4);
+  border-bottom:1px solid var(--line-hairline);   /* 1px 细线，不用粗边框 */
+}
+.brand{ display:flex; align-items:baseline; gap:var(--sp-3); }
+.brand small{ color:var(--text-tertiary); font-size:12px; font-weight:var(--fw-caption); }
+.toolbar{ display:flex; gap:var(--sp-2); }
+
+/* 面板：靠底色 + 1px 细线 + 微阴影分层，不叠加高对比边框 */
+.panel{
+  background:var(--surface-1);
+  border:1px solid var(--line-hairline);
+  border-radius:var(--r-panel);
+  box-shadow:var(--shadow-1);
+  padding:var(--sp-5);
+  display:grid;
+  gap:var(--sp-4);
+}
+.panel > header{ display:flex; align-items:baseline; justify-content:space-between; gap:var(--sp-3); flex-wrap:wrap; }
+.panel > header .hint{ font-size:12px; color:var(--text-tertiary); }
+
+/* 卡片：比面板再高 1.5% 明度，去掉边框只留微阴影 */
+.card{
+  background:var(--surface-2);
+  border-radius:var(--r-card);
+  box-shadow:var(--shadow-1);
+  padding:var(--sp-4);
+}
+
+/* ============================================================
+   4. 按钮：rest / hover / active / focus-visible / disabled
+   ============================================================ */
+.btn{
+  appearance:none;
+  display:inline-flex; align-items:center; gap:6px;
+  height:34px; padding:0 var(--sp-4);
+  font:inherit; font-size:13px; font-weight:var(--fw-body);
+  color:var(--text-primary);
+  background:var(--surface-2);
+  border:1px solid var(--line-hairline);
+  border-radius:var(--r-ctl);
+  box-shadow:var(--shadow-1);
+  cursor:pointer;
+  user-select:none;
+  /* 焦点环用预置的空阴影占位，避免聚焦时改变布局 */
+  outline:none;
+  transition:background-color var(--dur-hover) var(--ease-std),
+             border-color var(--dur-hover) var(--ease-std),
+             box-shadow var(--dur-hover) var(--ease-std),
+             transform var(--dur-press) var(--ease-press);
+}
+.btn:hover{ background:var(--surface-hover); border-color:var(--line-soft); box-shadow:var(--shadow-2); }
+.btn:active{ transform:scale(.985); }                 /* 按压只用 1.5% 缩放，不做位移抖动 */
+.btn:focus-visible{ box-shadow:0 0 0 1px var(--accent), 0 0 0 4px var(--accent-glow); }
+.btn:disabled{ opacity:.45; cursor:not-allowed; box-shadow:none; }
+
+.btn.primary{
+  color:#FFFFFF; background:var(--accent-ink);
+  border-color:transparent; box-shadow:var(--shadow-1);
+}
+[data-theme="dark"] .btn.primary{ color:#0B0F0D; background:var(--accent); }
+.btn.primary:hover{ filter:brightness(1.04); }        /* 主色 hover 只提亮 4%，不换色 */
+.btn.ghost{ background:transparent; box-shadow:none; border-color:transparent; color:var(--text-secondary); }
+.btn.ghost:hover{ background:var(--accent-soft); color:var(--text-primary); box-shadow:none; }
+
+/* ============================================================
+   5. 输入框：双环聚焦（内环 1px 低饱和主色 + 外环 4px 柔光）
+   ============================================================ */
+.field{
+  display:block;
+  background:var(--surface-2);
+  border:1px solid var(--line-hairline);      /* 边框恒定 1px，聚焦只改颜色 */
+  border-radius:var(--r-ctl);
+  /* 静止态就把两层环占位成透明，聚焦时只做颜色过渡，不产生布局位移 */
+  box-shadow:0 0 0 1px transparent, 0 0 0 4px transparent;
+  transition:border-color var(--dur-focus) var(--ease-std),
+             box-shadow var(--dur-focus) var(--ease-std),
+             background-color var(--dur-focus) var(--ease-std);
+  padding:0;
+}
+.field:hover{ border-color:var(--line-soft); }
+.field:focus-within{
+  border-color:transparent;                    /* 让位给内环，避免 2px 叠加显硬 */
+  box-shadow:0 0 0 1px var(--accent),         /* 内环：1px，低饱和 */
+             0 0 0 4px var(--accent-glow);    /* 外环：4px 柔光扩散 */
+}
+.field input{
+  width:100%;
+  height:38px;
+  padding:0 var(--sp-3);
+  font:inherit; font-size:13px; font-weight:var(--fw-body);
+  color:var(--text-primary);
+  background:transparent;
+  border:0; outline:none;
+  border-radius:inherit;
+}
+.field input::placeholder{ color:var(--text-tertiary); }
+
+.field[data-state="error"]{ border-color:rgba(178,72,60,.45); }
+.field[data-state="error"]:focus-within{
+  box-shadow:0 0 0 1px rgba(178,72,60,.65), 0 0 0 4px rgba(178,72,60,.16);
+}
+.field[data-state="disabled"]{ background:var(--bg-sunken); box-shadow:none; }
+.field[data-state="disabled"] input{ color:var(--text-tertiary); cursor:not-allowed; }
+
+.lab{ display:grid; gap:6px; }
+.lab > span{ font-size:12px; color:var(--text-secondary); font-weight:var(--fw-caption); }
+
+/* 演示用：聚焦环外扩需要额外留白，不然会被容器裁掉 */
+.ring-demo{ padding:var(--sp-2) var(--sp-1); }
+
+/* ============================================================
+   6. 表面阶梯演示
+   ============================================================ */
+.ladder{ display:grid; gap:var(--sp-3); grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
+.swatch{
+  border-radius:var(--r-card);
+  min-height:78px;
+  padding:var(--sp-3);
+  display:flex; flex-direction:column; justify-content:space-between;
+  border:1px solid var(--line-hairline);
+  font-size:11px; color:var(--text-tertiary);
+}
+.swatch b{ font-size:12px; color:var(--text-secondary); font-weight:var(--fw-body); }
+.swatch .v{ font-family:ui-monospace,"Cascadia Mono",Consolas,monospace; font-variant-numeric:tabular-nums; }
+
+.nest{ display:grid; gap:var(--sp-3); }
+.nest .l1{ background:var(--surface-1); border-radius:var(--r-card); padding:var(--sp-4); box-shadow:var(--shadow-1); }
+.nest .l2{ background:var(--surface-2); border-radius:var(--r-ctl); padding:var(--sp-3); box-shadow:var(--shadow-1); }
+.sunken-strip{
+  background:var(--bg-sunken);
+  border:1px solid var(--line-hairline);
+  border-radius:var(--r-card);
+  padding:var(--sp-3);
+}
+
+/* ============================================================
+   7. 打字动画：逐字模糊渐显
+   单字 blur 5px→0 / opacity 0→1 / translateY 2px→0，320ms
+   错开 ≤40ms，整段总时长硬性 ≤600ms（JS 里按字数压缩）
+   ============================================================ */
+@keyframes char-in{
+  from{ opacity:0; filter:blur(5px); transform:translateY(2px); }
+  to  { opacity:1; filter:blur(0);   transform:translateY(0); }
+}
+.type-line{
+  display:flex; align-items:baseline; gap:8px;   /* 图标与文字同一基线 */
+  min-height:26px;
+  font-size:15px; line-height:26px;               /* 行高锁死，动画中不抖 */
+}
+.type-line .ico{
+  flex:0 0 auto;
+  align-self:center;
+  transform:translateY(-1px);                     /* 视觉基线微调，不让图标浮 */
+  color:var(--accent-ink);
+}
+[data-theme="dark"] .type-line .ico{ color:var(--accent); }
+.type-text{ white-space:pre-wrap; }
+.ch{
+  display:inline-block;
+  will-change:filter,opacity,transform;
+  animation:char-in 320ms var(--ease-std) both;
+  animation-delay:var(--ch-delay,0ms);
+}
+
+/* ============================================================
+   8. 表格 / 数字
+   ============================================================ */
+.tbl{ width:100%; border-collapse:collapse; font-size:13px; }
+.tbl th{
+  text-align:left; font-weight:var(--fw-caption); font-size:12px;
+  color:var(--text-tertiary); padding:0 var(--sp-3) var(--sp-2);
+  border-bottom:1px solid var(--line-hairline);
+}
+.tbl td{
+  padding:var(--sp-2) var(--sp-3);
+  border-bottom:1px solid var(--line-hairline);
+  min-width:3.5em;                     /* 中文单元格最小宽度，避免单字孤行 */
+}
+.tbl tr:last-child td{ border-bottom:0; }
+.tbl .right{ text-align:right; }
+/* 所有数字列：等宽数字，锁死位宽 */
+.num,
+.tick{ font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1,"lnum" 1; }
+.tbl .num{ text-align:right; font-weight:var(--fw-body); }
+
+.split{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:var(--sp-4); }
+.kpi{ background:var(--surface-2); border-radius:var(--r-card); box-shadow:var(--shadow-1); padding:var(--sp-4); display:grid; gap:4px; }
+.kpi .k{ font-size:12px; color:var(--text-tertiary); }
+.kpi .v{ font-size:26px; line-height:1.2; font-weight:var(--fw-title); font-variant-numeric:tabular-nums; }
+.kpi .v.prop{ font-variant-numeric:proportional-nums; opacity:.55; }
+.kpi .v.tab{ font-variant-numeric:tabular-nums; }
+
+/* ============================================================
+   9. 拖拽列表
+   按下即咬死：拖动期间 transition:none，位移跟手零延迟
+   ============================================================ */
+.list{ display:grid; gap:var(--sp-2); touch-action:none; }
+.item{
+  display:flex; align-items:center; gap:var(--sp-3);
+  padding:10px var(--sp-3);
+  background:var(--surface-2);
+  border:1px solid var(--line-hairline);
+  border-radius:var(--r-ctl);
+  box-shadow:var(--shadow-1);
+  cursor:grab;
+  transition:transform var(--dur-spring) var(--ease-spring),
+             box-shadow var(--dur-hover) var(--ease-std),
+             background-color var(--dur-hover) var(--ease-std);
+  will-change:transform;
+}
+.item .handle{ color:var(--text-tertiary); flex:0 0 auto; letter-spacing:-2px; }
+.item .t{ flex:1 1 auto; min-width:0; }
+.item .t b{ font-weight:var(--fw-body); }
+.item .tag{
+  flex:0 0 auto; font-size:11px; padding:2px 8px; border-radius:999px;
+  background:var(--accent-soft); color:var(--accent-ink);
+}
+[data-theme="dark"] .item .tag{ color:var(--accent); }
+.item .time{ flex:0 0 auto; font-size:12px; color:var(--text-tertiary); font-variant-numeric:tabular-nums; }
+
+/* 拖动中：抬起来，零过渡，绝不惯性 */
+.list[data-dragging="on"] .item{ transition:none; }
+.item[data-drag="active"]{
+  cursor:grabbing;
+  background:var(--surface-hover);
+  border-color:var(--line-soft);
+  box-shadow:var(--shadow-drag);
+  z-index:3; position:relative;
+}
+.list[data-dragging="on"]{ cursor:grabbing; }
+
+/* ============================================================
+   10. Toast：2.5s 自动消失，可手动关闭
+   ============================================================ */
+.toast-host{
+  position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
+  display:grid; gap:var(--sp-2); justify-items:center;
+  pointer-events:none; z-index:50;
+}
+.toast{
+  pointer-events:auto;
+  display:flex; align-items:center; gap:var(--sp-3);
+  padding:10px var(--sp-2) 10px var(--sp-4);
+  font-size:13px;
+  color:var(--text-primary);
+  background:var(--surface-2);
+  border:1px solid var(--line-hairline);
+  border-radius:999px;
+  box-shadow:var(--shadow-2);
+  animation:toast-in 180ms var(--ease-std) both;
+}
+.toast .dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); flex:0 0 auto; }
+.toast [data-close]{
+  appearance:none; border:0; background:transparent; cursor:pointer;
+  color:var(--text-tertiary); font:inherit; font-size:16px; line-height:1;
+  padding:4px 6px; border-radius:6px;
+  transition:background-color var(--dur-hover) var(--ease-std), color var(--dur-hover) var(--ease-std);
+}
+.toast [data-close]:hover{ background:var(--accent-soft); color:var(--text-primary); }
+.toast.out{ animation:toast-out 200ms var(--ease-std) both; }
+@keyframes toast-in{ from{ opacity:0; transform:translateY(6px); } to{ opacity:1; transform:translateY(0); } }
+@keyframes toast-out{ from{ opacity:1; } to{ opacity:0; transform:translateY(4px); } }
+
+/* ============================================================
+   11. 降级：尊重 prefers-reduced-motion / 手动关闭动效
+   ============================================================ */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    animation-duration:1ms !important;
+    animation-delay:0ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:1ms !important;
+    scroll-behavior:auto !important;
+  }
+  .ch{ opacity:1; filter:none; transform:none; }
+  .toast.out{ transform:none; }
+}
+[data-motion="off"] *{ animation:none !important; transition:none !important; }
+[data-motion="off"] .ch{ opacity:1 !important; filter:none !important; transform:none !important; }
+[data-motion="off"] .toast.out{ opacity:0; }
+
+/* 页脚验收速览 */
+.propnum{ font-variant-numeric:proportional-nums; }
+.checklist{ display:grid; gap:6px; font-size:12.5px; color:var(--text-secondary); }
+.checklist li{ display:flex; gap:8px; align-items:baseline; }
+.checklist .mark{ color:var(--accent-ink); font-variant-numeric:tabular-nums; }
+[data-theme="dark"] .checklist .mark{ color:var(--accent); }
+</style>
+</head>
+<body>
+<main class="page">
+
+  <header class="topbar">
+    <div class="brand">
+      <h1>微明度界面系统</h1>
+      <small>light / dark · 双令牌 · 可在浏览器直接验收</small>
+    </div>
+    <div class="toolbar">
+      <button class="btn ghost" id="btn-theme" type="button">切换暗色</button>
+      <button class="btn ghost" id="btn-motion" type="button">动效：开</button>
+    </div>
+  </header>
+
+  <!-- 1. 表面阶梯 -->
+  <section class="panel">
+    <header>
+      <h2>01 层级靠微明度</h2>
+      <span class="hint">相邻层 ΔL 1.5%~2.5%，无粗边框</span>
+    </header>
+    <div class="ladder">
+      <div class="swatch" style="background:var(--bg-canvas)"><b>canvas</b><span class="v" data-l="canvas">#F4F5F7 · L96.2</span></div>
+      <div class="swatch" style="background:var(--bg-sunken)"><b>sunken</b><span class="v" data-l="sunken">#EDEFF3 · L94.3</span></div>
+      <div class="swatch" style="background:var(--surface-1)"><b>surface-1 · 面板</b><span class="v" data-l="s1">#FAFBFC · L98.5</span></div>
+      <div class="swatch" style="background:var(--surface-2)"><b>surface-2 · 卡片</b><span class="v" data-l="s2">#FFFFFF · L100</span></div>
+    </div>
+    <div class="nest">
+      <div class="l1">
+        <div class="caption" style="margin-bottom:8px">面板 surface-1（相对 canvas +2.1%）</div>
+        <div class="l2">
+          <div class="caption" style="margin-bottom:6px">卡片 surface-2（相对面板 +1.6%）</div>
+          <p class="muted" style="font-size:13px">三级容器全都只有 1px 的 7% 透明细线，没有一条粗边框。</p>
+        </div>
+      </div>
+      <div class="sunken-strip">
+        <span class="caption">凹陷 bg-sunken（只直接叠在 canvas，相对 −2.2%；面板内部要分区请用细线 + 留白，不要再降一级底色）</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. 输入框双环 -->
+  <section class="panel">
+    <header>
+      <h2>02 输入框：双环咬合聚焦</h2>
+      <span class="hint">内环 1px 主色 + 外环 4px 柔光 · 160ms · 零布局位移</span>
+    </header>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--sp-4)" class="ring-demo">
+      <label class="lab">
+        <span>已聚焦（页面加载后自动聚焦）</span>
+        <span class="field"><input id="focus-demo" type="text" value="明天下午三点把合同送到 3 楼"></span>
+      </label>
+      <label class="lab">
+        <span>静止</span>
+        <span class="field" data-state="idle"><input type="text" placeholder="输入待办或搜索群消息"></span>
+      </label>
+      <label class="lab">
+        <span>错误态（色相只动 6%，不刺眼）</span>
+        <span class="field" data-state="error"><input type="text" value="时间格式不对：25:61"></span>
+      </label>
+      <label class="lab">
+        <span>禁用</span>
+        <span class="field" data-state="disabled"><input type="text" value="监听已暂停" disabled></span>
+      </label>
+    </div>
+    <p class="caption">聚焦前后 <code>getBoundingClientRect()</code> 宽高完全一致：内环占用原有 1px 边框，外环是 box-shadow，不参与布局。</p>
+  </section>
+
+  <!-- 3. 暗色字重 -->
+  <section class="panel">
+    <header>
+      <h2>03 暗色字重降档</h2>
+      <span class="hint">正文 500→400 · 标题 600→550 · 对比度仍 ≥ 4.5:1</span>
+    </header>
+    <div class="split">
+      <div class="card">
+        <h3 style="margin-bottom:6px">标题（浅 600 / 暗 550）</h3>
+        <p class="muted" style="font-size:13px">正文（浅 500 / 暗 400）。暗底色上细字重的笔画不会向外溢光，长时间夜间阅读眼压更低。</p>
+      </div>
+      <div class="card">
+        <div class="caption" style="margin-bottom:8px">当前主题字重</div>
+        <table class="tbl">
+          <tbody>
+            <tr><td>正文 body</td><td class="num" id="w-body">500</td></tr>
+            <tr><td>说明 caption</td><td class="num" id="w-caption">500</td></tr>
+            <tr><td>标题 title</td><td class="num" id="w-title">600</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. 打字动画 -->
+  <section class="panel">
+    <header>
+      <h2>04 逐字模糊渐显</h2>
+      <span class="hint">blur 5px→0 · 单字 320ms · 错开 ≤40ms · 整段 ≤600ms</span>
+    </header>
+    <div class="type-line">
+      <svg class="ico" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M8 1.6l1.9 4.1 4.5.6-3.3 3.2.8 4.5L8 11.8 4.1 14l.8-4.5L1.6 6.3l4.5-.6L8 1.6z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>
+      </svg>
+      <span class="type-text" id="typer">明天十点前把报价单发给李工</span>
+    </div>
+    <div style="display:flex;gap:var(--sp-2);flex-wrap:wrap">
+      <button class="btn" id="btn-replay" type="button">重播</button>
+      <span class="caption" id="type-meta">总时长 — ms</span>
+    </div>
+    <p class="caption">图标用 <code>flex + baseline</code> 对齐，行高锁死 26px；动画只作用于文字 span，图标不位移，所以过程中不会抖。</p>
+  </section>
+
+  <!-- 5. 数字排版 -->
+  <section class="panel">
+    <header>
+      <h2>05 数字锁死等宽</h2>
+      <span class="hint">tabular-nums · 计时器与表格列宽不跳动</span>
+    </header>
+    <div class="split">
+      <div class="kpi">
+        <span class="k">计时（每 100ms 刷新）</span>
+        <span class="v tab tick" id="clock">00:00.0</span>
+      </div>
+      <div class="kpi">
+        <span class="k">等宽 vs 比例（同一串数字）</span>
+        <div style="display:flex;gap:var(--sp-5);align-items:baseline">
+          <span class="v tab" style="font-size:20px">1111.10</span>
+          <span class="v prop" style="font-size:20px">1111.10</span>
+        </div>
+        <span class="caption">右侧比例数字随时间跳动，左侧不动</span>
+      </div>
+    </div>
+    <table class="tbl">
+      <thead>
+        <tr><th>群</th><th class="right">消息</th><th class="right">待办</th><th class="right">金额（元）</th><th class="right">耗时</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>项目交付群</td><td class="num">1,284</td><td class="num">37</td><td class="num">9,180.50</td><td class="num">00:12.4</td></tr>
+        <tr><td>供应链协同</td><td class="num">9,101</td><td class="num">118</td><td class="num">114,008.00</td><td class="num">01:47.9</td></tr>
+        <tr><td>客户支持</td><td class="num">318</td><td class="num">6</td><td class="num">880.00</td><td class="num">00:03.1</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 6. 拖拽 -->
+  <section class="panel">
+    <header>
+      <h2>06 拖拽：按下即咬死</h2>
+      <span class="hint">零延迟跟手 · 松手 spring 回弹（过冲 ≤2px）· 2.5s 提示可关</span>
+    </header>
+    <ul class="list" id="list" aria-label="待办排序演示">
+      <li class="item"><span class="handle" aria-hidden="true">⋮⋮</span><span class="t"><b>把报价单发给李工</b><span class="caption"> · 今天 10:00</span></span><span class="tag">★重点</span><span class="time">今天</span></li>
+      <li class="item"><span class="handle" aria-hidden="true">⋮⋮</span><span class="t"><b>复核 3 楼合同条款</b><span class="caption"> · 明天 15:00</span></span><span class="time">明天</span></li>
+      <li class="item"><span class="handle" aria-hidden="true">⋮⋮</span><span class="t"><b>供应链对账</b><span class="caption"> · 周五</span></span><span class="time">周五</span></li>
+      <li class="item"><span class="handle" aria-hidden="true">⋮⋮</span><span class="t"><b>整理客户支持反馈</b><span class="caption"> · 本周</span></span><span class="time">本周</span></li>
+      <li class="item"><span class="handle" aria-hidden="true">⋮⋮</span><span class="t"><b>归档上周会议纪要</b><span class="caption"> · 无期限</span></span><span class="time">—</span></li>
+    </ul>
+    <p class="caption">按住任意条目上下拖动。拖动期间 <code>transition:none</code>，条目与指针同帧、不惯性拖尾；松手后 DOM 立即落位，仅残留位移走回弹。</p>
+  </section>
+
+  <!-- 7. 中文排版 -->
+  <section class="panel">
+    <header>
+      <h2>07 中文排版与孤行</h2>
+      <span class="hint">text-wrap: pretty / balance · 标点不落行首 · 最小宽度保护</span>
+    </header>
+    <p class="cn-prose">
+      本周需要处理的事情集中在三条线上：报价单要在明天上午十点前发出，三楼的合同条款必须先复核签字页，
+      供应链那边的对账数据还差一个批次没有回来。以上三件事都涉及对外承诺，建议按这个顺序推进。
+    </p>
+    <p class="caption">段落走 <code>text-wrap: pretty</code> 减少末行孤字；标题走 <code>balance</code> 让两行等长；表格单元格 <code>min-width:3.5em</code> 兜底。</p>
+  </section>
+
+  <footer class="panel">
+    <header><h2>验收速览</h2><span class="hint">完整标准见 设计规范-组件与交互.md</span></header>
+    <ol class="checklist" style="margin:0;padding-left:0;list-style:none">
+      <li><span class="mark">01</span>聚焦前后输入框边界尺寸变化 = 0px（脚本断言）</li>
+      <li><span class="mark">02</span>打字动画总时长 ≤ 600ms，单字错开 20~40ms（字数 ≤8 时）</li>
+      <li><span class="mark">03</span>暗色正文 400 / 标题 550，文本对比度 ≥ 4.5:1</li>
+      <li><span class="mark">04</span>拖拽首帧位移延迟 ≤ 1 帧；释放过冲 ≤ 4px</li>
+      <li><span class="mark">05</span>Toast 自动消失 2500ms ±100ms，可点 × 立即关闭</li>
+      <li><span class="mark">06</span>reduced-motion 下无位移/无模糊，文字直接可见</li>
+    </ol>
+  </footer>
+
+</main>
+
+<div class="toast-host" id="toast-host" role="status" aria-live="polite"></div>
+
+<script>
+(function(){
+  "use strict";
+  var root = document.documentElement;
+  var q = function(s, r){ return (r || document).querySelector(s); };
+  var qa = function(s, r){ return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+
+  /* ---------- 主题：query 参数 > localStorage > 系统偏好 ---------- */
+  var params = new URLSearchParams(location.search);
+  var sysDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  var theme = params.get("theme") || localStorage.getItem("c2t-ui-theme") || (sysDark ? "dark" : "light");
+
+  function applyTheme(t){
+    root.dataset.theme = t;
+    localStorage.setItem("c2t-ui-theme", t);
+    var btn = q("#btn-theme");
+    if (btn) btn.textContent = t === "dark" ? "切换浅色" : "切换暗色";
+    // 字重随主题切换，页面上直接读出当前值，方便核对
+    var cs = getComputedStyle(root);
+    q("#w-body") && (q("#w-body").textContent = cs.getPropertyValue("--fw-body").trim());
+    q("#w-caption") && (q("#w-caption").textContent = cs.getPropertyValue("--fw-caption").trim());
+    q("#w-title") && (q("#w-title").textContent = cs.getPropertyValue("--fw-title").trim());
+    qa(".swatch .v").forEach(function(el){
+      var k = el.dataset.l;
+      var map = { canvas:["--bg-canvas","96.3","8.0"], sunken:["--bg-sunken","94.1","6.5"],
+                  s1:["--surface-1","98.4","10.4"], s2:["--surface-2","100","12.7"] };
+      var m = map[k]; if (!m) return;
+      var hex = cs.getPropertyValue(m[0]).trim().toUpperCase();
+      el.textContent = hex + " · L" + (t === "dark" ? m[2] : m[1]);
+    });
+  }
+  applyTheme(theme);
+  q("#btn-theme").addEventListener("click", function(){ applyTheme(root.dataset.theme === "dark" ? "light" : "dark"); });
+
+  /* ---------- 动效开关（模拟 prefers-reduced-motion） ---------- */
+  var motionOn = localStorage.getItem("c2t-ui-motion") !== "off";
+  function applyMotion(on){
+    root.dataset.motion = on ? "on" : "off";
+    localStorage.setItem("c2t-ui-motion", on ? "on" : "off");
+    q("#btn-motion").textContent = "动效：" + (on ? "开" : "关");
+  }
+  applyMotion(motionOn);
+  q("#btn-motion").addEventListener("click", function(){
+    applyMotion(root.dataset.motion === "off");
+    if (root.dataset.motion === "on") typeIn();
+  });
+  function reduced(){ return root.dataset.motion === "off" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+
+  /* ---------- 打字动画 ----------
+     预算：单字 320ms，整段硬上限 600ms
+     stagger = clamp((600-320)/(n-1), 6, 40) → 8 字以内正好落在 20~40ms 区间
+  -------------------------------------------------------- */
+  var TEXT = "明天十点前把报价单发给李工";
+  var CHAR_MS = 320, BUDGET = 600;
+
+  function typeIn(){
+    var host = q("#typer");
+    var meta = q("#type-meta");
+    host.textContent = "";
+    if (reduced()){                    // 降级：直接呈现，不位移不模糊
+      host.textContent = TEXT;
+      meta.textContent = "已按减少动态降级：直接呈现";
+      return;
+    }
+    var chars = Array.from(TEXT);
+    var n = chars.length;
+    var stagger = n < 2 ? 0 : Math.min(40, Math.max(6, (BUDGET - CHAR_MS) / (n - 1)));
+    var frag = document.createDocumentFragment();
+    chars.forEach(function(ch, i){
+      if (ch === " "){                       // 空格保留可换行能力
+        var sp = document.createElement("span");
+        sp.style.whiteSpace = "pre";
+        sp.textContent = "\u00A0";
+        frag.appendChild(sp);
+        return;
+      }
+      var span = document.createElement("span");
+      span.className = "ch";
+      span.textContent = ch;
+      span.style.setProperty("--ch-delay", (i * stagger).toFixed(1) + "ms");
+      frag.appendChild(span);
+    });
+    host.appendChild(frag);
+    var total = CHAR_MS + (n - 1) * stagger;
+    meta.textContent = "总时长 " + Math.round(total) + " ms · 错开 " + stagger.toFixed(1) + " ms · " + n + " 字";
+  }
+  q("#btn-replay").addEventListener("click", typeIn);
+
+  /* ---------- 计时器：等宽数字不抖动 ---------- */
+  var t0 = performance.now();
+  setInterval(function(){
+    var d = (performance.now() - t0) / 1000;
+    var m = Math.floor(d / 60), s = Math.floor(d % 60), ds = Math.floor((d * 10) % 10);
+    q("#clock").textContent = String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0") + "." + ds;
+  }, 100);
+
+  /* ---------- Toast ---------- */
+  var host = q("#toast-host");
+  function toast(msg, ms){
+    var el = document.createElement("div");
+    el.className = "toast";
+    el.innerHTML = '<span class="dot"></span><span></span>' +
+                   '<button data-close type="button" aria-label="关闭提示">×</button>';
+    el.children[1].textContent = msg;
+    host.appendChild(el);
+    var timer = setTimeout(remove, ms || 2500);
+    function remove(){
+      clearTimeout(timer);
+      el.classList.add("out");
+      setTimeout(function(){ el.remove(); }, reduced() ? 1 : 200);
+    }
+    el.querySelector("[data-close]").addEventListener("click", remove);
+  }
+
+  /* ---------- 拖拽排序 ----------
+     咬死：pointerdown 后立刻跟手，拖动期间列表禁用 transition
+     回弹：落位后仅让"残留位移"走 420ms spring，过冲 2px
+  -------------------------------------------------------- */
+  (function initDrag(){
+    var list = q("#list");
+    var drag = null;
+
+    list.addEventListener("pointerdown", function(e){
+      var item = e.target.closest(".item");
+      if (!item || e.target.closest("a,button,input")) return;
+      if (e.button !== 0 && e.pointerType === "mouse") return;
+      e.preventDefault();
+      var items = Array.from(list.children);
+      var gap = parseFloat(getComputedStyle(list).rowGap) || 8;
+      var step = items[0].getBoundingClientRect().height + gap;
+      drag = {
+        item: item, items: items, idx: items.indexOf(item),
+        step: step, startY: e.clientY, target: items.indexOf(item),
+        pointerId: e.pointerId, offset: 0, moved: false
+      };
+      list.dataset.dragging = "on";
+      item.dataset.drag = "active";
+      try { item.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+
+    function paint(){
+      var d = drag;
+      d.items.forEach(function(el, i){
+        if (el === d.item) return;
+        var shift = 0;
+        if (d.idx < d.target && i > d.idx && i <= d.target) shift = -d.step;
+        if (d.idx > d.target && i < d.idx && i >= d.target) shift = d.step;
+        el.style.transform = shift ? "translate3d(0," + shift + "px,0)" : "";
+      });
+      d.item.style.transform = "translate3d(0," + d.offset + "px,0)";
+    }
+
+    list.addEventListener("pointermove", function(e){
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      var dy = e.clientY - drag.startY;
+      drag.moved = drag.moved || Math.abs(dy) > 3;
+      drag.offset = dy;
+      var target = drag.idx + Math.round(dy / drag.step);
+      target = Math.max(0, Math.min(drag.items.length - 1, target));
+      drag.target = target;
+      paint();                                    // 同帧更新，零延迟
+    });
+
+    function finish(e){
+      if (!drag || (e && e.pointerId !== drag.pointerId)) return;
+      var d = drag;
+      drag = null;
+      delete list.dataset.dragging;
+      delete d.item.dataset.drag;
+
+      var residual = d.offset - (d.target - d.idx) * d.step;  // 落位后还剩的位移
+      var ref = d.target > d.idx ? d.items[d.target].nextSibling : d.items[d.target];
+      d.items.forEach(function(el){ el.style.transform = ""; });
+      list.insertBefore(d.item, ref);                          // 立即落位，视觉不跳
+      d.item.style.transform = "";
+
+      if (!d.moved || reduced() || Math.abs(residual) < 0.5){
+        if (d.moved) toast("顺序已更新（" + (d.target + 1) + " / " + d.items.length + "）");
+        return;
+      }
+      // spring 回弹：从残留位移收敛到 0，过冲 2px（≤4px 要求）
+      var over = residual > 0 ? -2 : 2;
+      var anim = d.item.animate([
+        { transform: "translate3d(0," + residual + "px,0)" },
+        { transform: "translate3d(0," + over + "px,0)", offset: .62 },
+        { transform: "translate3d(0,0,0)" }
+      ], { duration: 420, easing: "cubic-bezier(.2,.8,.3,1)" });
+      anim.onfinish = function(){ d.item.style.transform = ""; };
+      toast("顺序已更新（" + (d.target + 1) + " / " + d.items.length + "）");
+    }
+    list.addEventListener("pointerup", finish);
+    list.addEventListener("pointercancel", finish);
+  })();
+
+  /* ---------- 启动：聚焦演示 + 打字 ---------- */
+  window.addEventListener("load", function(){
+    var input = q("#focus-demo");
+    if (input && !params.has("nofocus")) input.focus();
+    typeIn();
+    // 截图辅助：?only=N 只保留第 N 个面板（不影响正常浏览）
+    if (params.has("only")){
+      var idx = parseInt(params.get("only"), 10) || 0;
+      qa(".panel").forEach(function(p, i){ p.style.display = (i === idx ? "" : "none"); });
+      var top = q(".topbar");
+      if (top) top.style.display = "none";
+      document.body.style.paddingTop = "var(--sp-4)";
+    }
+    // 验收自检：?selftest=1 把断言结果写进 <title>，可用 --dump-dom 取回
+    if (params.has("selftest")) selfTest();
+  });
+
+  function selfTest(){
+    var r = {};
+    var field = q("#focus-demo").closest(".field");
+    var input = q("#focus-demo");
+
+    // 1) 聚焦不改变布局尺寸：临时关过渡，既能量尺寸也能读到"目标双环"值
+    input.blur();
+    field.style.transition = "none";
+    var a = field.getBoundingClientRect();
+    input.focus();
+    var b = field.getBoundingClientRect();
+    r.sizeDelta = [Math.round((b.width - a.width) * 100) / 100,
+                   Math.round((b.height - a.height) * 100) / 100];
+    r.focusWithin = field.matches(":focus-within");
+    r.shadow = getComputedStyle(field).boxShadow;
+    field.style.transition = "";
+
+    // 3) 字重（跟随主题）
+    var cs = getComputedStyle(document.body);
+    r.weight = [cs.fontWeight, getComputedStyle(q("h1")).fontWeight];
+
+    // 4) 等宽数字：tabular 下 1 与 8 宽度应完全相同，比例数字则不同
+    function w(txt, cls){
+      var s = document.createElement("span");
+      s.className = cls;
+      s.style.cssText = "position:absolute;visibility:hidden;font-size:20px;font-weight:400";
+      s.textContent = txt;
+      document.body.appendChild(s);
+      var v = Math.round(s.getBoundingClientRect().width * 100) / 100;
+      s.remove();
+      return v;
+    }
+    r.tabular = [w("1111", "num"), w("8888", "num")];
+    r.proportional = [w("1111", "propnum"), w("8888", "propnum")];
+
+    // 5) 打字动画预算
+    var n = Array.from(TEXT).length;
+    var stagger = n < 2 ? 0 : Math.min(40, Math.max(6, (BUDGET - CHAR_MS) / (n - 1)));
+    r.typeTotal = Math.round(CHAR_MS + (n - 1) * stagger);
+    r.stagger = Math.round(stagger * 10) / 10;
+
+    // 6) 令牌明度差（HSL 的 L，与文档口径一致）
+    function lightness(hex){
+      hex = hex.trim().replace("#", "");
+      var c = [0, 2, 4].map(function(i){ return parseInt(hex.substr(i, 2), 16); });
+      var mx = Math.max.apply(null, c), mn = Math.min.apply(null, c);
+      return (mx + mn) / 2 / 255 * 100;
+    }
+    var root = getComputedStyle(document.documentElement);
+    var keys = ["--bg-canvas", "--bg-sunken", "--surface-1", "--surface-2"];
+    var ls = keys.map(function(k){ return lightness(root.getPropertyValue(k)); });
+    function d(i, j){ return Math.round(Math.abs(ls[i] - ls[j]) * 10) / 10; }
+    // 只统计"允许直接叠放"的相邻层：凹陷只叠 canvas，卡片只叠面板
+    r.layerDelta = { canvas_to_sunken: d(0, 1), canvas_to_panel: d(0, 2), panel_to_card: d(2, 3) };
+    r.layerL = ls.map(function(v){ return Math.round(v * 10) / 10; });
+
+    document.title = "SELFTEST " + JSON.stringify(r);
+  }
+})();
+</script>
+</body>
+</html>

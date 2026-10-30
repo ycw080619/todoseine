@@ -66,11 +66,16 @@ class RoundedCard(QWidget):
         return theme.mix(self.hover_color, self.pressed_color, self._state - 1.0)
 
     def border_pen_color(self) -> QColor:
-        """hover 时边框微微发亮，Fluent 风格反馈。"""
-        # state 0~1 从默认边框过渡到强调色的低饱和版
+        """hover 只把 1px 细线的透明度从 7% 提到 12%，不改色相。
+
+        规范：层级靠微明度，不靠硬边框。掺主色会让 alpha 一下翻三倍，
+        视觉上就变成一条"绿描边"，所以这里只动 alpha。
+        """
         t = min(1.0, self._state)
-        bright = theme.mix(self.border_color, theme.ACCENT, 0.35 * t)
-        return bright
+        color = QColor(self.border_color)
+        color.setAlpha(round(self.border_color.alpha()
+                             + (theme.LINE_SOFT.alpha() - self.border_color.alpha()) * t))
+        return color
 
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)
@@ -88,13 +93,23 @@ class RoundedCard(QWidget):
         """子类在卡片底之上补充绘制（强调条 / 焦点框等）。"""
 
     def paint_focus_ring(self, painter: QPainter) -> None:
+        """双环聚焦：内环 1px 低饱和主色 + 外环 3px 22% 柔光（Qt 无 box-shadow 的等价画法）。"""
         if not self.hasFocus():
             return
-        rect = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
-        path = QPainterPath()
-        path.addRoundedRect(rect, max(2, self.radius - 1), max(2, self.radius - 1))
-        painter.setPen(QPen(theme.ACCENT, 1.5))
-        painter.drawPath(path)
+        outer = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        outer_path = QPainterPath()
+        r = max(2, self.radius)
+        outer_path.addRoundedRect(outer, r, r)
+        glow = QColor(theme.ACCENT)
+        glow.setAlphaF(0.22)
+        painter.setPen(QPen(glow, 3))
+        painter.drawPath(outer_path)
+
+        inner = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
+        inner_path = QPainterPath()
+        inner_path.addRoundedRect(inner, max(2, r - 1), max(2, r - 1))
+        painter.setPen(QPen(theme.ACCENT, 1))
+        painter.drawPath(inner_path)
 
     def rounded_path(self, inset: float = 0.0) -> QPainterPath:
         rect = QRectF(self.rect()).adjusted(inset, inset, -inset, -inset)

@@ -20,7 +20,7 @@ from typing import List, Optional
 
 from PySide6.QtCore import (QEasingCurve, QEvent, QPoint, QPropertyAnimation,
                             QRectF, Qt, QThread, QTimer, Signal)
-from PySide6.QtGui import QAction, QColor, QFont, QKeySequence, QPainter, QShortcut
+from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QMenu, QMessageBox, QPushButton, QScrollArea,
                                QVBoxLayout, QWidget)
@@ -35,7 +35,7 @@ from ..core.dash_data import _is_today_due, filter_items, load_items
 from ..core.dash_files import (_extract_filenames, _find_downloaded_file,
                                _fmt_ts)
 from ..models import TodoItem
-from .widgets import theme
+from .widgets import focus_ring, theme
 from .widgets.card import CheckDot, RoundedCard
 from .widgets.pill_tabs import PillTabs
 from .widgets.text import ElidedLabel
@@ -194,8 +194,7 @@ class TodoRow(RoundedCard):
         col.setSpacing(3)
 
         title = ElidedLabel(("★ " if star else "") + self.display_text)
-        title_font = QFont(theme.FONT_FAMILY)
-        title_font.setPointSize(10)
+        title_font = theme.title_font(10)
         if item.status == "done":
             title_font.setStrikeOut(True)
         title.setFont(title_font)
@@ -218,8 +217,8 @@ class TodoRow(RoundedCard):
         if item.sender:
             bits.append(item.sender)
         meta = ElidedLabel(" · ".join(bits))
-        meta_font = QFont(theme.FONT_FAMILY)
-        meta_font.setPointSize(8)
+        # 说明行里带日期/时间：等宽数字，避免「10:30 / 9:45」宽度差导致整行横跳
+        meta_font = theme.number_font(8)
         meta.setFont(meta_font)
         if due and due < now_ts:
             meta_color = theme.WARN
@@ -353,10 +352,9 @@ class Dashboard(QWidget):
         header.addStretch(1)
 
         self._clock = QLabel("")
-        self._clock.setStyleSheet(
-            f"color: {theme.SUB.name()}; font-family: Consolas, monospace;"
-            " font-size: 12px;"
-        )
+        # 时钟是连续变化的数字：等宽数字 + 收紧字重，秒位不会左右跳
+        self._clock.setFont(theme.number_font(9))
+        self._clock.setStyleSheet(f"color: {theme.SUB.name()};")
         header.addWidget(self._clock)
 
         gear = _flat_button("⚙", 20)
@@ -387,17 +385,24 @@ class Dashboard(QWidget):
         self._search_edit.textChanged.connect(self._on_search)
         in_row.addWidget(self._search_edit)
 
+        # 双环聚焦：边框宽度恒为 1px（聚焦只换颜色，不撑大控件），
+        # 外环柔光由 focus_ring 的 drop shadow 负责
         _line_style = (
-            "QLineEdit { background: transparent; border: none;"
+            "QLineEdit { background: transparent;"
+            " border: 1px solid transparent; border-radius: 6px;"
             f" color: {theme.TEXT.name()}; font-size: 12px;"
-            " selection-background-color: rgba(76,194,255,80); }"
+            f" selection-background-color: {theme.css(theme.ACCENT)}; }}"
+            "QLineEdit:focus {"
+            f" border-color: {theme.css(theme.ACCENT)}; }}"
         )
         self._add_edit.setStyleSheet(_line_style)
         self._search_edit.setStyleSheet(
             _line_style
-            + "QLineEdit { border-left: 1px solid rgba(255,255,255,25);"
+            + "QLineEdit { border-left: 1px solid rgba(255,255,255,32);"
             " padding-left: 8px; }"
         )
+        self._focus_glows = [focus_ring.attach(self._add_edit),
+                             focus_ring.attach(self._search_edit)]
         root.addWidget(input_card)
 
         # 看板默认不抢焦点（WS_EX_NOACTIVATE），点输入框时才临时让出前台

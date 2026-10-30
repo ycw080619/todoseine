@@ -1,3 +1,28 @@
+## [Unreleased] - 2026-10-30 · 界面微明度体系落地
+
+把 `docs/ui/设计规范-组件与交互.md` 的令牌与交互口径接进看板和设置页。
+
+### 新增
+
+- **`qt/widgets/theme.py` 重写为令牌表**：表面阶梯（面板 `#171A1E` → 卡片 `#1C2025` → hover `#23272D`，相邻明度差 2.4% / 3.0%）、细线（白 7% / 12%）替代硬边框、文字三级（对比度 14.3 / 7.9 / 4.5:1）、字重降档（正文 400、标题 550→Qt 落到 DemiBold）、`mix()` 插值、`css()` 输出、`tabular()` 等宽数字
+- **`qt/widgets/focus_ring.py`**：输入框外环柔光（`QGraphicsDropShadowEffect`，offset 0 / blur 10 / 30% 主色），聚焦进出自动开关；内环仍是 QSS 恒 1px 边框只换颜色，所以聚焦零尺寸变化
+- **看板与设置页接入**：两个输入框、设置页全部 `QLineEdit` / `QSpinBox` 统一细线 + 聚焦换色 + 柔光；标题改 `title_font`、说明改为等宽数字字体、时钟去掉写死的 Consolas 内联样式、统计大数字走 `tabular()`
+- **`docs/ui/design-system.html`**：单文件参考实现（明暗切换、动效开关、可拖拽列表、打字动画重播、计时器），带 `?selftest=1` 页内断言与 `?only=N` 分面板截图开关；配套 8 张实拍截图存 `docs/ui/shots/`
+- **`docs/ui/设计规范-组件与交互.md`**：令牌表、组件状态表、CSS/JS 实现要点、14 条可验收标准、Qt 映射与实测 JSON
+
+### 修复
+
+- **hover 变成"绿描边"**：早期实现给卡片边框掺 18% 主色，实测 alpha 从 7% 翻到 ~24%，视觉上是一条彩色硬边。改为只把 alpha 提到 12%、RGB 不动
+- **暗色字重过粗**：`pages.py` 的标题用 `setBold(True)`（700），暗底上会外溢光晕；改为令牌字重（Qt DemiBold 600 封顶）
+- **令牌测试误报**：`setFeature(tnum)` 只是记录标志、不代表字体真的支持，改成用 `QFontMetrics` 实测 `1` 与 `8` 的步进宽度相等
+
+### 测试
+
+- `pytest` 408 passed / 11 subtests；`ruff` 全绿
+- 新增 `tests/test_qt_theme.py`（7 条：WCAG 对比度、明度差上限、字重降档、数字等宽、细线透明度、颜色插值边界）
+- 新增 `tests/test_qt_focus_ring.py`（6 条：聚焦环开关、零尺寸变化、柔光半透明且居中、hover 不许变彩色描边）
+- 离屏渲染实测：看板与设置页在真实 Windows 平台渲染正常（offscreen 平台缺中文字形，会渲染成豆腐块，仅用于跑几何断言）
+
 ## [Unreleased] - 2026-10-30 · 补齐开发定稿剩余项
 
 对照《QQ消息智能处理系统 完整全流程（开发定稿版）》逐项核对后补齐 3 项功能 + 3 份文档。

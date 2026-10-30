@@ -37,15 +37,20 @@ from PySide6.QtWidgets import (
 
 from .. import config as c2t_config
 from . import tray
-from .widgets import theme
+from .widgets import focus_ring, theme
 
 
 # ---------- 统一控件样式 ----------
 
 _LINE_STYLE = (
-    "QLineEdit { background: rgba(255,255,255,12); color: white;"
-    " border: 1px solid rgba(255,255,255,30); border-radius: 6px;"
+    "QLineEdit { background: rgba(255,255,255,10);"
+    f" color: {theme.TEXT.name()};"
+    f" border: 1px solid {theme.css(theme.LINE_HAIRLINE)}; border-radius: 7px;"
     " padding: 6px 10px; font-size: 12px; }"
+    # 聚焦只换边框颜色：宽度恒 1px，控件尺寸不变，不会出现生硬描边
+    "QLineEdit:focus {"
+    f" border-color: {theme.css(theme.ACCENT)};"
+    " background: rgba(255,255,255,14); }"
 )
 
 
@@ -88,6 +93,8 @@ def _line(text: str = "", placeholder: str = "") -> QLineEdit:
     edit = QLineEdit(text)
     edit.setPlaceholderText(placeholder)
     edit.setStyleSheet(_LINE_STYLE)
+    # 外环柔光：挂在控件属性上，防止 Python 侧回收后只剩内环
+    edit._focus_glow = focus_ring.attach(edit)  # noqa: SLF001 - 只做生命周期锚点
     return edit
 
 
@@ -98,9 +105,12 @@ def _spin(value: int, low: int, high: int, suffix: str = "") -> QSpinBox:
     if suffix:
         box.setSuffix(suffix)
     box.setStyleSheet(
-        "QSpinBox { background: rgba(255,255,255,12); color: white;"
-        " border: 1px solid rgba(255,255,255,30); border-radius: 6px;"
+        "QSpinBox { background: rgba(255,255,255,10);"
+        f" color: {theme.TEXT.name()};"
+        f" border: 1px solid {theme.css(theme.LINE_HAIRLINE)}; border-radius: 7px;"
         " padding: 4px 8px; font-size: 12px; }"
+        "QSpinBox:focus {"
+        f" border-color: {theme.css(theme.ACCENT)}; }}"
     )
     return box
 
