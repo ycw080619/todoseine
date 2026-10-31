@@ -51,7 +51,8 @@ class TestArchive(unittest.TestCase):
             body = fh.read()
         self.assertIn(f"工作群 · {day}", body)
         self.assertIn("**张三**", body)
-        manifest = json.load(open(os.path.join(self.tmp, "manifest.json"), encoding="utf-8"))
+        with open(os.path.join(self.tmp, "manifest.json"), encoding="utf-8") as fh:
+            manifest = json.load(fh)
         self.assertIn(f"工作群/{year}/{month}/{day}.md", manifest["files"])
 
     def test_second_write_is_deduped(self) -> None:
@@ -61,7 +62,8 @@ class TestArchive(unittest.TestCase):
         self.assertEqual(Archiver(self.cfg).write(msgs, session="工作群"), 1)
         self.assertEqual(Archiver(self.cfg).write(msgs, session="工作群"), 0)
         path = os.path.join(self.tmp, "工作群", year, month, f"{day}.md")
-        self.assertEqual(open(path, encoding="utf-8").read().count("明天交报告"), 1)
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read().count("明天交报告"), 1)
 
     def test_same_text_in_two_groups_both_archived(self) -> None:
         msgs = [_msg(1700000000)]
@@ -74,7 +76,8 @@ class TestArchive(unittest.TestCase):
         Archiver(self.cfg).write([_msg(ts, content="电话 13812345678")],
                                  session="工作群")
         path = os.path.join(self.tmp, "工作群", year, month, f"{day}.md")
-        body = open(path, encoding="utf-8").read()
+        with open(path, encoding="utf-8") as fh:
+            body = fh.read()
         self.assertIn("138****5678", body)
         self.assertNotIn("13812345678", body)
 
@@ -85,7 +88,8 @@ class TestArchive(unittest.TestCase):
         Archiver(self.cfg).write([_msg(ts, content="电话 13812345678")],
                                  session="家人群")
         path = os.path.join(self.tmp, "家人群", year, month, f"{day}.md")
-        self.assertIn("13812345678", open(path, encoding="utf-8").read())
+        with open(path, encoding="utf-8") as fh:
+            self.assertIn("13812345678", fh.read())
 
     def test_disabled_writes_nothing(self) -> None:
         self.cfg["archive"]["enabled"] = False

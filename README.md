@@ -1,5 +1,7 @@
 # TodoSeine
 
+[![CI](https://github.com/ycw080619/todoseine/actions/workflows/ci.yml/badge.svg)](https://github.com/ycw080619/todoseine/actions/workflows/ci.yml)
+
 **本地优先的聊天记录 → 待办提取器。** 零依赖开箱即用 · 仅适配 Windows 11 · AI / 截图待办 / 桌面看板均为可选增强。
 
 > Local-first chat-to-todo extractor. Zero-dependency core, offline by default. Windows 11 only.
@@ -19,13 +21,13 @@ TodoSeine 把这些话自动挑出来，汇成一份待办清单，放在桌面�
 
 ## 3 步上手（小白路径）
 
-1. **零安装优先**：运行 `tools/build.ps1` 一键产出 `dist/todoseine.exe`（17.9 MB，控制台版）
+1. **下载**：从 [Releases](https://github.com/ycw080619/todoseine/releases) 下载 `TodoSeine-Setup-0.4.1.exe`（安装包）或 `todoseine_qt.exe`（便携版，免安装）
 2. 或装 Python 3.10+ → 双击 `tools/qq_db_export/console.bat` 打开控制台
 3. 点「导入文件」选一份导出的 txt / JSON → 点「打开看板」
 
 > 进阶：想直读 QQ 数据库？进「设置」填一次口令（DPAPI 加密保存）→ 点「立即同步」。
 >
-> 想要常驻托盘、玻璃质感看板 + 实时监听的版本：`python -m PyInstaller todoseine_qt.spec` → `dist/todoseine_qt.exe`（约 51 MB，需 `pip install -e ".[qt]"`）。
+> 想从源码构建：`python -m PyInstaller todoseine_qt.spec` → `dist/todoseine_qt.exe`（约 54 MB，需 `pip install -e ".[qt]"`）。
 
 ---
 

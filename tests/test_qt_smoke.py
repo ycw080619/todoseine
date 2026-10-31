@@ -304,8 +304,9 @@ def test_mini_parser_roundtrip(tmp_path):
         "config_file": str(tmp_path / "c.toml"),
     }
     path = config.save(cfg, str(tmp_path / "c.toml"))
-    back = config._mini_parse_text(open(path, encoding="utf-8").read())
-    assert back["db_path"] == r"C:\Users\someone\Chat2Todo\qq.db"
+    with open(path, encoding="utf-8") as fh:
+        back = config._mini_parse_text(fh.read())
+    assert back["db_path"] == r"C:\Users\someone\todoseine\qq.db"
     assert back["vector"]["sim_threshold"] == 0.92
     assert back["filter"]["ignore_groups"] == ["群, 带逗号", "123456"]
 

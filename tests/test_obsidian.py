@@ -84,7 +84,8 @@ class TestObsidian(unittest.TestCase):
         self.sync.push()
         backup = os.path.join(self.sync.folder, "待办.conflict.bak")
         self.assertTrue(os.path.isfile(backup))
-        self.assertIn("我改过", open(backup, encoding="utf-8").read())
+        with open(backup, encoding="utf-8") as fh:
+            self.assertIn("我改过", fh.read())
 
     def test_state_file_written(self) -> None:
         self.sync.push()
