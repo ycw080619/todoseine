@@ -1,5 +1,5 @@
 # TodoSeine 一键构建脚本：PyInstaller 打包 exe → Inno Setup 生成安装包
-# 用法：& "d:\QQ 待办项目\tools\build_installer.ps1"
+# 用法：& ".\tools\build_installer.ps1"
 # 产物：
 #   dist\todoseine_qt.exe          （单文件程序，供开发者直接运行）
 #   dist\TodoSeine-Setup-0.4.1.exe （一键安装包，给小白用户）
@@ -7,7 +7,7 @@
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 $distDir = Join-Path $repo "dist"
-$iscc = "C:\Users\ycw\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
+$iscc = Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"
 
 Write-Host "=== TodoSeine 一键构建 ===" -ForegroundColor Cyan
 

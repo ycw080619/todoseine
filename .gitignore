@@ -4,8 +4,6 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-# PyInstaller 构建产物（机器特定，不入库）
-*.spec
 .venv/
 venv/
 
@@ -18,7 +16,7 @@ out/
 *.log
 # 导出的消息中间产物
 *.jsonl
-# DPAPI 密钥库（理论上在 ~/Chat2Todo，双保险）
+# DPAPI 密钥库（理论上在 ~/todoseine，双保险）
 dbkey.dat
 *.key
 key.txt

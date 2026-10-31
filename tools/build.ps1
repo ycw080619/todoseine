@@ -1,5 +1,5 @@
 # TodoSeine - PyInstaller build script
-# Usage: 从任意目录执行 & "D:\QQ 待办项目\tools\build.ps1"
+# Usage: 从项目根目录执行 & ".\tools\build.ps1"
 # Output: dist\todoseine.exe (onefile, no console window)
 
 $repo = Split-Path -Parent $PSScriptRoot
