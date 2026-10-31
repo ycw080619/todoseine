@@ -1558,6 +1558,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # 修复 cp1252 等非 UTF-8 控制台 print 中文崩溃的问题
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     parser = build_parser()
     args = parser.parse_args(argv)
     if not hasattr(args, "config"):

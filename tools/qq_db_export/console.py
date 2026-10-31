@@ -407,7 +407,7 @@ def _read_filter(key: str) -> list:
     try:
         from todoseine.config import load
 
-        # 注意：config.load() 的默认查找路径不含 %USERPROFILE%\Chat2Todo\c2t.toml，
+        # 注意：config.load() 的默认查找路径不含 %USERPROFILE%\todoseine\c2t.toml，
         # 必须显式传路径，否则读到的永远是默认值。
         cfg = load(str(CONFIG) if CONFIG.exists() else None).get("filter") or {}
         val = cfg.get(key) or []

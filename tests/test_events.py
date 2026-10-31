@@ -149,7 +149,11 @@ class TestExtractEventKey(unittest.TestCase):
         self.assertEqual(key["action"], "submit")
 
     def test_deadline_parsed(self):
-        key = extract_event_key("10月30号前提交报名表")
+        # 用相对当前的未来日期，避免月底过后硬编码日期过期导致测试挂掉
+        import datetime as _dt
+        _d = _dt.date.today() + _dt.timedelta(days=30)
+        _future = f"{_d.month}月{_d.day}号"
+        key = extract_event_key(f"{_future}前提交报名表")
         self.assertIsNotNone(key["deadline"])
 
     def test_no_action(self):

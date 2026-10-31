@@ -24,4 +24,4 @@ if not defined PY_CMD exit /b 1
 
 for %%i in ("%~dp0..\..") do set "REPO=%%~fi"
 set PYTHONPATH=%REPO%\src
-start "" "%PY_CMD%" "%~dp0snap.py" --hotkey --db "%USERPROFILE%\Chat2Todo\qq.db"
+start "" "%PY_CMD%" "%~dp0snap.py" --hotkey --db "%USERPROFILE%\todoseine\qq.db"

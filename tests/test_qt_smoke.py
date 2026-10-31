@@ -297,7 +297,7 @@ def test_mini_parser_roundtrip(tmp_path):
     from todoseine import config
 
     cfg = {
-        "db_path": r"C:\Users\someone\Chat2Todo\qq.db",
+        "db_path": r"C:\Users\someone\todoseine\qq.db",
         "todo_threshold": 4,
         "vector": {"sim_threshold": 0.92, "enabled": True},
         "filter": {"ignore_groups": ["群, 带逗号", "123456"]},
