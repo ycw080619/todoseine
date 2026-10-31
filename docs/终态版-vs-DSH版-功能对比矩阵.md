@@ -1,7 +1,7 @@
 # 终态版 vs DSH 内部版 · 功能对比矩阵
 
 > 用途：说明「为什么开源定稿是这一套」，以及旧 DSH 内部版还留在哪些坑里。
-> DSH 内部版指 `C:\Users\ycw\.dsh\dsh_wechat\chat2todo` 那份历史拷贝（无任何入口指向，保留仅为参考）。
+> DSH 内部版指 `C:\Users\ycw\.dsh\dsh_wechat\todoseine` 那份历史拷贝（无任何入口指向，保留仅为参考）。
 
 ## 一句话差别
 
@@ -35,10 +35,10 @@
 
 | DSH 版做法 | 终态版做法 |
 |---|---|
-| 双击 `console.bat` | 双击桌面 `Chat2Todo.lnk`（或 `c2t dash`） |
+| 双击 `console.bat` | 双击桌面 `TodoSeine.lnk`（或 `c2t dash`） |
 | 仓库根目录 `c2t.db` | 不存在了，统一 `%USERPROFILE%\Chat2Todo\qq.db` |
 | Docker 导出 | 控制台「选择 QQ 数据库」→ 口令存 DPAPI → 内置只读通道 |
-| 计划任务 `Chat2TodoSync` | 可删；终态版靠常驻进程巡检 |
+| 计划任务 `TodoSeineSync` | 可删；终态版靠常驻进程巡检 |
 | tkinter 截图确认窗 | Qt 截图确认窗（同一套核心管线） |
 
 ## 保留 DSH 版的理由与风险

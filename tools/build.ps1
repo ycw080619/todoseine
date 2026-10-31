@@ -1,13 +1,13 @@
-# Chat2Todo - PyInstaller build script
+# TodoSeine - PyInstaller build script
 # Usage: 从任意目录执行 & "D:\QQ 待办项目\tools\build.ps1"
-# Output: dist\chat2todo.exe (onefile, no console window)
+# Output: dist\todoseine.exe (onefile, no console window)
 
 $repo = Split-Path -Parent $PSScriptRoot
-$launcher = Join-Path $repo "tools\chat2todo-launcher.py"
+$launcher = Join-Path $repo "tools\todoseine-launcher.py"
 $consoleDir = Join-Path $repo "tools\qq_db_export"
 $distDir = Join-Path $repo "dist"
 $buildDir = Join-Path $repo "build"
-$exe = Join-Path $distDir "chat2todo.exe"
+$exe = Join-Path $distDir "todoseine.exe"
 
 function Exec-Checked {
     param(
@@ -20,7 +20,7 @@ function Exec-Checked {
     }
 }
 
-Write-Host "=== Chat2Todo build ===" -ForegroundColor Cyan
+Write-Host "=== TodoSeine build ===" -ForegroundColor Cyan
 Write-Host "Repo: $repo"
 
 $prevCwd = Get-Location
@@ -48,8 +48,8 @@ try {
     $pyArgs = @(
         "-m", "PyInstaller",
         "--noconfirm", "--onefile", "--windowed",
-        "--name", "chat2todo",
-        "--collect-all", "chat2todo",
+        "--name", "todoseine",
+        "--collect-all", "todoseine",
         "--paths", $consoleDir,
         "--hidden-import", "console",
         "--hidden-import", "sqlite3",
@@ -70,7 +70,7 @@ try {
     # 4. Verify
     if (Test-Path $exe) {
         $mb = [math]::Round((Get-Item $exe).Length / 1MB, 2)
-        Write-Host "[4/4] OK dist\chat2todo.exe ($mb MB)" -ForegroundColor Green
+        Write-Host "[4/4] OK dist\todoseine.exe ($mb MB)" -ForegroundColor Green
     } else {
         Write-Host "[4/4] FAIL exe not found" -ForegroundColor Red
         exit 1

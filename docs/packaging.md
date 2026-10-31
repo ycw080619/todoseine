@@ -1,13 +1,13 @@
 # 分发与打包
 
-Chat2Todo 的核心承诺是**零第三方依赖**，因此分发方式按“依赖成本从低到高”排列。
+TodoSeine 的核心承诺是**零第三方依赖**，因此分发方式按“依赖成本从低到高”排列。
 前两种方式不需要用户装任何额外的东西。
 
 ## 方式一：直接运行源码（开发者）
 
 ```bash
 git clone <repo>
-cd chat2todo
+cd todoseine
 python -m pip install -e .
 c2t --version
 ```
@@ -33,16 +33,16 @@ python dist/c2t.pyz --help
 
 ```bash
 python -m pip install -e ".[qt]" pyinstaller
-python -m PyInstaller --noconfirm --clean chat2todo_qt.spec
+python -m PyInstaller --noconfirm --clean todoseine_qt.spec
 ```
 
-产物是 `dist/chat2todo_qt.exe`（当前约 51 MB，Windows 11 x64）：
+产物是 `dist/todoseine_qt.exe`（当前约 51 MB，Windows 11 x64）：
 
 - 双击即用，不需要 Python；启动后常驻托盘，看板可随时唤出；
 - 入口是 `tools/qt_launcher.py`。不能把 `qt/main.py` 直接当入口——PyInstaller
   会以 `__main__` 执行它，包内相对导入会失败；
 - `console=False`：不弹黑框，日志写 `%USERPROFILE%\.chat2todo\app.log`；
-- 图标 `assets/chat2todo.ico` 与版本资源 `tools/version_info.txt`；
+- 图标 `assets/todoseine.ico` 与版本资源 `tools/version_info.txt`；
 - spec 里的 Qt DLL 是**白名单**（Core / Gui / Widgets / Network / Svg / OpenGL），
   PySide6 自带的 Quick、Qml、3D、Designer 一共 80 MB+，不白名单化会直接翻倍。
 
@@ -56,7 +56,7 @@ python -m PyInstaller --noconfirm --clean chat2todo_qt.spec
 
 ## 桌面看板
 
-看板是 PySide6 写的（`src/chat2todo/qt/`），只支持 Windows 11：
+看板是 PySide6 写的（`src/todoseine/qt/`），只支持 Windows 11：
 
 - 无边框 + DWM 圆角 / Mica，位置尺寸自动记忆，拖边改宽、贴边吸附；
 - 托盘常驻，托盘菜单可暂停监听、立即同步、开关自启；

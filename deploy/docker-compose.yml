@@ -1,5 +1,5 @@
 # 可选后端服务（Ollama / AnythingLLM），仅映射到本机回环地址。
-# Chat2Todo 主程序不需要 Docker，这里是进阶用户的容器化选项。
+# TodoSeine 主程序不需要 Docker，这里是进阶用户的容器化选项。
 services:
   ollama:
     image: ollama/ollama:latest

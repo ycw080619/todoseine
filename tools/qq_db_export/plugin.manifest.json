@@ -3,12 +3,12 @@
   "id": "qq_db_export",
   "name": "QQ 数据库直读",
   "version": "0.4.1",
-  "author": "Chat2Todo contributors",
+  "author": "TodoSeine contributors",
   "description": "控制台 + 桌面看板 + 后台定时同步，核心能力入口。",
   "permission_level": "db",
   "entry": "console.py",
   "capabilities": ["db_import", "dashboard", "ai_config", "filter_ui", "purge_chat", "scheduled_sync"],
-  "dependencies": ["chat2todo>=0.4.0"],
+  "dependencies": ["todoseine>=0.4.0"],
   "triggers": {
     "autostart": false,
     "hotkey": null

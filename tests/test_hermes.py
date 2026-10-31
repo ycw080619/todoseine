@@ -13,11 +13,11 @@ import urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "src"))
 
-from chat2todo.core.hermes import (  # noqa: E402
+from todoseine.core.hermes import (  # noqa: E402
     HermesService, MemoryHost, daily_summary, ensure_token, inspect, load_token,
 )
-from chat2todo.core.store import Store  # noqa: E402
-from chat2todo.models import TodoItem  # noqa: E402
+from todoseine.core.store import Store  # noqa: E402
+from todoseine.models import TodoItem  # noqa: E402
 
 
 def _cfg(**over) -> dict:

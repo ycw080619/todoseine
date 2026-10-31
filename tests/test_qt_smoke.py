@@ -25,7 +25,7 @@ def qapp():
 @pytest.fixture()
 def cfg_file(tmp_path, monkeypatch):
     """把配置与数据库都指向临时目录，避免污染用户真实数据。"""
-    from chat2todo import config
+    from todoseine import config
 
     path = tmp_path / "config.toml"
     db = tmp_path / "test.db"
@@ -39,8 +39,18 @@ def cfg_file(tmp_path, monkeypatch):
 # 纯函数
 # ---------------------------------------------------------------------------
 
+def test_launcher_brief_is_short_text():
+    """诊断信息必须是一段短文本，且任何平台都不许抛异常。"""
+    from todoseine.qt.tray import launcher_brief
+
+    text = launcher_brief()
+    assert isinstance(text, str)
+    assert text
+    assert len(text) <= 120
+
+
 def test_hotkey_parse_basic():
-    from chat2todo.qt.hotkey import parse
+    from todoseine.qt.hotkey import parse
 
     mods, vk = parse("ctrl+alt+d")
     assert vk == ord("D")
@@ -51,14 +61,14 @@ def test_hotkey_parse_basic():
 
 
 def test_hotkey_parse_letters_and_specials():
-    from chat2todo.qt.hotkey import parse
+    from todoseine.qt.hotkey import parse
 
     assert parse("ctrl+shift+s") is not None
     assert parse("win+f5") is not None
 
 
 def test_build_tray_icon(qapp):
-    from chat2todo.qt.tray_icon import build_icon
+    from todoseine.qt.tray_icon import build_icon
 
     icon = build_icon()
     assert not icon.isNull()
@@ -66,7 +76,7 @@ def test_build_tray_icon(qapp):
 
 
 def test_extract_batch_empty():
-    from chat2todo.qt.monitor import extract_batch
+    from todoseine.qt.monitor import extract_batch
 
     todos, decisions = extract_batch([], {})
     assert todos == []
@@ -74,8 +84,8 @@ def test_extract_batch_empty():
 
 
 def test_extract_batch_picks_todo():
-    from chat2todo.models import Message
-    from chat2todo.qt.monitor import extract_batch
+    from todoseine.models import Message
+    from todoseine.qt.monitor import extract_batch
 
     msgs = [Message(timestamp=1_700_000_000, sender_id="1", sender_name="老王",
                     content="明天下午三点前把周报发我一下，谢谢")]
@@ -86,7 +96,7 @@ def test_extract_batch_picks_todo():
 
 
 def test_settings_parse_list():
-    from chat2todo.qt.settings_panel import _parse_list
+    from todoseine.qt.settings_panel import _parse_list
 
     assert _parse_list("123, 456，789\n123") == ["123", "456", "789"]
     assert _parse_list("") == []
@@ -97,7 +107,7 @@ def test_settings_parse_list():
 # ---------------------------------------------------------------------------
 
 def test_dashboard_offscreen(qapp, cfg_file, tmp_path):
-    from chat2todo.qt.dashboard import Dashboard
+    from todoseine.qt.dashboard import Dashboard
 
     view = Dashboard()
     try:
@@ -110,14 +120,15 @@ def test_dashboard_offscreen(qapp, cfg_file, tmp_path):
 
 
 def test_main_window_pages(qapp, cfg_file):
-    from chat2todo.qt.main_window import FramelessMainWindow
+    from todoseine.qt.main_window import FramelessMainWindow
 
     win = FramelessMainWindow()
     try:
-        assert win._stack.count() == 6
+        # 悬浮窗口只承载看板 + 回收站 + mini panel = 3 页；
+        # 设置/统计/关于已拆到独立窗口
+        assert win._stack.count() == 3
+        win._switch_page(0)
         win._switch_page(1)
-        win._switch_page(2)
-        win._switch_page(4)
 
         geo = win.geometry()
         win.toggle_mini()
@@ -131,8 +142,77 @@ def test_main_window_pages(qapp, cfg_file):
         qapp.processEvents()
 
 
+def test_main_window_resize_eight_directions(qapp, cfg_file):
+    """四边 + 四角拖拽改尺寸：命中判定与几何计算。"""
+    from PySide6.QtCore import QPoint, QRect
+
+    from todoseine.qt.main_window import FramelessMainWindow
+
+    win = FramelessMainWindow()
+    try:
+        win.setGeometry(QRect(100, 100, 600, 450))
+        w, h = win.width(), win.height()
+
+        hits = {
+            QPoint(2, 2): "top-left",
+            QPoint(w - 2, 2): "top-right",
+            QPoint(2, h - 2): "bottom-left",
+            QPoint(w - 2, h - 2): "bottom-right",
+            QPoint(2, h // 2): "left",
+            QPoint(w - 2, h // 2): "right",
+            QPoint(w // 2, 2): "top",
+            QPoint(w // 2, h - 2): "bottom",
+            QPoint(w // 2, h // 2): "",
+        }
+        for pos, expect in hits.items():
+            assert win._edge_at(pos) == expect, (pos, expect)
+
+        # 锁定后不再命中可拖拽区域
+        win._dash_cfg["lock"] = True
+        assert win._edge_at(QPoint(2, h // 2)) == ""
+        win._dash_cfg["lock"] = False
+
+        base = win.geometry()
+
+        def drag(edge, dx, dy):
+            win._resize_edge = edge
+            win._resize_start = (QPoint(0, 0), base)
+            win._do_resize(QPoint(dx, dy))
+
+        drag("right", 20, 0)
+        assert win.width() == base.width() + 20 and win.x() == base.x()
+
+        win.setGeometry(base)
+        drag("left", -20, 0)
+        assert win.width() == base.width() + 20 and win.x() == base.x() - 20
+
+        win.setGeometry(base)
+        drag("bottom", 0, 20)
+        assert win.height() == base.height() + 20 and win.y() == base.y()
+
+        win.setGeometry(base)
+        drag("top", 0, -20)
+        assert win.height() == base.height() + 20 and win.y() == base.y() - 20
+
+        win.setGeometry(base)
+        drag("bottom-right", 20, 20)
+        assert (win.width() == base.width() + 20
+                and win.height() == base.height() + 20)
+
+        # 下限：宽不小于 460，高不小于 420
+        win.setGeometry(base)
+        drag("right", -9999, 0)
+        assert win.width() >= 460
+        win.setGeometry(base)
+        drag("bottom", 0, -9999)
+        assert win.height() >= 420
+    finally:
+        win.deleteLater()
+        qapp.processEvents()
+
+
 def test_pages_render_without_db(qapp, cfg_file):
-    from chat2todo.qt.pages import AboutPage, StatsPage, TrashPage
+    from todoseine.qt.pages import AboutPage, StatsPage, TrashPage
 
     for page in (TrashPage(""), StatsPage(""), AboutPage("")):
         try:
@@ -144,10 +224,10 @@ def test_pages_render_without_db(qapp, cfg_file):
 
 
 def test_trash_roundtrip(qapp, cfg_file):
-    from chat2todo.core import Store
-    from chat2todo.qt.pages import TrashPage
+    from todoseine.core import Store
+    from todoseine.qt.pages import TrashPage
 
-    from chat2todo import config
+    from todoseine import config
 
     db = config.load()["db_path"]
     store = Store(db)
@@ -177,8 +257,8 @@ def test_trash_roundtrip(qapp, cfg_file):
 
 def test_restore_keeps_done_status(cfg_file):
     """已完成的任务删进回收站，还原后不该变回待办再提醒一遍。"""
-    from chat2todo import config
-    from chat2todo.core import Store
+    from todoseine import config
+    from todoseine.core import Store
 
     db = config.load()["db_path"]
     store = Store(db)
@@ -193,8 +273,8 @@ def test_restore_keeps_done_status(cfg_file):
 
 
 def test_trash_missing_todo_returns_none(cfg_file):
-    from chat2todo import config
-    from chat2todo.core import Store
+    from todoseine import config
+    from todoseine.core import Store
 
     store = Store(config.load()["db_path"])
     assert store.trash_item(999_999) is None
@@ -206,7 +286,7 @@ def test_mini_parser_roundtrip(tmp_path):
 
     之前引号里的反斜杠不回解，Windows 路径读出来是双反斜杠，库直接打不开。
     """
-    from chat2todo import config
+    from todoseine import config
 
     cfg = {
         "db_path": r"C:\Users\someone\Chat2Todo\qq.db",
@@ -228,11 +308,11 @@ def test_monitor_stop_is_clean(cfg_file, qapp, monkeypatch):
     stop 超时还把引用置空会让线程在运行中被析构，Qt 直接 abort，
     所以这里盯着 _worker 的归属和状态。
     """
-    import chat2todo.qt.monitor as mon
+    import todoseine.qt.monitor as mon
 
     monkeypatch.setattr(mon, "fetch_messages", lambda **kwargs: [])
 
-    from chat2todo import config
+    from todoseine import config
 
     monitor = mon.Monitor(cfg=config.load())
     monitor.start()
@@ -253,7 +333,7 @@ def test_crop_drops_sidebar_and_member_panel():
     """
     from PIL import Image, ImageDraw
 
-    from chat2todo.sources import uia
+    from todoseine.sources import uia
 
     img = Image.new("RGB", (1000, 400), (44, 44, 44))       # 聊天区底色
     d = ImageDraw.Draw(img)
@@ -274,7 +354,7 @@ def test_crop_keeps_full_width_without_panel():
     """没开面板时不能把右边也裁掉。"""
     from PIL import Image, ImageDraw
 
-    from chat2todo.sources import uia
+    from todoseine.sources import uia
 
     img = Image.new("RGB", (900, 300), (44, 44, 44))
     d = ImageDraw.Draw(img)
@@ -284,7 +364,7 @@ def test_crop_keeps_full_width_without_panel():
 
 def test_locate_worker_runs_off_main_thread(qapp, monkeypatch):
     """定位下载文件走子线程：run() 只调扫描函数并把结果发回来。"""
-    import chat2todo.qt.dashboard as dash
+    import todoseine.qt.dashboard as dash
 
     monkeypatch.setattr(dash, "_find_downloaded_file",
                         lambda names: rf"C:\Downloads\{names[0]}")
@@ -299,7 +379,7 @@ def test_locate_worker_runs_off_main_thread(qapp, monkeypatch):
 
 
 def test_normalize_cjk_spaces():
-    from chat2todo.sources.uia import normalize_cjk_spaces
+    from todoseine.sources.uia import normalize_cjk_spaces
 
     assert normalize_cjk_spaces("记 得 明 天 交 周 报") == "记得明天交周报"
     # 中英/数字之间的空格要保留
@@ -311,16 +391,16 @@ def test_normalize_cjk_spaces():
 
 def test_capture_chat_without_window():
     """非 Windows 或句柄无效时安全返回 None，不抛异常。"""
-    from chat2todo.sources.uia import _capture_chat
+    from todoseine.sources.uia import _capture_chat
 
     assert _capture_chat(0) is None
 
 
 def test_snap_dialog_ingest(qapp, cfg_file, tmp_path):
     """截图入库：不走 OCR，直接喂文本，验证抽取 + 写库。"""
-    from chat2todo import config
-    from chat2todo.core import Store
-    from chat2todo.qt.snap import SnapController
+    from todoseine import config
+    from todoseine.core import Store
+    from todoseine.qt.snap import SnapController
 
     db = config.load()["db_path"]
     ctl = SnapController(lambda: db)
@@ -348,7 +428,7 @@ def test_smooth_scroll_step_is_pixels_not_singlestep(qapp):
     from PySide6.QtGui import QWheelEvent
     from PySide6.QtWidgets import QWidget
 
-    from chat2todo.qt.dashboard import SmoothScrollArea
+    from todoseine.qt.dashboard import SmoothScrollArea
 
     scroll = SmoothScrollArea()
     try:
@@ -384,9 +464,9 @@ def test_todo_row_children_transparent_for_hover(qapp):
     """
     from PySide6.QtCore import Qt
 
-    from chat2todo.models import TodoItem
-    from chat2todo.qt.dashboard import TodoRow
-    from chat2todo.qt.widgets.text import ElidedLabel
+    from todoseine.models import TodoItem
+    from todoseine.qt.dashboard import TodoRow
+    from todoseine.qt.widgets.text import ElidedLabel
 
     row = TodoRow(TodoItem(text="明天交周报", session="测试", sender="老王",
                            message_ts=1_700_000_000), 0)

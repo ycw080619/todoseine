@@ -9,8 +9,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from chat2todo.core import Store, extract_todos  # noqa: E402
-from chat2todo.models import Message, MsgType  # noqa: E402
+from todoseine.core import Store, extract_todos  # noqa: E402
+from todoseine.models import Message, MsgType  # noqa: E402
 
 
 def _msg(content, ts=1, sender_id="a", sender_name="A", msg_type=MsgType.TEXT):

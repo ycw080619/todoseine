@@ -13,7 +13,7 @@ import symtable
 import unittest
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / "src" / "chat2todo"
+SRC = Path(__file__).resolve().parent.parent / "src" / "todoseine"
 
 # 解释器在模块里隐式注入的全局名，不必显式定义
 _IMPLICIT = {

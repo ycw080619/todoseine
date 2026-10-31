@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from chat2todo.core.vector import cosine, cluster, best_match  # noqa: E402
+from todoseine.core.vector import cosine, cluster, best_match  # noqa: E402
 
 
 class TestCosine(unittest.TestCase):

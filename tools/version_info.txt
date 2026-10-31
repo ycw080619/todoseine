@@ -1,5 +1,5 @@
 # PyInstaller Windows 版本资源
-# 版本号与 src/chat2todo/__init__.py 的 __version__ 保持一致
+# 版本号与 src/todoseine/__init__.py 的 __version__ 保持一致
 VSVersionInfo(
   ffi=FixedFileInfo(
     filevers=(0, 4, 1, 0),
@@ -16,13 +16,13 @@ VSVersionInfo(
       StringTable(
         "080404B0",
         [
-          StringStruct("CompanyName", "Chat2Todo"),
-          StringStruct("FileDescription", "Chat2Todo 待办看板"),
+          StringStruct("CompanyName", "TodoSeine"),
+          StringStruct("FileDescription", "TodoSeine 待办看板"),
           StringStruct("FileVersion", "0.4.1.0"),
-          StringStruct("InternalName", "chat2todo_qt"),
+          StringStruct("InternalName", "todoseine_qt"),
           StringStruct("LegalCopyright", "本地运行，消息不出本机"),
-          StringStruct("OriginalFilename", "chat2todo_qt.exe"),
-          StringStruct("ProductName", "Chat2Todo"),
+          StringStruct("OriginalFilename", "todoseine_qt.exe"),
+          StringStruct("ProductName", "TodoSeine"),
           StringStruct("ProductVersion", "0.4.1"),
         ],
       )

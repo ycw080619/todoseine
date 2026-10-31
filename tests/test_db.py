@@ -16,9 +16,9 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from chat2todo.core import Store  # noqa: E402
-from chat2todo.errors import C2TError  # noqa: E402
-from chat2todo.sources import db as dbmod  # noqa: E402
+from todoseine.core import Store  # noqa: E402
+from todoseine.errors import C2TError  # noqa: E402
+from todoseine.sources import db as dbmod  # noqa: E402
 
 
 def _make_fake_db(tmp: str) -> str:

@@ -3,13 +3,13 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "chat2todo"
+name = "todoseine"
 version = "0.4.1"
 description = "Local-first chat log to todo extractor"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-authors = [{ name = "Chat2Todo contributors" }]
+authors = [{ name = "TodoSeine contributors" }]
 keywords = ["chat", "todo", "qq", "local-first", "privacy", "markdown"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -33,10 +33,10 @@ qt = ["PySide6>=6.6", "pillow>=10", "winrt-runtime>=2.0", "winrt-Windows.Media.O
       "winrt-Windows.Globalization>=2.0"]
 
 [project.scripts]
-c2t = "chat2todo.cli:main"
+c2t = "todoseine.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/ycw080619/chat2todo"
+Homepage = "https://github.com/ycw080619/todoseine"
 
 [tool.setuptools.packages.find]
 where = ["src"]

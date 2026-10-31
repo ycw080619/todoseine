@@ -7,10 +7,10 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from chat2todo import config
-from chat2todo.cli import main
-from chat2todo.core import Store, dedupe
-from chat2todo.models import Message
+from todoseine import config
+from todoseine.cli import main
+from todoseine.core import Store, dedupe
+from todoseine.models import Message
 
 
 def _msg(ts=1700000000, sid="u1", name="小李", content="你好"):
@@ -109,7 +109,7 @@ class TestCli(unittest.TestCase):
         self.assertEqual(code, 1)
 
     def test_since_parse(self):
-        from chat2todo.cli import _parse_since
+        from todoseine.cli import _parse_since
 
         self.assertGreater(_parse_since("7d"), 0)
         self.assertGreater(_parse_since("24h"), 0)

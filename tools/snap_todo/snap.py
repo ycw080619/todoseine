@@ -38,7 +38,7 @@ HERE = Path(__file__).resolve().parent
 SRC = HERE.parents[1] / "src"                      # 仓库源码（src 布局，免 pip install）
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
-ROOT = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Chat2Todo"
+ROOT = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "TodoSeine"
 CONFIG = ROOT / "c2t.toml"
 
 VISION_PROMPT = (
@@ -416,10 +416,10 @@ def confirm_dialog(text: str, engine: str = "", refine=None) -> Optional[str]:
 
 def ingest(text: str, db: str, cfg: dict) -> tuple[int, int]:
     """文字 → 消息 → 核心管线 → 待办入库；返回 (提取条数, 实际新增条数)。"""
-    from chat2todo.ai import AI
-    from chat2todo.core import Store, dedupe, extract_todos
-    from chat2todo.models import Message
-    from chat2todo.semantic import vector_pass
+    from todoseine.ai import AI
+    from todoseine.core import Store, dedupe, extract_todos
+    from todoseine.models import Message
+    from todoseine.semantic import vector_pass
 
     now = int(time.time())
     msgs = [Message(timestamp=now, sender_id="snap", sender_name="截图", content=line.strip())
@@ -444,7 +444,7 @@ def ingest(text: str, db: str, cfg: dict) -> tuple[int, int]:
 
 
 def _load_cfg() -> dict:
-    from chat2todo.config import load
+    from todoseine.config import load
 
     return load(str(CONFIG) if CONFIG.exists() else None)
 
@@ -603,7 +603,7 @@ def ai_refine(text: str, cfg: dict) -> tuple[str, str]:
     try:
         if str((cfg.get("snap") or {}).get("ai_refine", "true")).lower() == "false":
             return text, ""
-        from chat2todo.ai import AI
+        from todoseine.ai import AI
 
         ai = AI(cfg)
         if not ai.usable:
@@ -687,7 +687,7 @@ def watch_loop(args, cfg: dict) -> int:
         return 0
 
 
-def _single_instance(name: str = "Chat2TodoSnapHotkey") -> bool:
+def _single_instance(name: str = "TodoSeineSnapHotkey") -> bool:
     """热键常驻模式单实例；重复启动直接退出，避免抢同一个组合键。"""
     try:
         import ctypes
@@ -711,7 +711,7 @@ def hotkey_loop(args, cfg: dict) -> int:
     spec = str((cfg.get("snap") or {}).get("hotkey") or "ctrl+alt+s")
     parsed = None
     try:
-        from chat2todo.core.hotkey import parse_hotkey
+        from todoseine.core.hotkey import parse_hotkey
 
         parsed = parse_hotkey(spec)
     except Exception:  # noqa: BLE001
@@ -719,7 +719,7 @@ def hotkey_loop(args, cfg: dict) -> int:
     if parsed is None:
         print(f"[E4009] 无法识别快捷键配置：{spec}，回退到 ctrl+alt+s")
         spec = "ctrl+alt+s"
-        from chat2todo.core.hotkey import parse_hotkey as _p
+        from todoseine.core.hotkey import parse_hotkey as _p
 
         parsed = _p(spec)
     if not u.RegisterHotKey(None, 1, parsed[0] & ~0x4000, parsed[1]):
@@ -742,7 +742,7 @@ def hotkey_loop(args, cfg: dict) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="截图待办：剪贴板图片 → 识别 → 确认 → 入库")
-    ap.add_argument("--db", default="", help="目标数据库（默认 %%USERPROFILE%%\\Chat2Todo\\qq.db）")
+    ap.add_argument("--db", default="", help="目标数据库（默认 %%USERPROFILE%%\\TodoSeine\\qq.db）")
     ap.add_argument("--capture", action="store_true", help="框选屏幕区域识别（热键默认走这条）")
     ap.add_argument("--watch", action="store_true", help="持续监视剪贴板，而非只处理一次")
     ap.add_argument("--hotkey", action="store_true", help="常驻并注册全局热键（默认 Ctrl+Alt+S，可在设置里改）")

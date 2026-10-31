@@ -15,9 +15,9 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from chat2todo.adapters import get_adapter  # noqa: E402
-from chat2todo.cli import main  # noqa: E402
-from chat2todo.core import Store  # noqa: E402
+from todoseine.adapters import get_adapter  # noqa: E402
+from todoseine.cli import main  # noqa: E402
+from todoseine.core import Store  # noqa: E402
 
 SAMPLE = """2024-01-15 09:15:00 小李: 明天下午三点前把周报发我
 2024-01-15 09:20:00 小张: 我明天自己把方案改了
@@ -98,7 +98,7 @@ class TestAIWiring(unittest.TestCase):
 
     def _run(self, stub_filter: str = "") -> None:
         _StubAI.filter_out = stub_filter
-        with mock.patch("chat2todo.cli.AI", _StubAI), redirect_stdout(io.StringIO()):
+        with mock.patch("todoseine.cli.AI", _StubAI), redirect_stdout(io.StringIO()):
             code = main(["import", self.txt, "--adapter", "wechat_txt", "--db", self.db])
         self.assertEqual(code, 0)
 

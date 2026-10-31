@@ -10,7 +10,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from chat2todo.core import backup, maintenance  # noqa: E402
+from todoseine.core import backup, maintenance  # noqa: E402
 
 
 def _make_db(path: str) -> None:

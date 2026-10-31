@@ -6,8 +6,8 @@ import os
 import tempfile
 import unittest
 
-from chat2todo.adapters.chatlab_json import ChatLabJsonAdapter
-from chat2todo.models import Message, MsgType
+from todoseine.adapters.chatlab_json import ChatLabJsonAdapter
+from todoseine.models import Message, MsgType
 
 
 class TestChatLabRoundtrip(unittest.TestCase):
@@ -76,7 +76,7 @@ class TestChatLabRoundtrip(unittest.TestCase):
 
     def test_other_adapters_no_write(self):
         """qq_txt / wechat_txt 不实现 write，应该抛 NotImplementedError。"""
-        from chat2todo.adapters import REGISTRY
+        from todoseine.adapters import REGISTRY
 
         for name in ("qq_txt", "wechat_txt"):
             adapter = REGISTRY[name]()

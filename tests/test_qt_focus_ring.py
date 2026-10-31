@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
-from chat2todo.qt.widgets import focus_ring, theme  # noqa: E402
+from todoseine.qt.widgets import focus_ring, theme  # noqa: E402
 
 _APP = QApplication.instance() or QApplication([])
 
@@ -84,7 +84,7 @@ class TestCardHover(unittest.TestCase):
     """hover 只允许提透明度，不许把细线变成彩色描边。"""
 
     def test_border_hover_only_raises_alpha(self):
-        from chat2todo.qt.widgets.card import RoundedCard
+        from todoseine.qt.widgets.card import RoundedCard
 
         card = RoundedCard()
         try:

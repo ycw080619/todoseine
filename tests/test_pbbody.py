@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from chat2todo.core.pbbody import decode_message_text, iter_text, parse_fields
+from todoseine.core.pbbody import decode_message_text, iter_text, parse_fields
 
 
 def _varint(v: int) -> bytes:
@@ -157,7 +157,7 @@ def test_bare_domain_stripped_from_card_text():
 
 
 def test_looks_like_protobuf_gates_heuristic_fallback():
-    from chat2todo.core.pbbody import looks_like_protobuf
+    from todoseine.core.pbbody import looks_like_protobuf
 
     # 媒体消息：结构合法但无文本 → True（调用方不应回退启发式）
     media = _flen(40800, _flen(45101, bytes(range(1, 200))))

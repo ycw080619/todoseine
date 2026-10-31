@@ -10,7 +10,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from chat2todo.core import screenshot_archive as sa
+from todoseine.core import screenshot_archive as sa
 
 
 def _cfg(root: str, enabled: bool = True, days: int = 7) -> dict:

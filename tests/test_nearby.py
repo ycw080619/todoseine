@@ -9,8 +9,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from chat2todo.core import Store  # noqa: E402
-from chat2todo.models import Message  # noqa: E402
+from todoseine.core import Store  # noqa: E402
+from todoseine.models import Message  # noqa: E402
 
 
 class TestNearbyMessages(unittest.TestCase):

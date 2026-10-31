@@ -74,9 +74,9 @@ Qt 版走的是第三条路——**只截自己的屏幕认字**：
 - 装得上：`pip install` 不拉任何包，网络差的环境也能用
 - 审得动：全部标准库，安全审计成本低
 - 活得久：不受第三方库 break change 影响
-- 可嵌入：别处 `import chat2todo` 不会被依赖树污染
+- 可嵌入：别处 `import todoseine` 不会被依赖树污染
 
-PySide6 只在 `chat2todo.qt` 这一层出现，`core/` 与 `adapters/` 不知道它存在。
+PySide6 只在 `todoseine.qt` 这一层出现，`core/` 与 `adapters/` 不知道它存在。
 
 可选依赖单独放 extras：`[api]` 才装 FastAPI。
 

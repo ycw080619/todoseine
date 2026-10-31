@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from chat2todo.ai import AI  # noqa: E402
-from chat2todo.core import Store  # noqa: E402
+from todoseine.ai import AI  # noqa: E402
+from todoseine.core import Store  # noqa: E402
 
 
 def _fake_resp(body: dict):
@@ -38,7 +38,7 @@ class TestOnCallCallback(unittest.TestCase):
             "choices": [{"message": {"content": "是"}}],
             "usage": {"prompt_tokens": 12, "completion_tokens": 3},
         }
-        with patch("chat2todo.ai._NO_REDIRECT_OPENER.open", return_value=_fake_resp(body)):
+        with patch("todoseine.ai._NO_REDIRECT_OPENER.open", return_value=_fake_resp(body)):
             ai.review("记得提交")
         self.assertEqual(len(records), 1)
         r = records[0]
@@ -50,7 +50,7 @@ class TestOnCallCallback(unittest.TestCase):
 
     def test_failure_records_failed_flag(self):
         ai, records = self._make_ai()
-        with patch("chat2todo.ai._NO_REDIRECT_OPENER.open", side_effect=ConnectionError("boom")):
+        with patch("todoseine.ai._NO_REDIRECT_OPENER.open", side_effect=ConnectionError("boom")):
             result = ai.review("记得提交")
         self.assertIsNone(result)
         self.assertEqual(len(records), 1)
@@ -66,7 +66,7 @@ class TestOnCallCallback(unittest.TestCase):
                       "api_key": "k", "review": True}}
         ai = AI(cfg, on_call=bad_cb)
         body = {"choices": [{"message": {"content": "是"}}], "usage": {}}
-        with patch("chat2todo.ai._NO_REDIRECT_OPENER.open", return_value=_fake_resp(body)):
+        with patch("todoseine.ai._NO_REDIRECT_OPENER.open", return_value=_fake_resp(body)):
             result = ai.review("记得提交")
         self.assertTrue(result)  # 不抛异常，正常返回
 
@@ -75,7 +75,7 @@ class TestOnCallCallback(unittest.TestCase):
                       "api_key": "k", "review": True}}
         ai = AI(cfg)  # 无 on_call
         body = {"choices": [{"message": {"content": "否"}}], "usage": {}}
-        with patch("chat2todo.ai._NO_REDIRECT_OPENER.open", return_value=_fake_resp(body)):
+        with patch("todoseine.ai._NO_REDIRECT_OPENER.open", return_value=_fake_resp(body)):
             result = ai.review("记得提交")
         self.assertFalse(result)
 

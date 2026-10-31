@@ -8,11 +8,11 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from chat2todo.core.events import (  # noqa: E402
+from todoseine.core.events import (  # noqa: E402
     _compatible, _extract_action, _jaccard, _object_bigrams,
     extract_event_key, merge_events,
 )
-from chat2todo.models import Message, TodoItem  # noqa: E402
+from todoseine.models import Message, TodoItem  # noqa: E402
 
 
 def _todo(text, ts=1, sender="A", chat_id="", confidence=0.8):

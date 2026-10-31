@@ -9,8 +9,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from chat2todo.core import Store  # noqa: E402
-from chat2todo.models import TodoItem  # noqa: E402
+from todoseine.core import Store  # noqa: E402
+from todoseine.models import TodoItem  # noqa: E402
 
 
 def _todo(text: str, session: str, sender: str, status: str = "pending") -> TodoItem:
@@ -88,7 +88,7 @@ class TestMute(unittest.TestCase):
         self.assertEqual(self.store.stats()["muted"], 2)
 
     def test_matches_seed_threshold(self) -> None:
-        from chat2todo.core.store import MUTE_MIN_CHARS, MUTE_SIM_THRESHOLD
+        from todoseine.core.store import MUTE_MIN_CHARS, MUTE_SIM_THRESHOLD
 
         self.assertGreater(MUTE_SIM_THRESHOLD, 0)
         hit, _ = Store.matches_seed("短句", [])

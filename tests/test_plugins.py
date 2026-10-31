@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "src"))
 
-from chat2todo.core.plugins import (  # noqa: E402
+from todoseine.core.plugins import (  # noqa: E402
     CRASH_WINDOW, PluginError, PluginManager, crash_count,
 )
 

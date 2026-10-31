@@ -8,11 +8,11 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from chat2todo.core import extract_todos  # noqa: E402
-from chat2todo.core.classify import (  # noqa: E402
+from todoseine.core import extract_todos  # noqa: E402
+from todoseine.core.classify import (  # noqa: E402
     classify, is_red_packet, is_transfer,
 )
-from chat2todo.models import Message, MsgType  # noqa: E402
+from todoseine.models import Message, MsgType  # noqa: E402
 
 
 def _msg(content, sender="张三", ts=1, msg_type=MsgType.TEXT):

@@ -1,4 +1,4 @@
-"""Chat2Todo 控制台：一个窗口管所有事（tkinter，标准库实现）。
+"""TodoSeine 控制台：一个窗口管所有事（tkinter，标准库实现）。
 
 功能：
 - 导入文件（txt / JSON 导出 → 入库 → AI 复核，零配置）
@@ -29,7 +29,7 @@ if str(SRC) not in sys.path:
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))       # 同目录的 c2t_pages 包（按页拆分）
 from c2t_pages import about, ai, data, general, home, snap, todo, trash  # noqa: E402
-ROOT = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Chat2Todo"
+ROOT = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "TodoSeine"
 CONFIG = ROOT / "c2t.toml"
 DB = ROOT / "qq.db"
 PY = sys.executable
@@ -87,7 +87,7 @@ def _load_raw() -> dict:
     if not CONFIG.exists():
         return {}
     try:
-        from chat2todo.config import _read
+        from todoseine.config import _read
 
         return _read(str(CONFIG))
     except Exception:  # noqa: BLE001
@@ -314,7 +314,7 @@ def _autostart_on() -> bool:
 
     startup = Path(os.environ.get("APPDATA", "")) / (
         "Microsoft/Windows/Start Menu/Programs/Startup")
-    return (startup / "Chat2Todo 看板.lnk").exists()
+    return (startup / "TodoSeine 看板.lnk").exists()
 
 
 def _set_autostart(on: bool) -> tuple:
@@ -325,8 +325,8 @@ def _set_autostart(on: bool) -> tuple:
 
     startup = Path(os.environ.get("APPDATA", "")) / (
         "Microsoft/Windows/Start Menu/Programs/Startup")
-    dash = startup / "Chat2Todo 看板.lnk"
-    snap = startup / "Chat2Todo 截图热键.lnk"
+    dash = startup / "TodoSeine 看板.lnk"
+    snap = startup / "TodoSeine 截图热键.lnk"
     if not on:
         for p_ in (dash, snap):
             try:
@@ -338,7 +338,7 @@ def _set_autostart(on: bool) -> tuple:
     dash_bat = _tools_dir() / "qq_db_export" / "dash_autostart.bat"
     snap_bat = _tools_dir() / "snap_todo" / "snap_autostart.bat"
     if getattr(sys, "frozen", False):
-        # exe 场景下 bat 会去调系统 python，找不到打包进来的 chat2todo，必须直指 exe 自身
+        # exe 场景下 bat 会去调系统 python，找不到打包进来的 todoseine，必须直指 exe 自身
         exe = str(sys.executable)
         snap_py = str(_tools_dir() / "snap_todo" / "snap.py")
         ps = (
@@ -365,7 +365,7 @@ def _set_autostart(on: bool) -> tuple:
 def _read_ui(key: str, default: str = "") -> str:
     """读 [ui] 某个键；必须显式传配置路径，否则读到的永远是默认值。"""
     try:
-        from chat2todo.config import load
+        from todoseine.config import load
 
         cfg = load(str(CONFIG) if CONFIG.exists() else None) or {}
         return str((cfg.get("ui") or {}).get(key, default))
@@ -394,7 +394,7 @@ def _save_ui_accent(color: str, app) -> None:
 def _read_snap_refine() -> str:
     """[snap] ai_refine，默认开启。"""
     try:
-        from chat2todo.config import load
+        from todoseine.config import load
 
         return str((load(str(CONFIG) if CONFIG.exists() else None).get("snap") or {})
                    .get("ai_refine", True))
@@ -405,7 +405,7 @@ def _read_snap_refine() -> str:
 def _read_filter(key: str) -> list:
     """读 [filter] 段的列表（去重、去空）。"""
     try:
-        from chat2todo.config import load
+        from todoseine.config import load
 
         # 注意：config.load() 的默认查找路径不含 %USERPROFILE%\Chat2Todo\c2t.toml，
         # 必须显式传路径，否则读到的永远是默认值。
@@ -464,7 +464,7 @@ def _read_hotkey(section: str = "dash", key: str = "hotkey",
                  default: str = "ctrl+alt+d") -> str:
     """读某个段里的快捷键配置（[dash] hotkey 或 [snap] hotkey）。"""
     try:
-        from chat2todo.config import load
+        from todoseine.config import load
 
         cfg = load(str(CONFIG) if CONFIG.exists() else None)
         return (cfg.get(section) or {}).get(key) or default
@@ -504,7 +504,7 @@ def _probe_ai(base: str, key: str, model: str) -> tuple[bool, str, list[str]]:
 class Console(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Chat2Todo 控制台")
+        self.title("TodoSeine 控制台")
         # 默认 820x580 撑不住现在的 4 张卡（新增 + 搜索 + 列表 + 操作两行），
         # 内容总高度约 520px，加上标题栏和 padding，留一点余量到 620。
         self.geometry("960x640")
@@ -762,7 +762,7 @@ class Console(tk.Tk):
         side = tk.Frame(self, bg=nav_bg, width=200)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
-        tk.Label(side, text="◈  Chat2Todo", bg=nav_bg, fg=p["title"], anchor="w",
+        tk.Label(side, text="◈  TodoSeine", bg=nav_bg, fg=p["title"], anchor="w",
                  font=("Microsoft YaHei UI", 11, "bold")).pack(fill="x", padx=16, pady=(18, 14))
 
         self._nav = {}
@@ -929,9 +929,9 @@ class Console(tk.Tk):
     def _refresh_chat_names(self) -> None:
         """后台补抓群名：写库后回到主线程刷新两张过滤卡片的显示。"""
         try:
-            from chat2todo.config import load
-            from chat2todo.core import Store
-            from chat2todo.sources.db import fetch_group_names
+            from todoseine.config import load
+            from todoseine.core import Store
+            from todoseine.sources.db import fetch_group_names
 
             names = fetch_group_names(load(str(CONFIG)))
             if not names:
@@ -1042,7 +1042,7 @@ class Console(tk.Tk):
 
     def _read_trash_days(self) -> int:
         try:
-            from chat2todo.config import load
+            from todoseine.config import load
 
             return int((load(str(CONFIG)).get("ui") or {}).get("trash_days", 30))
         except Exception:  # noqa: BLE001
@@ -1060,7 +1060,7 @@ class Console(tk.Tk):
         if ent is not None:
             keyword = ent.get().strip().lower()
         try:
-            from chat2todo.core.store import Store
+            from todoseine.core.store import Store
 
             st = Store(str(DB))
             try:
@@ -1100,7 +1100,7 @@ class Console(tk.Tk):
         rows = [self._trash_rows[i] for i in sel if i < len(self._trash_rows)]
         done = 0
         try:
-            from chat2todo.core.store import Store
+            from todoseine.core.store import Store
 
             st = Store(str(DB))
             try:
@@ -1119,7 +1119,7 @@ class Console(tk.Tk):
         if not messagebox.askyesno("清空回收站", "确定永久删除回收站里的全部记录？"):
             return
         try:
-            from chat2todo.core.store import Store
+            from todoseine.core.store import Store
 
             st = Store(str(DB))
             try:
@@ -1180,7 +1180,7 @@ class Console(tk.Tk):
         pw = self.pw_entry.get().strip()
         if pw:
             try:
-                from chat2todo.core import keybox
+                from todoseine.core import keybox
 
                 keybox.save_key(pw)
                 self.write("口令已加密保存（DPAPI，仅本机当前用户可解）\n")
@@ -1234,7 +1234,7 @@ class Console(tk.Tk):
 
     def on_schedule(self) -> None:
         """用 Windows 计划任务实现定时同步（关掉控制台也照跑）。"""
-        task = "Chat2TodoSync"
+        task = "TodoSeineSync"
         exists = subprocess.run(["schtasks", "/Query", "/TN", task],
                                 capture_output=True, text=True).returncode == 0
         if exists:
@@ -1248,7 +1248,7 @@ class Console(tk.Tk):
 
         if getattr(sys, "frozen", False):
             # exe 场景直接让计划任务跑 exe 自身的 CLI，不依赖系统 python 与 bat
-            tr = (f'"{sys.executable}" -u -m chat2todo --config "{CONFIG}" '
+            tr = (f'"{sys.executable}" -u -m todoseine --config "{CONFIG}" '
                   f'db-import --days 1 --db "{DB}"')
         else:
             bat = _tools_dir() / "qq_db_export" / "后台同步.bat"
@@ -1276,7 +1276,7 @@ class Console(tk.Tk):
         self.sync_btn.config(state="disabled", text="同步中…")
 
         def worker() -> None:
-            cmd = [PY, "-u", "-m", "chat2todo", "--config", str(CONFIG),
+            cmd = [PY, "-u", "-m", "todoseine", "--config", str(CONFIG),
                "db-import", "--days", "7", "--db", str(DB)]
             try:
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -1301,7 +1301,7 @@ class Console(tk.Tk):
     def on_dashboard(self) -> None:
         try:
             # Qt 版 dash 不接受 --db/--interval：DB 路径从配置读（config.load 含旧路径兜底）
-            subprocess.Popen([PY, "-m", "chat2todo", "dash"],
+            subprocess.Popen([PY, "-m", "todoseine", "dash"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              env=_env(),
                              creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
@@ -1315,7 +1315,7 @@ class Console(tk.Tk):
         if not path:
             return
         before_empty = not _stat()  # 导入前是否空库 → 首次导入信号
-        self._stream("导入文件", [PY, "-m", "chat2todo", "import", path, "--db", str(DB)],
+        self._stream("导入文件", [PY, "-m", "todoseine", "import", path, "--db", str(DB)],
                      on_done=lambda: self._maybe_show_plugin_hint(before_empty))
 
     def _maybe_show_plugin_hint(self, before_empty: bool) -> None:
@@ -1337,7 +1337,7 @@ class Console(tk.Tk):
     def _unmarked_count(self) -> int:
         """未标记来源群的消息条数；读不到当 0。"""
         try:
-            from chat2todo.core import Store
+            from todoseine.core import Store
 
             store = Store(str(DB))
             try:
@@ -1350,7 +1350,7 @@ class Console(tk.Tk):
     def _weekly_stats(self) -> dict:
         """近 7 天摘要；库读不到时返回空。"""
         try:
-            from chat2todo.core import Store
+            from todoseine.core import Store
 
             store = Store(str(DB))
             try:
@@ -1363,7 +1363,7 @@ class Console(tk.Tk):
     def _calibration_stats(self) -> dict:
         """校准反馈可观测数据；库读不到时返回空。"""
         try:
-            from chat2todo.core import Store
+            from todoseine.core import Store
 
             store = Store(str(DB))
             try:
@@ -1375,7 +1375,7 @@ class Console(tk.Tk):
 
     def on_export_calibration(self) -> None:
         """把当前校准档案导成 JSON（项目专属 schema，可跨设备/跨版本迁移）。"""
-        from chat2todo.core import Store
+        from todoseine.core import Store
         from datetime import datetime
 
         path = filedialog.asksaveasfilename(
@@ -1398,7 +1398,7 @@ class Console(tk.Tk):
 
     def on_import_calibration(self) -> None:
         """从 JSON 导入校准档案（schema 版本不匹配会拒绝）。"""
-        from chat2todo.core import Store
+        from todoseine.core import Store
 
         path = filedialog.askopenfilename(
             title="导入校准档案",
@@ -1430,7 +1430,7 @@ class Console(tk.Tk):
                 "已抽出的待办会保留。确定继续？"):
             return
         self._stream("清理未标记消息",
-                     [PY, "-m", "chat2todo", "purge-unmarked", "--db", str(DB)])
+                     [PY, "-m", "todoseine", "purge-unmarked", "--db", str(DB)])
 
     # ---------- 数据库备份 / 恢复 ----------
     def on_backup_db(self) -> None:
@@ -1545,7 +1545,7 @@ class Console(tk.Tk):
         desktop = Path(os.environ.get("USERPROFILE", "")) / "Desktop"
         try:
             self.watch_proc = subprocess.Popen(
-                [PY, "-m", "chat2todo", "watch", "--dir", str(desktop), "--interval", "5",
+                [PY, "-m", "todoseine", "watch", "--dir", str(desktop), "--interval", "5",
                  "--db", str(DB)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 env=_env(),
@@ -1573,7 +1573,7 @@ def main(argv=None) -> int:
     except tk.TclError as exc:
         print(f"无法创建窗口：{exc}", file=sys.stderr)
         return 1
-    app.write("欢迎使用 Chat2Todo 控制台。\n点「导入文件」选一份导出的聊天记录开始，或用「立即同步」直读 QQ 数据库。\n")
+    app.write("欢迎使用 TodoSeine 控制台。\n点「导入文件」选一份导出的聊天记录开始，或用「立即同步」直读 QQ 数据库。\n")
     if page:
         try:
             app._show_page(page)

@@ -10,9 +10,9 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from chat2todo.core.obsidian import ObsidianSync, acquire_lock, release_lock  # noqa: E402
-from chat2todo.core.store import Store  # noqa: E402
-from chat2todo.models import TodoItem  # noqa: E402
+from todoseine.core.obsidian import ObsidianSync, acquire_lock, release_lock  # noqa: E402
+from todoseine.core.store import Store  # noqa: E402
+from todoseine.models import TodoItem  # noqa: E402
 
 
 def _todo(text: str, ts: int = 1700000000, status: str = "pending") -> TodoItem:
@@ -69,7 +69,7 @@ class TestObsidian(unittest.TestCase):
         self.sync.push()
         # 删掉整行 → pull 不应删除本地待办
         with open(self.sync.note, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write("# Chat2Todo 待办\n")
+            fh.write("# TodoSeine 待办\n")
         result = self.sync.pull()
         self.assertEqual(result["missing"], 1)
         self.assertEqual(len(self.store.list_todos(None)), 1)

@@ -1,3 +1,101 @@
+## [Unreleased] - 2026-10-30 · 多选批量操作 / 拖动排序 / 回收站30天过滤
+
+### 新增
+
+- **多选 + 批量操作**：页脚「多选」按钮进入批量模式，卡片正文点击切换选中态（主色 16% 透明叠加），
+  批量栏提供「全选 / 完成 / 标重点 / 删除 / 取消」。删除弹确认框；标重点在 `reason` 里增删「★重点」
+- **拖动排序**：卡片左键拖动超 8px 启动 `QDrag`（预览用卡片截图），落点行之前插入。
+  `display_order` 列手动排序优先于自动排序（完成 / 重点 / 时间）；多选模式下禁用单条拖拽避免手势冲突
+- **回收站 30 天过滤**：回收站页加「最近30天 / 全部」切换，`list_trash` / `count_trash` 支持 `days` 参数
+- **回收站搜索**：回收站顶部加搜索框，大小写不敏感匹配内容 / 来源 / 发送人；搜索时计数显示「匹配 N 条」，无结果提示换关键词
+- **设置面板加 QQ 库密钥配置**：「数据与日志」分组里新增密码输入框 + 保存按钮，DPAPI 加密存 `~/Chat2Todo/dbkey.dat`；空输入可清除已有密钥；状态行显示是否已保存及路径。小白用户不用再敲 `c2t db-key --save`
+
+### 修复
+
+- **拖拽落点偏后一位**：`pop` 源行后若源在目标之前，目标已左移一位，插入点需 `target_idx - 1`
+- **数值框 / 下拉框滚轮误触**：`mousePressEvent` 置 `_wheel_active=True`、`focusOutEvent` 置 False，
+  `wheelEvent` 检查标志位才响应（`hasFocus()` 不准因内部 QLineEdit 持焦，`focusWidget()` 不准因 widget 显示自动获焦）
+- **吸边隐藏后重启点不出来**：`_restore_geometry` 改用「中心点在屏幕内」判断（`intersects` 在只剩 6px 时仍返回 True）；`_save_geometry` 在吸边时保存可见位置
+
+### 测试
+
+- `pytest` 419 passed / 11 subtests；`ruff` 全绿
+
+## [Unreleased] - 2026-10-30 · 6 个精致交互特效
+
+还原西瓜同学《让AI做的App和小程序更精致的6个交互》里可落地到看板的 4 个特效
+（吸附卡+画线、惯性滚轮因看板无对应场景跳过；SmoothScrollArea 已是惯性滚动等价物）。
+所有动效时长走 `theme.motion_ms()`，尊重 `anim_speed=off` / `anim_effect=none` / 系统「关闭动画」。
+
+### 新增
+
+- **完成反馈按钮**：勾选点按下时整体挤压缩小（对应「先收成圆」）→ 对勾分两段一笔笔画出
+  （短臂 0–40%、长臂 40–100%）→ 从勾选点迸发 11 颗带重力的粒子（强调色 / 主色亮调 / 竖条色）。
+  粒子画在卡片内部并裁剪到圆角路径，避开半透明分层窗口的合成问题；勾选后延迟 420ms 再重建列表，
+  让动画播完不被 reload 打断
+- **勾选联动**：页脚统计数字（待办 / 已完成 / 本周清 / 新增）勾选时平滑滚动插值，不再瞬间跳字；
+  页脚左侧新增完成进度环（`done / (open+done)`），弧长随勾选联动填充
+- **叠卡展开**：点「展开 N 条」时，首屏之外的卡片以 30ms 间隔 stagger 生长（`maximumHeight`
+  `OutCubic` 0→62）；收起时倒序缩回，全部缩完再重建列表。动画期间行若被 reload 销毁则容错跳过
+- **圆形扩散转场**：页签切换时，从被点击的页签按钮中心扩散出一个圆（`DestinationOut`
+  在旧页截图上挖洞），逐步揭开新页；`anim_effect=none` 时直接落位
+
+### 测试
+
+- `pytest` 419 passed / 11 subtests；`ruff` 全绿
+- 临时脚本逐帧截图复核：勾选对勾+粒子、页脚进度环、展开 stagger、圆形扩散转场
+
+## [Unreleased] - 2026-10-30 · 全窗口渲染 / UX 巡检
+
+对悬浮看板、回收站、设置（7 页签）、统计、关于逐一做渲染与交互复查，修掉的都是实测确认的问题。
+
+### 修复
+
+- **设置页撑出屏幕**：外观页自然高度 1300px 以上，塞进 QTabWidget 会把窗口顶到 2030px 物理高、底部「保存配置」跑到屏幕外。新增 `_wrap_scroll()`，7 个页签全部套透明 QScrollArea
+- **滚动条看不见**：8px 暗色条几乎不可见，用户不知道页签内还有内容。加宽到 10px 并提亮把手（`hover` 再提亮），设置页与 `pages.py` 的统计 / 关于 / 回收站共用同一套样式
+- **基础页预览框被拉高**：`stretch=1` 把「实时消息预览」框撑到 927px（自然高度仅 229），改为 `setFixedHeight(150)` + 末尾 `addStretch(1)`
+- **回收站行高忽高忽低**（72px / 158px，第 7 行文字被推到底部）：`ElidedLabel` 只横向省略、没锁单行，含换行的文本让 QLabel 按多行绘制并撑高 `sizeHint`。改为 `sizeHint` / `minimumSizeHint` 强制单行高度，`paintEvent` 把换行压成空格并强制 `TextSingleLine`
+- **置顶开关是死开关**：`always_topmost` 只有设置页在读写，`DEFAULTS` 里没有这项、悬浮窗硬编码 `WindowStaysOnTopHint`。补默认值 + `set_topmost()` + `apply_config()` 接线
+- **`set_topmost` 一关窗口就消失**：`setWindowFlag` 会先隐藏窗口重建句柄，改完再读 `isVisible()` 已为 False，`show()` 永不执行。改为改前捕获 `was_visible`
+- **设置 / 统计 / 关于窗口被悬浮窗压住**：悬浮窗常驻置顶，子窗口 `raise_()` 越不过去。打开前先把悬浮窗降级，子窗口 `closed` 信号触发后按配置恢复
+- **统计 / 关于窗口没有入口**：从悬浮窗拆成独立窗口后，`InfoWindow` 在代码里没有任何可打开路径。托盘菜单补「统计」「关于」两项，并接上同样的置顶降级逻辑；同时删掉未被任何地方 emit 的 `info_requested` 死信号
+- **关于页热键写死且写错**：提示里硬编码「Ctrl+Alt+D」，实际配置是 `ctrl+shift+d`。改为从 `hotkey.resolve_specs()` 读当前配置，格式化成 `Ctrl + Shift + D`
+- **统计总览加不起来**：判为噪音的 498 条算进「待办总数」却没有对应行，各项相加永远对不上。补「已忽略」行
+- **独立窗口依赖系统主题**：程序只有暗色一套配色，但两个独立窗口没设底色，系统切浅色主题时会出现白底浅字。显式指定 `theme.PANEL` 底色，并给信息窗口的 QTabWidget 补上与设置页一致的页签样式
+- **锁定按钮是彩色 emoji**：`🔓` 走 Segoe UI Emoji 渲染成彩色字形，和旁边 ⊟ / — / □ / × 不一致。改用 Segoe MDL2 Assets 的单色锁形（`E72E` / `E785`）
+- **看板搜索框分隔线像括号**：1px 竖线紧贴输入卡圆角，视觉上像一个「[」。改成 `margin-left` 留出空隙
+
+### 测试
+
+- `pytest` 419 passed / 11 subtests；`ruff` 全绿
+- 全窗口截图复核：看板（460 / 420 宽）、迷你胶囊、回收站、统计、关于、设置 7 页（顶部 + 滚到底）
+
+## [Unreleased] - 2026-10-30 · 设置项扩充（对齐 DeskBox 外观口径）
+
+把 DeskBox 里能真实生效的外观设置搬进 TodoSeine，不做占位开关。
+
+### 新增
+
+- **系统材质下拉**：`dash.material` 从布尔改为字符串，6 档 `off / acrylic / mica / mica_alt / tabbed / blur`，`_apply_material()` 按值分发到 DWM 对应 API；旧配置的 `true/false` 由 `_material_from_raw()` 自动兼容
+- **材质浓淡** `material_intensity`：控制亚克力 tint 的 alpha（10%–100%），越浓越不透
+- **动画速度** `anim_speed`：`off / fast / normal / slow` 对应 0 / 0.6 / 1 / 1.5 倍时长，落到 `theme.set_motion_scale()`
+- **动画效果** `anim_effect`：`slide`（滑动）/ `fade`（淡入淡出，走窗口级 `windowOpacity`，不用离屏合成）/ `none`（直接落位）
+- **系统圆角** `corner_round`：DWM 圆角偏好 `ROUND` / `DONOTROUND`
+- **边框跟随强调色** `border_accent`：中性灰 ↔ 主色 `#6FA893`
+- **吸附距离** `snap_gap`：2–60 px，替代写死的 16 px
+- **页脚统计** `footer_stats`：可隐藏「待办 x · 已完成 y · 本周 z」
+- **清除已完成按钮** `clear_done_button`：可隐藏页脚按钮
+- **回车行为** `todo_enter`：`enter` 直接添加 / `ctrl_enter` 需 Ctrl+回车（在 `eventFilter` 里拦截 KeyPress，因为 `returnPressed` 拿不到修饰键）
+
+### 修复
+
+- **下拉箭头不可见**：Qt 的 QSS 在 `::down-arrow` 上不保证渲染 border 三角，系统默认箭头又是深色。改为 `_Combo(QComboBox)` 子类在 `paintEvent` 里自绘 8×4.5 的浅色三角，设置页 9 个下拉全部替换
+
+### 测试
+
+- `pytest` 419 passed / 11 subtests；`ruff` 全绿
+- `test_qt_theme.py` 新增 3 条动画速度档位断言（off 归零 / fast 0.6 / 未知回退 normal）
+
 ## [Unreleased] - 2026-10-30 · 界面微明度体系落地
 
 把 `docs/ui/设计规范-组件与交互.md` 的令牌与交互口径接进看板和设置页。
@@ -9,17 +107,21 @@
 - **看板与设置页接入**：两个输入框、设置页全部 `QLineEdit` / `QSpinBox` 统一细线 + 聚焦换色 + 柔光；标题改 `title_font`、说明改为等宽数字字体、时钟去掉写死的 Consolas 内联样式、统计大数字走 `tabular()`
 - **`docs/ui/design-system.html`**：单文件参考实现（明暗切换、动效开关、可拖拽列表、打字动画重播、计时器），带 `?selftest=1` 页内断言与 `?only=N` 分面板截图开关；配套 8 张实拍截图存 `docs/ui/shots/`
 - **`docs/ui/设计规范-组件与交互.md`**：令牌表、组件状态表、CSS/JS 实现要点、14 条可验收标准、Qt 映射与实测 JSON
+- **系统级「减少动态」接入**：`theme.reduced_motion()` 用 `SystemParametersInfo(SPI_GETANIMATION)` 读 `iMinAnimate`（即 Windows「辅助功能 → 视觉效果 → 动画效果」开关），`theme.motion_ms()` 据此把时长归零。已接到窗口滑入/缩放（`main_window.py`）、Toast 淡入淡出、卡片 hover、页签滑块、看板滚动动画——关掉动画时全部直接落位，不再有位移与模糊
+- **设置页下拉框 / 勾选框令牌化**：`_COMBO_STYLE` / `_CHECK_STYLE` 统一 1px 细线、展开只换色（宽度不变）、弹层底色 `CARD_BG`、选中底 `ACCENT_SOFT`、勾选点 14px 自绘方点填主色，不再有系统白底控件
 
 ### 修复
 
 - **hover 变成"绿描边"**：早期实现给卡片边框掺 18% 主色，实测 alpha 从 7% 翻到 ~24%，视觉上是一条彩色硬边。改为只把 alpha 提到 12%、RGB 不动
 - **暗色字重过粗**：`pages.py` 的标题用 `setBold(True)`（700），暗底上会外溢光晕；改为令牌字重（Qt DemiBold 600 封顶）
 - **令牌测试误报**：`setFeature(tnum)` 只是记录标志、不代表字体真的支持，改成用 `QFontMetrics` 实测 `1` 与 `8` 的步进宽度相等
+- **下拉框没有下拉箭头**：给 `QComboBox::drop-down` 写了样式后 Qt 不再画默认箭头，控件看起来"点不开"。删掉该子控件规则，截图对比确认箭头恢复
+- **诊断信息**：重复启动时日志不再只写「已有实例在运行」，而是带上父进程 `pid:名称`（`tray.launcher_brief()`，ToolHelp32 纯 ctypes），下次再出现能直接看出是谁拉起的
 
 ### 测试
 
-- `pytest` 408 passed / 11 subtests；`ruff` 全绿
-- 新增 `tests/test_qt_theme.py`（7 条：WCAG 对比度、明度差上限、字重降档、数字等宽、细线透明度、颜色插值边界）
+- `pytest` 415 passed / 11 subtests；`ruff` 全绿
+- 新增 `tests/test_qt_theme.py`（13 条：WCAG 对比度、明度差上限、字重降档、数字等宽、细线透明度、颜色插值边界、动效降级、下拉/勾选样式口径）
 - 新增 `tests/test_qt_focus_ring.py`（6 条：聚焦环开关、零尺寸变化、柔光半透明且居中、hover 不许变彩色描边）
 - 离屏渲染实测：看板与设置页在真实 Windows 平台渲染正常（offscreen 平台缺中文字形，会渲染成豆腐块，仅用于跑几何断言）
 
@@ -48,7 +150,7 @@
 
 ## [Unreleased] - 2026-10-29 · PySide6 版看板（Qt 里程碑）
 
-Tk 版看板（`dashboard/`）不动，新增可选的 `chat2todo.qt` 层：托盘常驻、玻璃质感看板、实时监听。
+Tk 版看板（`dashboard/`）不动，新增可选的 `todoseine.qt` 层：托盘常驻、玻璃质感看板、实时监听。
 
 ### 新增
 
@@ -61,7 +163,7 @@ Tk 版看板（`dashboard/`）不动，新增可选的 `chat2todo.qt` 层：托�
 - **截图建待办**（`qt/snap.py`）：`Ctrl+Shift+S` 全屏遮罩拖框 → OCR → 可编辑确认框 → 入库
 - **五页看板**：待办 / 回收站（还原·彻底删除·清空）/ 统计（总览·近 7 天·判定校准）/ 设置（基础·监听·AI·外观四页签，写回 TOML）/ 关于
 - **设置落盘**：`config.save()` 手写 TOML（不引入 tomli-w，守住核心零依赖），新增 `[uia]` `[dash]` `[hotkey]` `[notify]` 四段默认值
-- **打包**：`chat2todo_qt.spec` + `tools/qt_launcher.py` 入口 + DLL/插件白名单，产物 103.4 MB → 51.4 MB，`console=False` + 图标 + 版本资源
+- **打包**：`todoseine_qt.spec` + `tools/qt_launcher.py` 入口 + DLL/插件白名单，产物 103.4 MB → 51.4 MB，`console=False` + 图标 + 版本资源
 
 ### 修复
 
@@ -149,12 +251,12 @@ Tk 版看板（`dashboard/`）不动，新增可选的 `chat2todo.qt` 层：托�
 
 - `tools/qq_db_export/console.py` 从 1692 行降到 1318 行：六个页面（控制台 / 常规 / AI / 截图 / 最近删除 / 关于）搬进新包 `tools/qq_db_export/c2t_pages/`，每页只暴露 `build(app, ctx)`
 - 页面模块不 import console（避免循环导入），所有配置读写与路径通过 `ctx` 注入；`_read_cfg` 等函数仍在 console 模块取值，测试替换 `CONFIG / ROOT` 依旧生效
-- `src/chat2todo/dashboard/app.py`：右键菜单填充抽成模块级 `_fill_item_menu(menu, item, *, mark, edit_item, show_detail, explain_why)`，与 Tk 解耦
+- `src/todoseine/dashboard/app.py`：右键菜单填充抽成模块级 `_fill_item_menu(menu, item, *, mark, edit_item, show_detail, explain_why)`，与 Tk 解耦
 - 新增 `tests/test_dashboard.py::TestItemMenu`（3 条）：用假 menu 断言菜单项集合、完成/恢复分支、三个动作回调的路由，补上「测试全绿但右键必崩」的盲区
 
 ### 看板横向滚动条：长文本不再截断
 
-- `src/chat2todo/dashboard/app.py`：待办条目正文不再截断（`body = item.text`，保留 ★ 前缀），超长文本由底部横向滚动条拖动查看
+- `src/todoseine/dashboard/app.py`：待办条目正文不再截断（`body = item.text`，保留 ★ 前缀），超长文本由底部横向滚动条拖动查看
 - 新增 `HBAR_H = 14` 常量，`_set_size` 中画布高度减 `HBAR_H` 给滚动条留位
 - `_on_hscroll(*args)` 处理 `moveto` / `scroll`，更新 `state["x_off"]` 并 pop `render_hash` 强制重画
 - `_render_full` 中所有待办条目元素 x 坐标加横向偏移 `xo`；循环后按最宽条目溢出量计算 `x_max`，仅 `x_max > 0` 时 `hbar.pack()`，迷你/每日模式 `pack_forget()`
@@ -167,7 +269,7 @@ Tk 版看板（`dashboard/`）不动，新增可选的 `chat2todo.qt` 层：托�
 
 ### 本地 HTTP API：待办数据对外可用（B1）
 
-- 新增 `src/chat2todo/api.py`（纯标准库 `http.server`，零第三方依赖）：5 个端点
+- 新增 `src/todoseine/api.py`（纯标准库 `http.server`，零第三方依赖）：5 个端点
   - `GET /health` 健康检查
   - `GET /todos?status=&limit=` 待办列表（pending / done / noise / 空=全部）
   - `GET /stats` 统计摘要 + 周摘要
@@ -217,16 +319,16 @@ Tk 版看板（`dashboard/`）不动，新增可选的 `chat2todo.qt` 层：托�
 
 ### 插件注册协议（chat2todo-plugin-v1）
 
-- 新增 `src/chat2todo/plugin_manifest.py`：
+- 新增 `src/todoseine/plugin_manifest.py`：
   - Manifest dataclass：schema / id / name / version / permission_level / entry / capabilities / triggers
   - `validate_manifest(path_or_dict)` 严格校验：schema 不匹配拒、id 非 snake_case 拒、permission_level 非 file/db/uia 拒、必填缺失拒
   - **刻意不做文件系统检查**（manifest 可跨机器分发），只校验数据正确性
 - `tools/qq_db_export/plugin.manifest.json` + `tools/snap_todo/plugin.manifest.json`：两个现有插件的真实 manifest 实例
 - **CLI 新增 `c2t plugins`**：扫描 tools/*/plugin.manifest.json，校验后打表（id / 名称 / 版本 / 权限 / 能力 / 位置），让 manifest 从"死文件"变成可演示能力
-- build.ps1 加 `--add-data <repo>/tools;tools` 把 tools 目录一起打进 exe（manifest 跟着走）；cmd_plugins 区分开发态（`src/chat2todo → tools`）和 frozen 态（`sys._MEIPASS/tools`）
+- build.ps1 加 `--add-data <repo>/tools;tools` 把 tools 目录一起打进 exe（manifest 跟着走）；cmd_plugins 区分开发态（`src/todoseine → tools`）和 frozen 态（`sys._MEIPASS/tools`）
 - tests/test_plugin_manifest.py 8 用例；pytest 174 passed
 
-- 新增 PyInstaller onefile windowed 打包：`tools/chat2todo-launcher.py` 单一入口同时路由控制台 GUI / CLI 子命令 / `-m chat2todo` 子进程调用 / 独立 `.py` 脚本（frozen 跳过、开发态 exec），**console.py 源码零改动**
+- 新增 PyInstaller onefile windowed 打包：`tools/todoseine-launcher.py` 单一入口同时路由控制台 GUI / CLI 子命令 / `-m todoseine` 子进程调用 / 独立 `.py` 脚本（frozen 跳过、开发态 exec），**console.py 源码零改动**
 - 新增 `tools/build.ps1`：Set-Location + Join-Path 绝对路径拼接（cwd 无关），try/finally 恢复调用者 cwd；pip 分拆显式检查 `$LASTEXITCODE`，解决 `$ErrorActionPreference=Stop` 把 stderr 日志（pip warning / PyInstaller INFO）误判为 NativeCommandError 的问题；实测一键产出 17.87 MB onefile windowed exe
 - `.gitignore` 加 `*.spec`（PyInstaller spec 文件机器特定，不入库）
 - 四个 .bat（后台同步 / dash_autostart / console / launch）路径自解析重写：**不再硬编码** `C:\Program Files\Python312\python.exe`，也不依赖 `py -3w`（py launcher 在某些机器 exit 103 找不到 pythonw runtime）；改为 `where pythonw` 拿绝对路径、找不到 fallback `where python`；Windows 计划任务和开机自启跨 Python 版本都能跑
@@ -243,7 +345,7 @@ Tk 版看板（`dashboard/`）不动，新增可选的 `chat2todo.qt` 层：托�
 
 ### 看板首次使用引导（用户体验 P0）
 
-- **看板空状态按场景区分文案**：第一次打开（db 不存在）→ 👋「第一次使用 Chat2Todo → Ctrl+Shift+C 打开控制台」；db 有但 todos 为 0（没跑 sync）→ 「点 ⚙ 打开控制台立即同步，5 秒自动刷新」；有 todos 但当前筛选没匹配 → 通用引导。不再一律显示「暂无待办」让用户懵
+- **看板空状态按场景区分文案**：第一次打开（db 不存在）→ 👋「第一次使用 TodoSeine → Ctrl+Shift+C 打开控制台」；db 有但 todos 为 0（没跑 sync）→ 「点 ⚙ 打开控制台立即同步，5 秒自动刷新」；有 todos 但当前筛选没匹配 → 通用引导。不再一律显示「暂无待办」让用户懵
 - **控制台 PY 变量一致性确认**：`PY = sys.executable` 从 console.bat（用 pythonw.exe）启动时拿到的就是绝对路径，调子进程没问题；从命令行手动启动也没问题，跳过了不必要的一致性改动
 - loop 轮询 30s → 5s：`refresh_ms` 固定 5000ms，render debounce 兜底——条目/筛选条件/库 mtime 全没变就整跳过，mtime 没变时 CPU 几乎零占用；同步完新待办最多 5s 就能看到
 - mini ↔ 展开切换位置动画：原来瞬间切位置，现在启动 14 帧 ease_out_cubic 帧循环（与 _resize 的尺寸动画并行），约 220ms 整体过渡——同时动画位置和尺寸，视觉上更连贯
@@ -254,10 +356,10 @@ Tk 版看板（`dashboard/`）不动，新增可选的 `chat2todo.qt` 层：托�
 - 控制台「常规」页新增每周摘要卡：近 7 天新增 / 完成待办数（完成含当天勾掉的与回收站里已归档的）、最活跃群（`chat_names` 有群名显示群名，查不到用号码）；数据来自新增的 `Store.weekly_stats` 纯查询方法
 - 看板新增搜索框：Ctrl+F 把顶部「添加待办」卡切换成搜索框，边敲边按「内容 / 发送人」大小写不敏感子串过滤当前标签页，Esc 或清空恢复原列表；纯过滤逻辑抽为 `dashboard.data.filter_items`；分段控件计数不受搜索影响；Ctrl+N 或进入批量模式自动退出搜索；无匹配时显示「没有匹配「关键词」的条目」
 - 新增到期提醒：看板每轮刷新时检查未办条目的截止时间（复用 deadline 解析），1 小时内到期或刚过期的在屏幕右下角弹提醒卡片（最多列 3 条、8 秒自动消失、点击唤出看板，本次运行同一条只提醒一次）；`[dash] remind=false` 关闭、`remind_within` 调提前分钟数；修复拆包后三处函数内相对导入未加深（`from .config/.core` → `..`）的潜在运行期错误
-- 看板单文件拆包：`dashboard.py`（约 1800 行）拆为 `chat2todo/dashboard/` 包——`app.py`（窗口与渲染）、`geom.py`（多显示器/吸附/锚点纯函数）、`win32.py`（单实例/热键/层级/毛玻璃）、`files.py`（文件名识别与定位）、`data.py`（数据层）；`__init__.py` 原样再导出全部名字，外部 import 路径与行为不变
+- 看板单文件拆包：`dashboard.py`（约 1800 行）拆为 `todoseine/dashboard/` 包——`app.py`（窗口与渲染）、`geom.py`（多显示器/吸附/锚点纯函数）、`win32.py`（单实例/热键/层级/毛玻璃）、`files.py`（文件名识别与定位）、`data.py`（数据层）；`__init__.py` 原样再导出全部名字，外部 import 路径与行为不变
 - 群名映射自动补抓：控制台启动时若 `chat_names` 表为空，后台线程自动从 `group_info.db` 抓群名写库，完成后「免打扰 / 特别关心」两张卡片的号码即时换成群名显示（失败静默，不影响其他功能）
 - `purge-chat --list` 的群名列改按显示宽度对齐（全角字符按 2 算），含中文群名时表列不再错位
-- 控制台配置读取统一走 `chat2todo.config`（`_read` / `load` 显式传路径），删掉两处手写 TOML 解析；顺带修复快捷键与 `[snap] ai_refine` 读取未传配置路径、实际总拿默认值的问题
+- 控制台配置读取统一走 `todoseine.config`（`_read` / `load` 显式传路径），删掉两处手写 TOML 解析；顺带修复快捷键与 `[snap] ai_refine` 读取未传配置路径、实际总拿默认值的问题
 - 新增未标记消息清理：`Store.purge_unmarked / unmarked_counts`，CLI `c2t purge-unmarked [--dry-run]`，控制台「常规」页新增「未标记消息」卡片（显示条数 + 确认后清理）；只删 txt 导入的老消息，已抽出的待办保留
 
 - 新增可选插件「截图待办」（tools/snap_todo/）：Win+Shift+S 截图 → Windows 自带 OCR（可选 Ollama 视觉模型直提）→ 确认弹窗 → 走核心管线入库；控制台新增「截图待办」按钮，弥补 MVP 导入不够快捷的问题
@@ -280,7 +382,7 @@ Tk 版看板（`dashboard/`）不动，新增可选的 `chat2todo.qt` 层：托�
 - 修复同步/监视/定时任务未传 `--db` 导致写入随工作目录漂移的 c2t.db（与看板读取的 qq.db 不一致）；截图待办默认库与控制台统一为 qq.db；c2t.toml 的 db_path 已指向 qq.db，历史残留 c2t.db 已清理
 - README 按用户/程序分层口径重写（纯小白 → 开发者五层），与分层方案.md 对齐
 - 控制台「立即同步」切换到内置引擎（`db-import`），日常同步不再需要 Docker
-- 控制台「设置」的口令保存改走 `chat2todo.core.keybox`（DPAPI 直存）
+- 控制台「设置」的口令保存改走 `todoseine.core.keybox`（DPAPI 直存）
 - 入口脚本收敛为 2 个：`console.bat`（启动控制台）、`后台同步.bat`（计划任务），路径全部自解析、免安装
 - 移除 Docker 导出链路（sync.py / export.py / pipeline.py / run.sh / review.py）及硬编码旧路径的重复 bat/vbs
 

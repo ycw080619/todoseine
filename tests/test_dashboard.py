@@ -15,11 +15,11 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from chat2todo.adapters import get_adapter
-from chat2todo.core import Store, dedupe, extract_todos
-from chat2todo.core.dash_data import due_remindable, filter_items, load_items
-from chat2todo.core.dash_files import _extract_filenames
-from chat2todo.models import TodoItem
+from todoseine.adapters import get_adapter
+from todoseine.core import Store, dedupe, extract_todos
+from todoseine.core.dash_data import due_remindable, filter_items, load_items
+from todoseine.core.dash_files import _extract_filenames
+from todoseine.models import TodoItem
 
 SAMPLE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

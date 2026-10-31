@@ -10,8 +10,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from chat2todo.core.archive import Archiver, default_archive_dir  # noqa: E402
-from chat2todo.models import Message  # noqa: E402
+from todoseine.core.archive import Archiver, default_archive_dir  # noqa: E402
+from todoseine.models import Message  # noqa: E402
 
 
 def _msg(ts: int, sender: str = "张三", content: str = "明天交报告") -> Message:

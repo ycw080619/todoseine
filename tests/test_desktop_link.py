@@ -13,11 +13,11 @@ import urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from chat2todo.core.desktop_link import (  # noqa: E402
+from todoseine.core.desktop_link import (  # noqa: E402
     DesktopLink, build_ics, ensure_token, export_items, load_token,
 )
-from chat2todo.core.store import Store  # noqa: E402
-from chat2todo.models import TodoItem  # noqa: E402
+from todoseine.core.store import Store  # noqa: E402
+from todoseine.models import TodoItem  # noqa: E402
 
 
 def _todo(text: str, ts: int = 1700000000, status: str = "pending") -> TodoItem:
@@ -80,7 +80,7 @@ class TestDesktopLink(unittest.TestCase):
             "sender": "张三", "status": "pending", "due": 1750000000,
         }])
         self.assertIn("BEGIN:VCALENDAR", ics)
-        self.assertIn("UID:c2t-7@chat2todo.local", ics)
+        self.assertIn("UID:c2t-7@todoseine.local", ics)
         self.assertIn("DTSTART;VALUE=DATE:", ics)
         self.assertIn("交周报\\, 并\\;抄送", ics)
         self.assertIn("STATUS:NEEDS-ACTION", ics)

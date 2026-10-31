@@ -6,7 +6,7 @@ import os
 import tempfile
 import unittest
 
-from chat2todo.plugin_manifest import ManifestError, validate_manifest, SCHEMA
+from todoseine.plugin_manifest import ManifestError, validate_manifest, SCHEMA
 
 
 class TestPluginManifest(unittest.TestCase):
@@ -19,7 +19,7 @@ class TestPluginManifest(unittest.TestCase):
         "permission_level": "uia",
         "entry": "snap.py",
         "capabilities": ["ocr", "hotkey"],
-        "dependencies": ["chat2todo>=0.4.0"],
+        "dependencies": ["todoseine>=0.4.0"],
         "triggers": {"autostart": True, "hotkey": "ctrl+shift+s"},
     }
 

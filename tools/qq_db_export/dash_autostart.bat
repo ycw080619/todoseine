@@ -20,11 +20,11 @@ if not defined PY_CMD (
     )
 )
 if not defined PY_CMD (
-    echo [Chat2Todo] 未找到可用 Python（需 3.9+ 且已 pip install PySide6）
+    echo [TodoSeine] 未找到可用 Python（需 3.9+ 且已 pip install PySide6）
     pause
     exit /b 1
 )
 
 cd /d "%~dp0..\.."
 set PYTHONPATH=%~dp0..\..\src
-start "" "%PY_CMD%" -m chat2todo dash
+start "" "%PY_CMD%" -m todoseine dash

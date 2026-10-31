@@ -11,13 +11,13 @@
 - 抓包、模拟登录、协议逆向
 - 实时监听、后台常驻抓取、群发
 
-这些不是能力问题，是**项目定位与法律边界**问题。Chat2Todo 只处理用户自己合法导出的文件。
+这些不是能力问题，是**项目定位与法律边界**问题。TodoSeine 只处理用户自己合法导出的文件。
 
 ## 开发环境
 
 ```bash
-git clone https://github.com/ycw080619/chat2todo.git
-cd chat2todo
+git clone https://github.com/ycw080619/todoseine.git
+cd todoseine
 python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 python -m unittest discover -s tests -v
@@ -34,8 +34,8 @@ ruff check src tests
 ## 新增一个适配器
 
 ```python
-from chat2todo.adapters.base import SourceAdapter
-from chat2todo.models import Message
+from todoseine.adapters.base import SourceAdapter
+from todoseine.models import Message
 
 class MyPlatformAdapter(SourceAdapter):
     name = "my_platform"

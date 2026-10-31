@@ -2,7 +2,7 @@
 
 ## 设计前提
 
-Chat2Todo **只在本地处理用户自己的数据**：主链路为导出文件导入，进阶可选数据库只读通道。
+TodoSeine **只在本地处理用户自己的数据**：主链路为导出文件导入，进阶可选数据库只读通道。
 
 - 不发起任何网络请求（`--api` 除外，且仅绑定 `127.0.0.1`；语义清洗仅访问本机 Ollama）
 - 不上传、不遥测、不统计
@@ -19,7 +19,7 @@ Chat2Todo **只在本地处理用户自己的数据**：主链路为导出文件
 
 ## 未签名运行提示
 
-本项目分发的 `chat2todo_qt.exe` **没有代码签名证书**（个人项目，签名证书年费较高且需要实名主体）。因此首次运行时会出现：
+本项目分发的 `todoseine_qt.exe` **没有代码签名证书**（个人项目，签名证书年费较高且需要实名主体）。因此首次运行时会出现：
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
@@ -30,7 +30,7 @@ Chat2Todo **只在本地处理用户自己的数据**：主链路为导出文件
 **验证分发包未被篡改**：仓库 Release 页附 `SHA256SUMS.txt`，下载后执行
 
 ```powershell
-Get-FileHash .\chat2todo_qt.exe -Algorithm SHA256
+Get-FileHash .\todoseine_qt.exe -Algorithm SHA256
 ```
 
 与清单逐字比对，不一致就不要运行。
@@ -38,7 +38,7 @@ Get-FileHash .\chat2todo_qt.exe -Algorithm SHA256
 **不愿信任预编译 exe 的，建议直接从源码跑**（零第三方依赖即可启动 CLI）：
 
 ```powershell
-git clone <repo> && cd chat2todo
+git clone <repo> && cd todoseine
 python -m venv .venv && .\.venv\Scripts\python.exe -m pip install -e .
 .\.venv\Scripts\c2t.exe --help
 ```

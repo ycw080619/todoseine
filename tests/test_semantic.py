@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from chat2todo.models import TodoItem
-from chat2todo.semantic import vector_pass
+from todoseine.models import TodoItem
+from todoseine.semantic import vector_pass
 
 
 class FakeEmbedder:
@@ -40,7 +40,7 @@ def test_embed_failure_silent_fallback():
 
 
 def test_semantic_dedupe_keeps_highest_confidence():
-    from chat2todo.core.vector import ANNOUNCEMENT_SEEDS
+    from todoseine.core.vector import ANNOUNCEMENT_SEEDS
 
     table = {s: [0.0, 0.0, 1.0] for s in ANNOUNCEMENT_SEEDS}  # 种子与待办正交
     table.update({
@@ -61,7 +61,7 @@ def test_semantic_dedupe_keeps_highest_confidence():
 
 def test_announcement_filtered():
     seed_vec = [1.0, 0.0]
-    from chat2todo.core.vector import ANNOUNCEMENT_SEEDS
+    from todoseine.core.vector import ANNOUNCEMENT_SEEDS
 
     table = {s: seed_vec for s in ANNOUNCEMENT_SEEDS}
     table["各位请注意，本周课程调整如下，望周知"] = [0.99, 0.01]   # 近似公告

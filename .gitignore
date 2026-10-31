@@ -27,3 +27,6 @@ key.txt
 .vscode/
 .idea/
 .DS_Store
+
+# IDE/Python 安装包（大文件，不入库）
+py-pycharm-bundle/

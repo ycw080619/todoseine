@@ -6,8 +6,8 @@ import sys
 
 import pytest
 
-from chat2todo.core import keybox
-from chat2todo.sources.db import _decode_records, resolve_key
+from todoseine.core import keybox
+from todoseine.sources.db import _decode_records, resolve_key
 
 
 # --------------------------------------------------------------------------

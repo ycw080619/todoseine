@@ -10,9 +10,9 @@ import urllib.error
 import urllib.request
 from urllib.parse import quote
 
-from chat2todo.api import create_server, _cors_origin, _is_local
-from chat2todo.core.store import Store
-from chat2todo.models import Message, TodoItem
+from todoseine.api import create_server, _cors_origin, _is_local
+from todoseine.core.store import Store
+from todoseine.models import Message, TodoItem
 
 
 class TestApiServer(unittest.TestCase):
@@ -67,7 +67,7 @@ class TestApiServer(unittest.TestCase):
         code, body = self._get("/health")
         self.assertEqual(code, 200)
         self.assertTrue(body["ok"])
-        self.assertEqual(body["service"], "chat2todo")
+        self.assertEqual(body["service"], "todoseine")
 
     def test_todos(self):
         code, body = self._get("/todos")

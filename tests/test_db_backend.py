@@ -12,7 +12,7 @@ import pytest
 
 sqlcipher3 = pytest.importorskip("sqlcipher3", reason="可选依赖 sqlcipher3 未安装")
 
-from chat2todo.sources.db import (  # noqa: E402 - 需先 importorskip(sqlcipher3)
+from todoseine.sources.db import (  # noqa: E402 - 需先 importorskip(sqlcipher3)
     HEADER_SIZE,
     MSG_TABLES,
     PRAGMA_BEFORE_KEY,
@@ -88,7 +88,7 @@ def test_builtin_backend_end_to_end(tmp_path):
 
 
 def test_builtin_backend_wrong_key(tmp_path):
-    from chat2todo.errors import C2TError
+    from todoseine.errors import C2TError
 
     db_path = _make_qq_like_db(tmp_path)
     info = inspect(db_path)
@@ -98,7 +98,7 @@ def test_builtin_backend_wrong_key(tmp_path):
 
 
 def test_builtin_backend_no_key_raises():
-    from chat2todo.errors import C2TError
+    from todoseine.errors import C2TError
 
     with pytest.raises(C2TError) as exc:
         BuiltinBackend().fetch(None)  # type: ignore[arg-type]
@@ -107,7 +107,7 @@ def test_builtin_backend_no_key_raises():
 
 def _make_group_info_db(tmp_path, key: str = KEY) -> str:
     """在 nt_msg.db 旁边造一个加密的 group_info.db（60001=群号 66530=内部代码 60007=群名）。"""
-    from chat2todo.sources.db import GROUP_INFO_TABLE
+    from todoseine.sources.db import GROUP_INFO_TABLE
 
     plain = tmp_path / "ginfo_plain.db"
     conn = sqlcipher3.connect(str(plain))
@@ -135,7 +135,7 @@ def _make_group_info_db(tmp_path, key: str = KEY) -> str:
 
 def test_fetch_group_names(tmp_path, monkeypatch):
     """端到端：加密的 group_info.db → 群号与内部代码都能查到群名；空名跳过。"""
-    from chat2todo.sources import db as src_db
+    from todoseine.sources import db as src_db
 
     db_path = _make_qq_like_db(tmp_path)
     _make_group_info_db(tmp_path)
@@ -149,7 +149,7 @@ def test_fetch_group_names(tmp_path, monkeypatch):
 
 def test_fetch_group_names_degrades_silently(tmp_path, monkeypatch):
     """没有 group_info.db / 没有密钥时返回空 dict，不抛异常。"""
-    from chat2todo.sources import db as src_db
+    from todoseine.sources import db as src_db
 
     db_path = _make_qq_like_db(tmp_path)  # 旁边不放 group_info.db
     monkeypatch.setattr(src_db, "locate",

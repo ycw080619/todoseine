@@ -19,7 +19,7 @@ def build(app, ctx) -> None:
 
     def run(*args: str) -> None:
         """把一条 CLI 子命令接到运行日志里跑。"""
-        cmd = [sys.executable, "-m", "chat2todo", *args]
+        cmd = [sys.executable, "-m", "todoseine", *args]
         if args and args[0] not in NO_DB and "--db" not in args:
             cmd += ["--db", db]
         app._stream("数据", cmd)
@@ -129,7 +129,7 @@ def build(app, ctx) -> None:
             app.write("本地 API 已停止\n")
             return
         srv["proc"] = subprocess.Popen(
-            [sys.executable, "-m", "chat2todo", "serve", "--db", db],
+            [sys.executable, "-m", "todoseine", "serve", "--db", db],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         btn_serve.config(text="停止服务")
         app.write("本地 API 已启动：http://127.0.0.1:8765\n")

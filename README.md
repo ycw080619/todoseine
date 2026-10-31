@@ -1,17 +1,17 @@
-# Chat2Todo
+# TodoSeine
 
 **本地优先的聊天记录 → 待办提取器。** 零依赖开箱即用 · 仅适配 Windows 11 · AI / 截图待办 / 桌面看板均为可选增强。
 
 > Local-first chat-to-todo extractor. Zero-dependency core, offline by default. Windows 11 only.
 
-![Chat2Todo 桌面看板：待办 / 待定 / 今日 / 完成 四个标签，右侧显示到期时间](docs/dashboard.png)
+![TodoSeine 桌面看板：待办 / 待定 / 今日 / 完成 四个标签，右侧显示到期时间](docs/dashboard.png)
 
 ---
 
 ## 它解决什么问题
 
 群聊里 80% 是闲聊，真正需要你动手的只有几条：「明天下午三点前把表发给老王」「@你 记得报名」。
-Chat2Todo 把这些话自动挑出来，汇成一份待办清单，放在桌面看板上。它只回答一个问题：**还需要我做什么？**
+TodoSeine 把这些话自动挑出来，汇成一份待办清单，放在桌面看板上。它只回答一个问题：**还需要我做什么？**
 
 它**不**分析社交关系、**不**做词云、**不**联网上传、**不**修改 QQ 任何东西（纯只读）。
 
@@ -19,13 +19,13 @@ Chat2Todo 把这些话自动挑出来，汇成一份待办清单，放在桌面�
 
 ## 3 步上手（小白路径）
 
-1. **零安装优先**：运行 `tools/build.ps1` 一键产出 `dist/chat2todo.exe`（17.9 MB，控制台版）
+1. **零安装优先**：运行 `tools/build.ps1` 一键产出 `dist/todoseine.exe`（17.9 MB，控制台版）
 2. 或装 Python 3.10+ → 双击 `tools/qq_db_export/console.bat` 打开控制台
 3. 点「导入文件」选一份导出的 txt / JSON → 点「打开看板」
 
 > 进阶：想直读 QQ 数据库？进「设置」填一次口令（DPAPI 加密保存）→ 点「立即同步」。
 >
-> 想要常驻托盘、玻璃质感看板 + 实时监听的版本：`python -m PyInstaller chat2todo_qt.spec` → `dist/chat2todo_qt.exe`（约 51 MB，需 `pip install -e ".[qt]"`）。
+> 想要常驻托盘、玻璃质感看板 + 实时监听的版本：`python -m PyInstaller todoseine_qt.spec` → `dist/todoseine_qt.exe`（约 51 MB，需 `pip install -e ".[qt]"`）。
 
 ---
 
@@ -71,7 +71,7 @@ Chat2Todo 把这些话自动挑出来，汇成一份待办清单，放在桌面�
 ## 命令行速览
 
 ```bash
-pip install -e .            # 或免安装：PYTHONPATH=src python -m chat2todo ...
+pip install -e .            # 或免安装：PYTHONPATH=src python -m todoseine ...
 
 c2t import chat.txt --db qq.db      # 导入导出文件（txt / ChatLab JSON）
 c2t db-key --save                   # 保存 QQ 库口令（DPAPI 加密）

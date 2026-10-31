@@ -20,7 +20,7 @@ def build(app, ctx) -> None:
     state = {"rows": [], "status": "all"}
 
     def _store():
-        from chat2todo.core import Store
+        from todoseine.core import Store
 
         return Store(str(ctx.db))
 
@@ -177,7 +177,7 @@ def build(app, ctx) -> None:
         if tid is None:
             return
         app._stream("判定报告",
-                    [sys.executable, "-m", "chat2todo", "explain", str(tid),
+                    [sys.executable, "-m", "todoseine", "explain", str(tid),
                      "--db", str(ctx.db)])
 
     def do_mute(scope: str = "kind") -> None:

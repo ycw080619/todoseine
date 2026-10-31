@@ -22,7 +22,7 @@ if not defined PY_CMD (
     )
 )
 if not defined PY_CMD (
-    echo [Chat2Todo] 未找到可用 Python（需 3.9+ 且带 tkinter），请安装并勾选 Add to PATH
+    echo [TodoSeine] 未找到可用 Python（需 3.9+ 且带 tkinter），请安装并勾选 Add to PATH
     pause
     exit /b 1
 )

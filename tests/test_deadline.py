@@ -9,7 +9,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from chat2todo.core.deadline import label, parse, urgency  # noqa: E402
+from todoseine.core.deadline import label, parse, urgency  # noqa: E402
 
 NOW = datetime(2026, 10, 25, 9, 0, 0)  # 周日
 

@@ -10,9 +10,9 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from chat2todo.adapters import get_adapter  # noqa: E402
-from chat2todo.core import Store, dedupe, extract_todos, render_markdown, to_csv, to_json  # noqa: E402
-from chat2todo.models import Message, MsgType  # noqa: E402
+from todoseine.adapters import get_adapter  # noqa: E402
+from todoseine.core import Store, dedupe, extract_todos, render_markdown, to_csv, to_json  # noqa: E402
+from todoseine.models import Message, MsgType  # noqa: E402
 
 SAMPLE = os.path.join(os.path.dirname(__file__), "..", "examples", "sample_qq_export.txt")
 
@@ -216,7 +216,7 @@ class TestP2SearchAndExport(unittest.TestCase):
                 self.assertTrue(csv_text.startswith("id,text,session,sender,ts"))
                 self.assertEqual(len(csv_text.strip().splitlines()), len(todos) + 1)
                 json_text = to_json(todos)
-                self.assertIn('"generator": "chat2todo"', json_text)
+                self.assertIn('"generator": "todoseine"', json_text)
                 self.assertIn('"todos"', json_text)
             finally:
                 store.close()
@@ -542,15 +542,14 @@ class TestCalibration(unittest.TestCase):
 
     def test_extract_respects_weights(self):
         """extract_todos 接 weights_map 时，被 reject 过的 reason_tag 降分会让消息过不了阈值。"""
-        # 基线：只有 @全体成员（4分）+ 行动词（3分）= 7 分，抽到
+        # 基线：@全体成员(4) + 行动词(3) + 通知类(2) = 9 分，抽到
         msg = Message(timestamp=100, sender_id="s1", sender_name="张三",
                       content="@全体成员 放假 需要处理", chat_id="g1")
         todos = extract_todos([msg], session="qq")
         self.assertTrue(len(todos) >= 1)
 
-        # 给 "通知全体" 强加 -0.5 权重 → 4 + 3 + (-0.5*7) = 3.5，还是在弱阈值之上
-        # 改成 -0.6 → 4 + 3 + (-0.6*7) = 2.8 < 3，应该被过滤
-        weights = {("g1", "张三"): {"通知全体": -0.6}}
+        # 给 "通知全体" 强加 -0.9 权重 → 9 + (-0.9*7) = 2.7 < 3，应该被过滤
+        weights = {("g1", "张三"): {"通知全体": -0.9}}
         todos = extract_todos([msg], session="qq", weights_map=weights)
         self.assertEqual(todos, [])
 

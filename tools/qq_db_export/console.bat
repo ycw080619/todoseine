@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-rem Chat2Todo 控制台：双击启动（无黑窗）
+rem TodoSeine 控制台：双击启动（无黑窗）
 
 rem === Python 自解析：逐个验证 tkinter，PATH 首条可能是无 tk 的运行时 ===
 set "PY_CMD="
@@ -20,7 +20,7 @@ if not defined PY_CMD (
     )
 )
 if not defined PY_CMD (
-    echo [Chat2Todo] 未找到可用 Python（需 3.9+ 且带 tkinter），请安装并勾选 Add to PATH
+    echo [TodoSeine] 未找到可用 Python（需 3.9+ 且带 tkinter），请安装并勾选 Add to PATH
     pause
     exit /b 1
 )

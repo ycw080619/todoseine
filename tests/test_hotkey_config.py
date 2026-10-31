@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from chat2todo.qt.hotkey import resolve_specs  # noqa: E402
+from todoseine.qt.hotkey import resolve_specs  # noqa: E402
 
 
 def test_legacy_layout():

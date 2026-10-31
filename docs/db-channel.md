@@ -1,6 +1,6 @@
 # 数据库只读通道（可选）
 
-Chat2Todo 的主路线是「导入导出文件」，不依赖任何客户端内部数据。
+TodoSeine 的主路线是「导入导出文件」，不依赖任何客户端内部数据。
 数据库只读通道是**可选项**：给想跳过手动导出的用户用，默认关闭。
 
 > 只读取**你自己账号**的本地数据。全程只读：不写 QQ 目录、不改原库、不注入进程。
@@ -8,7 +8,7 @@ Chat2Todo 的主路线是「导入导出文件」，不依赖任何客户端内�
 ## 快速上手
 
 ```bash
-pip install chat2todo[db]   # 装上 sqlcipher3 引擎（Windows 预编译轮，免编译免 Docker）
+pip install todoseine[db]   # 装上 sqlcipher3 引擎（Windows 预编译轮，免编译免 Docker）
 c2t db-key --save           # 第一次：交互输入口令，校验通过后 DPAPI 加密存本机
 c2t db                      # 自检：库位置 / 引擎 / 密钥试读
 c2t db-import --days 7      # 只读拉取最近 7 天消息并抽取待办
@@ -40,7 +40,7 @@ c2t db-import --days 7      # 只读拉取最近 7 天消息并抽取待办
 
 | 后端 | 说明 | 需要什么 |
 | --- | --- | --- |
-| `builtin`（推荐） | 内置 sqlcipher3 引擎直读：快照 → 剥 1024 头 → PRAGMA 解密 → 40800 protobuf 解码 | `pip install chat2todo[db]` + 口令 |
+| `builtin`（推荐） | 内置 sqlcipher3 引擎直读：快照 → 剥 1024 头 → PRAGMA 解密 → 40800 protobuf 解码 | `pip install todoseine[db]` + 口令 |
 | `community` | 以子进程调用外部解密工具，读它的 JSONL 输出 | `[db].module` 指向可执行文件 |
 
 两者都不可用时，`c2t db-import` 会给出 E4002 并提示下一步，不会中断其它功能。
@@ -76,7 +76,7 @@ args     = ""
 - 库布局：1024 字节自定义头 + 4096 字节页的标准 SQLCipher 4；
 - PRAGMA 序列（顺序不能变）：`cipher_page_size=4096` → `key` → `kdf_iter=4000`
   → `HMAC_SHA1` / `PBKDF2_HMAC_SHA512`；
-- 正文在 `40800` 列的 protobuf BLOB 里，由 `chat2todo.core.pbbody` 的
+- 正文在 `40800` 列的 protobuf BLOB 里，由 `todoseine.core.pbbody` 的
   wire-format 解码器提取（无 proto 定义，按文档序拼接文本元素并过滤噪声）；
 - 时间戳 `40050`（Unix 秒）、发送者 `40021`/`40027`、昵称 `40093`、会话 `40002`、msgId `40001`。
 

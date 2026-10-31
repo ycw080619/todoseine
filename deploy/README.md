@@ -21,7 +21,7 @@ docker compose up -d
 docker compose exec ollama ollama pull qwen2.5:7b
 ```
 
-然后在 Chat2Todo 设置页 → AI：
+然后在 TodoSeine 设置页 → AI：
 - 预设选「Ollama（本地）」
 - Base URL `http://127.0.0.1:11434/v1`
 - API Key 随便填（Ollama 不校验，但不能为空）
@@ -40,5 +40,5 @@ docker compose exec ollama ollama pull qwen2.5:7b
 ## 安全边界
 
 - 容器只映射到 `127.0.0.1`，不要改成 `0.0.0.0`；
-- Chat2Todo 只对本机 / 内网地址放行明文 http，公网地址必须 https；
+- TodoSeine 只对本机 / 内网地址放行明文 http，公网地址必须 https；
 - 发往 AI 的内容已按脱敏规则处理，白名单群在这里**不**豁免。

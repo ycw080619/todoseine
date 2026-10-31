@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import textwrap
 
-from chat2todo import config as c2t
+from todoseine import config as c2t
 
 
 def _write(path, text):

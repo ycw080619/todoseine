@@ -46,5 +46,5 @@ jobs:
       - name: Smoke test CLI
         run: |
           python -m unittest discover -s tests -v
-          python -m chat2todo import examples/sample_qq_export.txt --db /tmp/c2t.db
-          python -m chat2todo todos --db /tmp/c2t.db
+          python -m todoseine import examples/sample_qq_export.txt --db /tmp/c2t.db
+          python -m todoseine todos --db /tmp/c2t.db

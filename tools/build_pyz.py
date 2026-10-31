@@ -22,7 +22,7 @@ DIST = ROOT / "dist"
 
 
 def main() -> int:
-    if not (SRC / "chat2todo" / "__init__.py").exists():
+    if not (SRC / "todoseine" / "__init__.py").exists():
         print(f"[E3001] 找不到源码目录：{SRC}", file=sys.stderr)
         return 1
 
@@ -34,7 +34,7 @@ def main() -> int:
     zipapp.create_archive(
         SRC,
         target,
-        main="chat2todo.cli:main",
+        main="todoseine.cli:main",
         compressed=True,
     )
     size = target.stat().st_size
