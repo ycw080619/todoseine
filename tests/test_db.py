@@ -57,7 +57,7 @@ class TestDBProbe(unittest.TestCase):
 
     def test_locate_finds_db_under_account_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            acc = Path(tmp) / "8688858" / "nt_qq" / "nt_db"
+            acc = Path(tmp) / "12345678" / "nt_qq" / "nt_db"
             acc.mkdir(parents=True)
             (acc / "nt_msg.db").write_bytes(b"\x00" * 16)
             found = dbmod.locate(tmp)
