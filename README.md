@@ -21,13 +21,13 @@ TodoSeine 把这些话自动挑出来，汇成一份待办清单，放在桌面�
 
 ## 3 步上手（小白路径）
 
-1. **下载**：从 [Releases](https://github.com/ycw080619/todoseine/releases) 下载 `TodoSeine-Setup-0.4.1.exe`（安装包）或 `todoseine_qt.exe`（便携版，免安装）
-2. 或装 Python 3.10+ → 双击 `tools/qq_db_export/console.bat` 打开控制台
-3. 点「导入文件」选一份导出的 txt / JSON → 点「打开看板」
+1. **装 Python 3.10+** → 双击 `tools/qq_db_export/console.bat` 打开控制台
+2. 点「导入文件」选一份导出的 txt / JSON → 点「打开看板」
+3. 或直读 QQ 数据库：进「设置」填一次口令（DPAPI 加密保存）→ 点「立即同步」
 
-> 进阶：想直读 QQ 数据库？进「设置」填一次口令（DPAPI 加密保存）→ 点「立即同步」。
+> 想要常驻托盘、玻璃质感看板 + 实时监听的版本：`python -m PyInstaller todoseine_qt.spec` → `dist/todoseine_qt.exe`（约 54 MB，需 `pip install -e ".[qt]"`）。
 >
-> 想从源码构建：`python -m PyInstaller todoseine_qt.spec` → `dist/todoseine_qt.exe`（约 54 MB，需 `pip install -e ".[qt]"`）。
+> Release 安装包将在验证通过后发布到 [Releases](https://github.com/ycw080619/todoseine/releases) 页面。
 
 ---
 
