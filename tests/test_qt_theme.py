@@ -12,8 +12,11 @@ from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtGui import QColor, QFontMetrics  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+try:
+    from PySide6.QtGui import QColor, QFontMetrics  # noqa: E402
+    from PySide6.QtWidgets import QApplication  # noqa: E402
+except ImportError:
+    raise unittest.SkipTest("PySide6 not installed")
 
 from todoseine.qt.widgets import theme  # noqa: E402
 

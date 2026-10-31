@@ -965,7 +965,7 @@ class SettingsPanel(QWidget):
                                "Obsidian 库根目录，例如 D:\\Notes\\MyVault")
         ob_form.addRow("库路径:", self._ob_vault)
         ob_form.addRow("", _hint(
-            "只读写 <库>/Chat2Todo/ 下的镜像笔记，不会改动库里其他内容。"
+            "只读写 <库>/todoseine/ 下的镜像笔记，不会改动库里其他内容。"
             "默认本地 → Obsidian 单向镜像；在 Obsidian 勾选完成会回写数据库，"
             "删除任务只删镜像。冲突内容另存 .conflict.bak。"))
         lay.addWidget(ob_box)
@@ -1383,7 +1383,7 @@ class SettingsPanel(QWidget):
         self._db_path = _line(str(self._cfg.get("db_path") or ""))
         store_form.addRow("数据库路径:", self._db_path)
 
-        # QQ 库直连密钥：DPAPI 加密存 ~/Chat2Todo/dbkey.dat，只有当前用户本机可解
+        # QQ 库直连密钥：DPAPI 加密存 ~/todoseine/dbkey.dat，只有当前用户本机可解
         # 走 UIA 监控 QQ 窗口的用户不需要这个；直连 QQ 加密数据库时才需要
         dbkey_row = QHBoxLayout()
         self._db_key_edit = QLineEdit()

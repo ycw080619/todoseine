@@ -140,7 +140,7 @@ c2t serve --port 8765
 curl http://127.0.0.1:8765/health
 curl "http://127.0.0.1:8765/todos?status=pending&limit=10"
 curl "http://127.0.0.1:8765/search?q=周报"
-curl -X POST http://127.0.0.1:8765/todos/1/done
+curl -X POST -H "Content-Type: application/json" http://127.0.0.1:8765/todos/1/done
 ```
 
 | 方法 | 端点 | 说明 |

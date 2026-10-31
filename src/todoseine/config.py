@@ -16,9 +16,9 @@ import os
 from typing import Any, Dict, List, Optional
 
 DEFAULTS: Dict[str, Any] = {
-    # 与控制台、看板、文档保持同一个库：%USERPROFILE%\Chat2Todo\qq.db。
+    # 数据目录 ~/todoseine/；老用户的数据在 ~/Chat2Todo/，load() 会自动回退。
     # 之前是相对路径 "c2t.db"，CLI 换个工作目录就会凭空多出一个空库，看着像数据丢了。
-    "db_path": os.path.join(os.path.expanduser("~"), "Chat2Todo", "qq.db"),
+    "db_path": os.path.join(os.path.expanduser("~"), "todoseine", "qq.db"),
     "export_dir": "out",
     "todo_threshold": 4,
     "pending_threshold": 3,
@@ -406,6 +406,12 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
     # 这样单测与 --config 显式指定的场景不会被本机旧文件污染。
     if path is None and not os.environ.get("C2T_CONFIG"):
         _legacy_fill(cfg)
+        # 数据目录改名回退：新路径 ~/todoseine/qq.db 不存在但老路径 ~/Chat2Todo/qq.db
+        # 存在时，用老路径，避免老用户升级后数据"凭空消失"。
+        if cfg["db_path"] == DEFAULTS["db_path"]:
+            _old_db = os.path.join(os.path.expanduser("~"), "Chat2Todo", "qq.db")
+            if not os.path.exists(cfg["db_path"]) and os.path.exists(_old_db):
+                cfg["db_path"] = _old_db
 
     if os.environ.get("C2T_DB"):
         cfg["db_path"] = os.environ["C2T_DB"]
@@ -523,7 +529,7 @@ def _as_bool(value: Any, default: bool = False) -> bool:
 def sample_toml() -> str:
     """`c2t doctor --write-sample` 用：一份可直接编辑的注释版配置。"""
     return r"""# TodoSeine 配置（放在当前目录或 ~/.config/chat2todo/config.toml）
-db_path          = ""         # 留空 = %USERPROFILE%\Chat2Todo\qq.db（与控制台同一个库）
+db_path          = ""         # 留空 = %USERPROFILE%\todoseine\qq.db（与控制台同一个库）
 export_dir       = "out"      # 导出目录
 todo_threshold   = 4          # 判为待办的最低分
 pending_threshold= 3          # 判为待确认的最低分

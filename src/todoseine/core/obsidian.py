@@ -26,7 +26,7 @@ from ..models import TodoItem
 
 log = logging.getLogger("todoseine.obsidian")
 
-SUBDIR = "Chat2Todo"
+SUBDIR = "todoseine"
 TODO_NOTE = "待办.md"
 STATE_NAME = ".c2t_sync.json"
 LOCK_NAME = ".c2t.lock"

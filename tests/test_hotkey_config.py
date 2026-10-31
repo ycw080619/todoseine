@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
+import unittest
 
-pytest.importorskip("PySide6")
+try:
+    import PySide6  # noqa: F401
+except ImportError:
+    raise unittest.SkipTest("PySide6 not installed")
 
 from todoseine.qt.hotkey import resolve_specs  # noqa: E402
 

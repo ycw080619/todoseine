@@ -78,7 +78,7 @@ Qt 版走的是第三条路——**只截自己的屏幕认字**：
 
 PySide6 只在 `todoseine.qt` 这一层出现，`core/` 与 `adapters/` 不知道它存在。
 
-可选依赖单独放 extras：`[api]` 才装 FastAPI。
+可选依赖单独放 extras：`[db]` 装 sqlcipher3、`[qt]` 装 PySide6；HTTP API 用标准库 `http.server`，零第三方依赖。
 
 ## 去重设计
 
@@ -103,5 +103,5 @@ LLM 版必须能说明「比规则好在哪」。
 | 新平台 | `adapters/` 加一个类并注册 |
 | 新判定规则 | `core/extract.py` 的词表与权重 |
 | 新输出格式 | `core/` 加一个 sink |
-| 本地查询 | `api/`（可选依赖） |
+| 本地查询 | `cli.py serve`（标准库 HTTP，零依赖） |
 | 定时处理 | 外部 cron 调用 `c2t import` 即可，不需要内置调度 |

@@ -10,7 +10,10 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
+try:
+    from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
+except ImportError:
+    raise unittest.SkipTest("PySide6 not installed")
 
 from todoseine.qt.widgets import focus_ring, theme  # noqa: E402
 

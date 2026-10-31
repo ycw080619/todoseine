@@ -7,12 +7,16 @@ BuiltinBackend 能快照、剥头、解密、解 protobuf、回出行数据。
 from __future__ import annotations
 
 import os
+import unittest
 
-import pytest
+try:
+    import sqlcipher3  # noqa: F401
+except ImportError:
+    raise unittest.SkipTest("可选依赖 sqlcipher3 未安装")
 
-sqlcipher3 = pytest.importorskip("sqlcipher3", reason="可选依赖 sqlcipher3 未安装")
+import pytest  # noqa: E402
 
-from todoseine.sources.db import (  # noqa: E402 - 需先 importorskip(sqlcipher3)
+from todoseine.sources.db import (  # noqa: E402 - 需先确认 sqlcipher3 可用
     HEADER_SIZE,
     MSG_TABLES,
     PRAGMA_BEFORE_KEY,

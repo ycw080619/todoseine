@@ -6,10 +6,18 @@
 from __future__ import annotations
 
 import os
+import unittest
 
-import pytest
+# PySide6 是可选依赖。CI 只装 .[dev] 不装 [qt]。
+# pytest.importorskip 在模块导入期抛 Skipped（BaseException 子类），
+# unittest discover 会把它当成导入失败记成 error。
+# 这里先试 import，失败转成 unittest.SkipTest，两种运行器都正确跳过本模块。
+try:
+    import PySide6  # noqa: F401
+except ImportError:
+    raise unittest.SkipTest("PySide6 not installed")
 
-pytest.importorskip("PySide6")
+import pytest  # noqa: E402
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 

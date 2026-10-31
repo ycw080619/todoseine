@@ -20,7 +20,9 @@ from typing import Optional
 
 from ..errors import C2TError
 
-DEFAULT_KEY_FILE = Path.home() / "Chat2Todo" / "dbkey.dat"
+# chat2todo → todoseine 改名后的数据目录；老用户的口令仍在 ~/Chat2Todo/dbkey.dat。
+DEFAULT_KEY_FILE = Path.home() / "todoseine" / "dbkey.dat"
+_LEGACY_KEY_FILE = Path.home() / "Chat2Todo" / "dbkey.dat"
 
 # PowerShell SecureString 导出形态：一长串十六进制
 _LEGACY_HEX = re.compile(r"^[0-9a-fA-F]{100,}$")
@@ -64,7 +66,12 @@ def unprotect(data: bytes) -> str:
 # 对外接口
 # --------------------------------------------------------------------------
 def key_file_path(path: Optional[str] = None) -> Path:
-    return Path(path) if path else DEFAULT_KEY_FILE
+    """返回口令文件路径。显式 path 优先；否则新路径不存在但旧路径存在时回退到老路径。"""
+    if path:
+        return Path(path)
+    if not DEFAULT_KEY_FILE.exists() and _LEGACY_KEY_FILE.exists():
+        return _LEGACY_KEY_FILE
+    return DEFAULT_KEY_FILE
 
 
 def save_key(key: str, path: Optional[str] = None) -> Path:

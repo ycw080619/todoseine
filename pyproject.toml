@@ -7,7 +7,7 @@ name = "todoseine"
 version = "0.4.1"
 description = "Local-first chat log to todo extractor"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "TodoSeine contributors" }]
 keywords = ["chat", "todo", "qq", "local-first", "privacy", "markdown"]
@@ -23,7 +23,6 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff>=0.17,<0.18"]
-api = ["fastapi>=0.110", "uvicorn>=0.29"]
 db = ["sqlcipher3>=0.6.2"]
 snap = ["winsdk>=1.0.0b10"]   # 截图待办的快速 OCR（不装则回退 PowerShell，慢 2~3 秒）
 # Qt 桌面看板（Windows 11）：PySide6 + 截图用的 Pillow + Win11 系统 OCR 绑定
@@ -43,7 +42,7 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 # 显式固定规则集：ruff 版本升级换了默认规则也不会让 CI 突然变红

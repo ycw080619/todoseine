@@ -166,7 +166,7 @@ class Store:
 
     def __init__(self, path: str = "c2t.db") -> None:
         self.path = path
-        # 默认库在 ~/Chat2Todo/ 下，首次使用目录还不存在，先补上再连
+        # 默认库在 ~/todoseine/ 下，首次使用目录还不存在，先补上再连
         parent = os.path.dirname(os.path.abspath(path))
         if parent:
             os.makedirs(parent, exist_ok=True)
