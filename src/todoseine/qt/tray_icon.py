@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
+from pathlib import Path
 from typing import Callable, Optional
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
@@ -18,6 +20,30 @@ from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPainterPath, QPen, 
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon, QWidget
 
 from . import tray
+
+
+def _icon_file() -> Optional[str]:
+    """todoseine.ico 路径：打包后从 _MEIPASS/assets 取，开发态用仓库 assets/。"""
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", "") or str(Path(sys.executable).parent)
+        p = Path(base) / "assets" / "todoseine.ico"
+    else:
+        # 仓库根目录（src/todoseine/qt/tray_icon.py 往上三级）
+        p = Path(__file__).resolve().parents[3] / "assets" / "todoseine.ico"
+    return str(p) if p.exists() else None
+
+
+def build_icon() -> QIcon:
+    """优先用 todoseine.ico，缺失时回退到手绘图标。"""
+    ico = _icon_file()
+    if ico:
+        icon = QIcon(ico)
+        if not icon.isNull():
+            return icon
+    icon = QIcon()
+    for size in (16, 24, 32, 48, 64, 128):
+        icon.addPixmap(_draw_icon(size))
+    return icon
 
 
 def _draw_icon(size: int) -> QPixmap:
@@ -42,13 +68,6 @@ def _draw_icon(size: int) -> QPixmap:
     p.drawPath(tick)
     p.end()
     return pm
-
-
-def build_icon() -> QIcon:
-    icon = QIcon()
-    for size in (16, 24, 32, 48, 64, 128):
-        icon.addPixmap(_draw_icon(size))
-    return icon
 
 
 class TrayController(QObject):

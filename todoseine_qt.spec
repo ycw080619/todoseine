@@ -73,7 +73,7 @@ a = Analysis(
     ["tools/qt_launcher.py"],
     pathex=[HERE, os.path.join(HERE, "src")],
     binaries=binaries,
-    datas=[],
+    datas=[('assets/todoseine.ico', 'assets')],
     hiddenimports=[
         "PySide6.QtCore",
         "PySide6.QtGui",

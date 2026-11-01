@@ -91,6 +91,10 @@ def main() -> int:
     app.setApplicationName("TodoSeine")
     app.setQuitOnLastWindowClosed(False)
 
+    # 窗口 + 任务栏图标：优先 todoseine.ico，缺失时回退手绘
+    from .tray_icon import build_icon
+    app.setWindowIcon(build_icon())
+
     cfg = c2t_config.load()
 
     # ---------- 主窗口 ----------
