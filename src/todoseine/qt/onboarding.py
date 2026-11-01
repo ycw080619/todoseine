@@ -1,12 +1,14 @@
-"""首次启动三步引导（PySide6 模态向导）。
+"""首次启动引导（PySide6 模态向导）。
 
-对应文档「基础版·3步启动」：
+对应文档「基础版·上手」：
   1. 下拉选择要监控的 QQ 窗口（自动过滤非 QQ 进程，QQ 未启动时明确提示）
   2. 确认归档位置与默认脱敏规则
   3. 点击「开始监控」
+  4. （可选）配置 QQ 数据库直连密钥
 
 完成后写回 cfg（uia.hwnd / uia.enabled / privacy.enabled / onboarded），
 再由主程序弹一次「归档默认脱敏」说明——这两处都是文档写死的交互。
+密钥通过 keybox 直接 DPAPI 加密落盘，不写 cfg。
 """
 
 from __future__ import annotations
@@ -14,15 +16,17 @@ from __future__ import annotations
 import os
 from typing import Optional
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QHBoxLayout,
-                               QLabel, QPushButton, QStackedWidget,
+                               QLabel, QLineEdit, QPushButton, QStackedWidget,
                                QVBoxLayout, QWidget)
 
+from ..core import keybox
 from ..core.archive import default_archive_dir
 from . import tray
 from .widgets import theme
 
-_STEPS = ("选择 QQ 窗口", "归档与脱敏", "开始监控")
+_STEPS = ("选择 QQ 窗口", "归档与脱敏", "开始监控", "配置 QQ 库密钥")
 
 
 class _Page(QWidget):
@@ -70,6 +74,7 @@ class OnboardingWizard(QDialog):
         self._stack.addWidget(self._page_qq())
         self._stack.addWidget(self._page_privacy())
         self._stack.addWidget(self._page_finish())
+        self._stack.addWidget(self._page_dbkey())
         root.addWidget(self._stack, 1)
 
         nav = QHBoxLayout()
@@ -172,6 +177,74 @@ class OnboardingWizard(QDialog):
         page.layout_.addWidget(tip)
         page.layout_.addStretch(1)
         return page
+
+    # ---------- 页 4：QQ 库密钥 ----------
+
+    def _page_dbkey(self) -> QWidget:
+        page = _Page("第 4 步 · 配置 QQ 数据库密钥（可选）",
+                     "只有「直连 QQ 加密数据库」读取消息时才需要；"
+                     "走 QQ 窗口截图识别（默认监控方式）的用户可以跳过此步。")
+        hint = QLabel(
+            "用途：直连 QQ 加密数据库读取历史消息。\n"
+            "获取：此密钥是 QQ 数据库的加密口令，需从 QQ 安装目录或相关工具中取得。\n"
+            "安全：用 Windows DPAPI 加密保存，仅本机当前 Windows 用户可解密，不会明文落盘。")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(
+            f"color: {theme.SUB.name()}; font-size: 12px;"
+            f" background: {theme.CARD_BG.name()}; border-radius: 8px; padding: 10px;")
+        page.layout_.addWidget(hint)
+
+        row = QHBoxLayout()
+        self._dbkey_edit = QLineEdit()
+        self._dbkey_edit.setPlaceholderText("输入密钥后点「保存」；留空表示不配置")
+        self._dbkey_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        row.addWidget(self._dbkey_edit, 1)
+        save_btn = QPushButton("保存密钥")
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_btn.clicked.connect(self._on_save_dbkey)
+        row.addWidget(save_btn)
+        page.layout_.addLayout(row)
+
+        self._dbkey_status = QLabel("")
+        self._dbkey_status.setWordWrap(True)
+        self._dbkey_status.setStyleSheet(f"color: {theme.SUB.name()}; font-size: 11px;")
+        self._refresh_dbkey_status()
+        page.layout_.addWidget(self._dbkey_status)
+
+        skip = QLabel("如果暂时没有密钥，直接点「完成」跳过即可，"
+                      "之后可在「设置 → 数据与日志」里随时补充。")
+        skip.setWordWrap(True)
+        skip.setStyleSheet(f"color: {theme.CAPTION.name()}; font-size: 11px;")
+        page.layout_.addWidget(skip)
+        page.layout_.addStretch(1)
+        return page
+
+    def _refresh_dbkey_status(self) -> None:
+        if keybox.has_key():
+            self._dbkey_status.setText(
+                f"已保存（{keybox.key_file_path()}，DPAPI 加密，仅本机当前用户可解）")
+        else:
+            self._dbkey_status.setText("尚未保存；走 QQ 窗口监控可忽略此步。")
+
+    def _on_save_dbkey(self) -> None:
+        text = self._dbkey_edit.text()
+        if not text.strip():
+            if keybox.has_key():
+                keybox.delete_key()
+                self._dbkey_status.setText("已清除密钥")
+            else:
+                self._dbkey_status.setText("输入框为空，未做任何更改")
+            self._dbkey_edit.clear()
+            self._refresh_dbkey_status()
+            return
+        try:
+            path = keybox.save_key(text.strip())
+        except Exception as exc:  # noqa: BLE001 - 保存失败给用户提示
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "保存密钥失败", f"{type(exc).__name__}: {exc}")
+            return
+        self._dbkey_edit.clear()
+        self._dbkey_status.setText(f"已保存到 {path}（DPAPI 加密）")
 
     # ---------- 导航 ----------
 

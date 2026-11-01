@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('D:/QQ 待办项目/tools', 'tools')]
+datas = [('tools', 'tools')]
 binaries = []
 hiddenimports = ['console', 'sqlite3', 'tkinter', 'tkinter.ttk', 'tkinter.filedialog', 'tkinter.messagebox', 'tkinter.scrolledtext', 'win32api', 'win32crypt']
 tmp_ret = collect_all('todoseine')
@@ -9,8 +9,8 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['D:/QQ 待办项目/tools/todoseine-launcher.py'],
-    pathex=['D:/QQ 待办项目/tools/qq_db_export'],
+    ['tools/todoseine-launcher.py'],
+    pathex=['tools/qq_db_export'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

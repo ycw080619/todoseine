@@ -116,13 +116,13 @@ class TestStore(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(os.path.join(tmp, "t.db"))
             try:
-                n = store.set_chat_names({"116316805": "C#技术交流",
+                n = store.set_chat_names({"100000001": "C#技术交流",
                                           "10001": "", "": "匿名"})
                 self.assertEqual(n, 1)
                 self.assertEqual(store.chat_name_map(),
-                                 {"116316805": "C#技术交流"})
-                store.set_chat_names({"116316805": "C# 技术交流·新"})
-                self.assertEqual(store.chat_name_map()["116316805"],
+                                 {"100000001": "C#技术交流"})
+                store.set_chat_names({"100000001": "C# 技术交流·新"})
+                self.assertEqual(store.chat_name_map()["100000001"],
                                  "C# 技术交流·新")
             finally:
                 store.close()

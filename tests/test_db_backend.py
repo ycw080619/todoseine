@@ -122,7 +122,7 @@ def _make_group_info_db(tmp_path, key: str = KEY) -> str:
     conn.execute(f'CREATE TABLE "{GROUP_INFO_TABLE}" '
                  '("60001" INTEGER, "66530" INTEGER, "60007" TEXT)')
     conn.execute(f'INSERT INTO "{GROUP_INFO_TABLE}" VALUES (?, ?, ?)',
-                 (116316805, 123343757, "C#技术交流"))
+                 (100000001, 100000002, "C#技术交流"))
     conn.execute(f'INSERT INTO "{GROUP_INFO_TABLE}" VALUES (?, ?, ?)',
                  (12345, 67890, ""))  # 空名要被跳过
     conn.commit()
@@ -148,7 +148,7 @@ def test_fetch_group_names(tmp_path, monkeypatch):
     monkeypatch.setattr(src_db, "resolve_key", lambda cfg: KEY)
 
     names = src_db.fetch_group_names({})
-    assert names == {"116316805": "C#技术交流", "123343757": "C#技术交流"}
+    assert names == {"100000001": "C#技术交流", "100000002": "C#技术交流"}
 
 
 def test_fetch_group_names_degrades_silently(tmp_path, monkeypatch):
