@@ -185,13 +185,19 @@ class OnboardingWizard(QDialog):
         page = _Page("第 4 步 · 配置 QQ 数据库密钥（可选）",
                      "只有「直连 QQ 加密数据库」读取消息时才需要；"
                      "走 QQ 窗口截图识别（默认监控方式）的用户可以跳过此步。")
-        hint = QLabel(
-            "用途：直连 QQ 加密数据库读取历史消息。\n"
-            "获取：QQ NT 的数据库口令（16 位）不保存在磁盘上，是 QQ 运行时在进程内存里现算的。"
-            "需要用社区提取工具（如 QQBackup、NapCat、qq-mcp 等）在 QQ 登录运行时从内存中扫描提取，"
-            "提取一次即可。本项目不附带、不分发提取工具，请自行搜索获取。\n"
-            "安全：用 Windows DPAPI 加密保存，仅本机当前 Windows 用户可解密，不会明文落盘。")
+        hint = QLabel()
         hint.setWordWrap(True)
+        hint.setTextFormat(Qt.TextFormat.RichText)
+        hint.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        hint.setOpenExternalLinks(True)
+        hint.setText(
+            "用途：直连 QQ 加密数据库读取历史消息。<br>"
+            "获取：QQ NT 的数据库口令（16 位）不保存在磁盘上，是 QQ 运行时在进程内存里现算的。"
+            "需要用社区提取工具在 QQ 登录运行时从内存中扫描提取，提取一次即可。本项目不附带提取工具。<br>"
+            "&nbsp;&nbsp;· <a href=\"https://github.com/QQBackup/qq-win-db-key\">QQBackup/qq-win-db-key</a><br>"
+            "&nbsp;&nbsp;· <a href=\"https://github.com/NapNeko/NapCatQQ\">NapCatQQ</a><br>"
+            "&nbsp;&nbsp;· <a href=\"https://github.com/print-yuhuan/QQ-MCP-Server\">QQ-MCP-Server</a><br>"
+            "安全：用 Windows DPAPI 加密保存，仅本机当前 Windows 用户可解密，不会明文落盘。")
         hint.setStyleSheet(
             f"color: {theme.SUB.name()}; font-size: 12px;"
             f" background: {theme.CARD_BG.name()}; border-radius: 8px; padding: 10px;")

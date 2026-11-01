@@ -19,9 +19,13 @@ c2t db-import --days 7      # 只读拉取最近 7 天消息并抽取待办
 ## 口令从哪来
 
 `nt_msg.db` 的口令（16 位）**不保存在磁盘上**——它是 QQ 运行时在进程内存里现算的。
-因此提取工具（如 QQBackup 系列、NapCat、qq-mcp 一类）都要求 **QQ 保持登录运行状态**，
+因此提取工具都要求 **QQ 保持登录运行状态**，
 从进程内存中扫描出候选口令并逐一试解验证。提取是一次性的；读库本身不用关 QQ（程序会先拍快照）。
-本项目不附带、不分发提取工具，请自行搜索获取。
+本项目不附带、不分发提取工具，可自行获取：
+
+- [QQBackup/qq-win-db-key](https://github.com/QQBackup/qq-win-db-key)
+- [NapCatQQ](https://github.com/NapNeko/NapCatQQ)
+- [QQ-MCP-Server](https://github.com/print-yuhuan/QQ-MCP-Server)
 
 拿到口令后的存放优先级（`resolve_key` 按此顺序找）：
 

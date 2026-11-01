@@ -203,7 +203,7 @@ QQ 数据库（只读）     导出文件          剪贴板截图
 ## 安全与合规
 
 - 只处理**你本人有权访问**的聊天记录；数据库通道纯只读，不注入、不抓包、不模拟登录
-- 不提供、不接受任何注入/抓包/模拟登录相关的代码或 PR；口令提取工具不随本项目分发
+- 不提供、不接受任何注入/抓包/模拟登录相关的代码或 PR；口令提取工具不随本项目分发。可使用社区工具提取（QQ 保持登录运行时从内存扫描，一次性）：[QQBackup/qq-win-db-key](https://github.com/QQBackup/qq-win-db-key)、[NapCatQQ](https://github.com/NapNeko/NapCatQQ)、[QQ-MCP-Server](https://github.com/print-yuhuan/QQ-MCP-Server)
 - 实时监听只做两件事：截自己屏幕 + 系统 OCR 认字。不 hook、不注入、不读 QQ 的存储文件，读到的内容不会超过你屏幕上看到的内容；不做群发
 - 涉及他人隐私请自行取得知情同意；分析结果不得作为法律证据或决策依据
 
