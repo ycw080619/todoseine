@@ -122,7 +122,8 @@ class OnboardingWizard(QDialog):
         if not wins:
             self._qq_combo.addItem("（未发现运行中的 QQ 主窗口）", userData=0)
             self._qq_status.setText(
-                "QQ 未启动：请先打开 QQ 并登录，再点「刷新窗口列表」。"
+                "QQ 未启动：请先打开 QQ 并登录，再点「刷新窗口列表」。\n"
+                "已登录仍看不到？请退出 QQ 重新登录后再刷新（QQ 主窗口可能被最小化到托盘）。"
                 "也可以先完成引导，稍后在「基础」页选择窗口。")
             return
         saved = int((self._cfg.get("uia") or {}).get("hwnd") or 0)
@@ -186,7 +187,9 @@ class OnboardingWizard(QDialog):
                      "走 QQ 窗口截图识别（默认监控方式）的用户可以跳过此步。")
         hint = QLabel(
             "用途：直连 QQ 加密数据库读取历史消息。\n"
-            "获取：此密钥是 QQ 数据库的加密口令，需从 QQ 安装目录或相关工具中取得。\n"
+            "获取：QQ NT 的数据库口令（16 位）不保存在磁盘上，是 QQ 运行时在进程内存里现算的。"
+            "需要用社区提取工具（如 QQBackup、NapCat、qq-mcp 等）在 QQ 登录运行时从内存中扫描提取，"
+            "提取一次即可。本项目不附带、不分发提取工具，请自行搜索获取。\n"
             "安全：用 Windows DPAPI 加密保存，仅本机当前 Windows 用户可解密，不会明文落盘。")
         hint.setWordWrap(True)
         hint.setStyleSheet(
