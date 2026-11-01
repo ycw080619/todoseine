@@ -1181,7 +1181,7 @@ def fetch_messages(hwnd: int = 0, chat_id: str = "",
     """抓取 QQ 当前聊天窗口里「上次之后新出现」的消息。
 
     只走截图 + Win11 OCR 这一条路：
-      - uiautomation 的窗口匹配是模糊的（会把「QQ 待办项目 - TRAE」当成 QQ），
+      - uiautomation 的窗口匹配是模糊的（会把名字里带「QQ」的其他窗口误判为 QQ），
         而且需要额外安装，这里不再依赖它；
       - 截图优先用 PrintWindow 渲染窗口自身，QQ 在后台也能读；
         最小化（渲染成全黑）才回落到前台抓屏；

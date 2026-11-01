@@ -213,6 +213,12 @@ QQ 数据库（只读）     导出文件          剪贴板截图
 
 见 [CONTRIBUTING.md](CONTRIBUTING.md)。最需要**新平台适配器**与 **tools/ 插件**。注意：核心包零第三方依赖是硬约束，可选能力请放插件层。
 
+## 致谢
+
+- [DeskBox](https://github.com/Tianyu199509/DeskBox) — 桌面小组件与看板交互的设计参考
+- qq-live-digest — 事件驱动与消息抽取的设计思路参考
+- [QQBackup/qq-win-db-key](https://github.com/QQBackup/qq-win-db-key)、[NapCatQQ](https://github.com/NapNeko/NapCatQQ)、[QQ-MCP-Server](https://github.com/print-yuhuan/QQ-MCP-Server) — QQ NT 数据库口令提取工具
+
 ## 许可证
 
 MIT
