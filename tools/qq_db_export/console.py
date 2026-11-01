@@ -46,6 +46,14 @@ def _tools_dir() -> Path:
         return Path(base) / "tools"
     return HERE.parent
 
+
+def _icon_path() -> Path:
+    """窗口图标路径：打包后从 _MEIPASS/assets 取，开发态用仓库 assets/。"""
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", "") or str(Path(sys.executable).parent)
+        return Path(base) / "assets" / "todoseine.ico"
+    return REPO / "assets" / "todoseine.ico"
+
 # 设置窗口的 AI 服务商预设：均为 OpenAI 兼容端点（核心 ai.py 用 /chat/completions + Bearer）
 AI_PRESETS = {
     "本地 Ollama（免费无需 Key）": ("http://127.0.0.1:11434/v1", "qwen2.5:14b"),
@@ -505,6 +513,10 @@ class Console(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("TodoSeine 控制台")
+        try:
+            self.iconbitmap(str(_icon_path()))
+        except Exception:
+            pass  # 图标缺失不影响功能
         # 默认 820x580 撑不住现在的 4 张卡（新增 + 搜索 + 列表 + 操作两行），
         # 内容总高度约 520px，加上标题栏和 padding，留一点余量到 620。
         self.geometry("960x640")

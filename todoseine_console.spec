@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('tools', 'tools')]
+datas = [('tools', 'tools'), ('assets/todoseine.ico', 'assets')]
 binaries = []
 hiddenimports = ['console']
 tmp_ret = collect_all('todoseine')
@@ -42,4 +42,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='assets/todoseine.ico',
 )
