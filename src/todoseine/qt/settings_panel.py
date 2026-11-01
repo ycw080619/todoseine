@@ -1689,8 +1689,9 @@ class SettingsPanel(QWidget):
         if not hasattr(self, "_db_key_status"):
             return
         if keybox.has_key():
+            loc = keybox.key_location()
             self._db_key_status.setText(
-                f"已保存（{keybox.key_file_path()}，DPAPI 加密，仅本机当前用户可解）")
+                f"已保存（{loc}，DPAPI 加密，仅本机当前用户可解）")
         else:
             self._db_key_status.setText("未保存；直连 QQ 加密数据库时才需要，走 UIA 监控可忽略")
 

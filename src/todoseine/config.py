@@ -401,6 +401,19 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
                 cfg[key] = value
     else:
         cfg["config_file"] = ""
+        # 文件不存在时，检查注册表兜底（Defender 拦截文件写入时配置存这里）
+        if path is None and os.name == "nt":
+            reg_text = _reg_load_config()
+            if reg_text:
+                raw = _mini_parse_text(reg_text)
+                cfg["config_file"] = f"HKCU\\{_REG_KEY_PATH}\\{_REG_CONFIG_NAME}"
+                for key, value in raw.items():
+                    if key in ("ai", "db", "vector", "filter", "uia", "dash",
+                               "hotkey", "notify", "privacy", "backup", "archive",
+                               "desktop", "hermes", "forward") and isinstance(value, dict):
+                        cfg[key].update(value)
+                    else:
+                        cfg[key] = value
 
     # 只在「用默认配置文件、且没被 -c/环境变量指定」时做旧配置兜底，
     # 这样单测与 --config 显式指定的场景不会被本机旧文件污染。
@@ -438,14 +451,45 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
     return cfg
 
 
+# 注册表兜底：PyInstaller 打包的 GUI exe 首次运行时 Defender 会拦截
+# 对用户目录的文件写入，此时把配置 TOML 存进 HKCU\Software\TodoSeine\config。
+_REG_KEY_PATH = r"Software\TodoSeine"
+_REG_CONFIG_NAME = "config"
+
+
+def _reg_save_config(toml_text: str) -> None:
+    """把配置 TOML 写入注册表（REG_SZ）。"""
+    import winreg
+    key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _REG_KEY_PATH, 0, winreg.KEY_WRITE)
+    try:
+        winreg.SetValueEx(key, _REG_CONFIG_NAME, 0, winreg.REG_SZ, toml_text)
+    finally:
+        winreg.CloseKey(key)
+
+
+def _reg_load_config() -> Optional[str]:
+    """从注册表读配置 TOML；不存在返回 None。"""
+    import winreg
+    try:
+        key = winreg.OpenKeyEx(winreg.HKEY_CURRENT_USER, _REG_KEY_PATH, 0, winreg.KEY_READ)
+    except FileNotFoundError:
+        return None
+    try:
+        value, _ = winreg.QueryValueEx(key, _REG_CONFIG_NAME)
+        return value if isinstance(value, str) else None
+    except FileNotFoundError:
+        return None
+    finally:
+        winreg.CloseKey(key)
+
+
 def save(cfg: Dict[str, Any], path: Optional[str] = None) -> str:
     """把整份配置写回 TOML（默认 ~/.config/chat2todo/config.toml）。
 
     只写已知段落，`config_file` 这类运行期字段不落盘；None 直接跳过，
-    读回时自然回落到默认值。返回实际写入的路径。
+    读回时自然回落到默认值。返回实际写入的路径（或注册表位置）。
     """
     target = path or _HOME_CONFIG
-    os.makedirs(os.path.dirname(target), exist_ok=True)
 
     sections = ("ai", "vector", "db", "filter", "uia", "dash", "hotkey",
                 "notify", "privacy", "backup", "archive", "desktop", "hermes",
@@ -492,9 +536,18 @@ def save(cfg: Dict[str, Any], path: Optional[str] = None) -> str:
                     continue
                 lines.append(emit("", key, value))
 
-    with open(target, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write("\n".join(lines) + "\n")
-    return target
+    toml_text = "\n".join(lines) + "\n"
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(toml_text)
+        return target
+    except OSError:
+        # Defender 等安全软件拦截文件写入时，回退到注册表
+        if path is None and os.name == "nt":
+            _reg_save_config(toml_text)
+            return f"HKCU\\{_REG_KEY_PATH}\\{_REG_CONFIG_NAME}"
+        raise
 
 
 def _quote(text: str) -> str:

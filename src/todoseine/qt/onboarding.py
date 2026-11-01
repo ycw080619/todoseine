@@ -231,7 +231,7 @@ class OnboardingWizard(QDialog):
     def _refresh_dbkey_status(self) -> None:
         if keybox.has_key():
             self._dbkey_status.setText(
-                f"已保存（{keybox.key_file_path()}，DPAPI 加密，仅本机当前用户可解）")
+                f"已保存（{keybox.key_location()}，DPAPI 加密，仅本机当前用户可解）")
         else:
             self._dbkey_status.setText("尚未保存；走 QQ 窗口监控可忽略此步。")
 

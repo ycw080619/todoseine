@@ -7,7 +7,7 @@
 #define MyAppPublisher "TodoSeine"
 #define MyAppExeName "todoseine_qt.exe"
 #define MyAppIcon "..\assets\todoseine.ico"
-#define MyAppExePath "..\dist\todoseine_qt.exe"
+#define MyAppSourceDir "..\dist\todoseine_qt"
 
 [Setup]
 AppId={{8A7B3C1D-2E4F-5A6B-9C8D-7E6F5A4B3C2D}
@@ -44,8 +44,8 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Name: "startupicon"; Description: "开机自启（也可在应用设置里更改）"; GroupDescription: "开机自启:"
 
 [Files]
-; 主程序（onefile，已包含所有依赖）
-Source: "{#MyAppExePath}"; DestDir: "{app}"; Flags: ignoreversion
+; one-dir 模式：整个程序文件夹打包（todoseine_qt.exe + PySide6 DLL 等）
+Source: "{#MyAppSourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; 应用图标（供快捷方式使用）
 Source: "{#MyAppIcon}"; DestDir: "{app}"; Flags: ignoreversion
 

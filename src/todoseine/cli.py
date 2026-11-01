@@ -677,7 +677,7 @@ def cmd_db_key(args) -> int:
 
     if args.check:
         saved = keybox.load_key()
-        print(f"本机密库  : {'有口令（' + keybox.key_file_path().__str__() + '）' if saved else '空'}")
+        print(f"本机密库  : {'有口令（' + keybox.key_location() + '）' if saved else '空'}")
         env = bool(os.environ.get("C2T_DB_KEY"))
         print(f"环境变量  : {'已设置 C2T_DB_KEY' if env else '未设置'}")
         conf = "已配置" if db_cfg.get("key") or db_cfg.get("key_file") else "未配置"

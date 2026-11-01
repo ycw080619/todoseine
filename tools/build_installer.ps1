@@ -1,8 +1,8 @@
 ﻿# TodoSeine 一键构建脚本：PyInstaller 打包 exe → Inno Setup 生成安装包
 # 用法：& ".\tools\build_installer.ps1"
 # 产物：
-#   dist\todoseine_qt.exe          （单文件程序，供开发者直接运行）
-#   dist\TodoSeine-Setup-0.4.1.exe （一键安装包，给小白用户）
+#   dist\todoseine_qt\               （one-dir 程序文件夹，含 todoseine_qt.exe + DLL）
+#   dist\TodoSeine-Setup-0.4.1.exe  （一键安装包，给小白用户）
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
@@ -21,10 +21,10 @@ try {
     Pop-Location
 }
 
-$exe = Join-Path $distDir "todoseine_qt.exe"
+$exe = Join-Path $distDir "todoseine_qt\todoseine_qt.exe"
 if (-not (Test-Path $exe)) { throw "未找到 $exe" }
 $exeMb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
-Write-Host "      todoseine_qt.exe ($exeMb MB)" -ForegroundColor Green
+Write-Host "      todoseine_qt\ ($exeMb MB)" -ForegroundColor Green
 
 # 2. Inno Setup 生成安装包
 Write-Host "[2/3] Inno Setup 编译安装包 ..." -ForegroundColor Cyan

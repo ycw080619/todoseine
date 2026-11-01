@@ -121,10 +121,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="todoseine_qt",
     debug=False,
     bootloader_ignore_signals=False,
@@ -140,4 +138,17 @@ exe = EXE(
     entitlements_file=None,
     icon=os.path.join(HERE, "assets", "todoseine.ico"),
     version=os.path.join(HERE, "tools", "version_info.txt"),
+)
+
+# one-dir 模式：避免 onefile 解压到 Temp 后被安全软件拦截写入用户目录。
+# 产物在 dist/todoseine_qt/ 文件夹，安装包需整体打包。
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="todoseine_qt",
 )
