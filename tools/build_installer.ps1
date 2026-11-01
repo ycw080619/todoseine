@@ -1,4 +1,4 @@
-# TodoSeine 一键构建脚本：PyInstaller 打包 exe → Inno Setup 生成安装包
+﻿# TodoSeine 一键构建脚本：PyInstaller 打包 exe → Inno Setup 生成安装包
 # 用法：& ".\tools\build_installer.ps1"
 # 产物：
 #   dist\todoseine_qt.exe          （单文件程序，供开发者直接运行）

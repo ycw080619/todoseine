@@ -1,4 +1,4 @@
-# TodoSeine - PyInstaller build script
+﻿# TodoSeine - PyInstaller build script
 # Usage: 从项目根目录执行 & ".\tools\build.ps1"
 # Output: dist\todoseine.exe (onefile, no console window)
 
